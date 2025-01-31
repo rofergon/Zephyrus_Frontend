@@ -13,6 +13,7 @@ function Chat() {
   const [width, setWidth] = useState(400);
   const messagesEndRef = useRef(null);
   const editorRef = useRef(null);
+  const monacoRef = useRef(null);
 
   const solidityVersions = ['0.8.19', '0.8.18', '0.8.17', '0.8.16'];
   const [selectedVersion, setSelectedVersion] = useState('0.8.19');
@@ -51,6 +52,7 @@ contract MyToken is ERC20, Ownable {
 
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor;
+    monacoRef.current = monaco;
 
     monaco.languages.register({ id: 'solidity' });
     
@@ -69,8 +71,8 @@ contract MyToken is ERC20, Ownable {
       typeKeywords: [
         'uint', 'uint8', 'uint16', 'uint32', 'uint64', 'uint128', 'uint256',
         'int', 'int8', 'int16', 'int32', 'int64', 'int128', 'int256',
-        'bytes', 'bytes1', 'bytes2', 'bytes3', 'bytes4', 'bytes5', 'bytes6',
-        'bytes7', 'bytes8', 'bytes9', 'bytes10', 'bytes11', 'bytes12', 'bytes13',
+        'bytes', 'bytes1', 'bytes2', 'bytes3', 'bytes4', 'bytes5', 'bytes6', 'bytes7',
+        'bytes8', 'bytes9', 'bytes10', 'bytes11', 'bytes12', 'bytes13',
         'bytes14', 'bytes15', 'bytes16', 'bytes17', 'bytes18', 'bytes19', 'bytes20',
         'bytes21', 'bytes22', 'bytes23', 'bytes24', 'bytes25', 'bytes26', 'bytes27',
         'bytes28', 'bytes29', 'bytes30', 'bytes31', 'bytes32', 'bool', 'address',
@@ -89,20 +91,9 @@ contract MyToken is ERC20, Ownable {
 
       tokenizer: {
         root: [
-          [/[a-zA-Z_]\w*/, {
-            cases: {
-              '@keywords': 'keyword',
-              '@typeKeywords': 'type',
-              '@default': 'identifier'
-            }
-          }],
+          [/[a-zA-Z_]\w*/, { cases: { '@keywords': 'keyword', '@typeKeywords': 'type', '@default': 'identifier' } }],
           [/[{}()\[\]]/, '@brackets'],
-          [/@symbols/, {
-            cases: {
-              '@operators': 'operator',
-              '@default': ''
-            }
-          }],
+          [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } }],
           [/\d*\.\d+([eE][\-+]?\d+)?/, 'number.float'],
           [/\d+/, 'number'],
           [/[;,.]/, 'delimiter'],
@@ -120,7 +111,7 @@ contract MyToken is ERC20, Ownable {
         comment: [
           [/[^\/*]+/, 'comment'],
           [/\*\//, 'comment', '@pop'],
-          [/[\/*]/, 'comment']
+          [/[/\*]/, 'comment']
         ]
       }
     });
@@ -226,6 +217,43 @@ contract MyToken is ERC20, Ownable {
       }]);
     }
   };
+
+  const validateSolidity = async (codeContent) => {
+    console.log('[Chat] Starting validation for code:', codeContent.substring(0, 100) + '...');
+    return new Promise((resolve) => {
+      const worker = new Worker(new URL('../workers/solc.worker.js', import.meta.url), { type: 'module' });
+      
+      worker.onmessage = (event) => {
+        const { markers, error } = event.data;
+        if (error) {
+          console.error('[Chat] Compilation error:', error);
+        }
+        console.log('[Chat] Received markers from worker:', markers);
+        resolve(markers || []);
+      };
+
+      worker.onerror = (error) => {
+        console.error('[Chat] Worker error:', error);
+        resolve([]);
+      };
+
+      console.log('[Chat] Sending code to worker');
+      worker.postMessage(codeContent);
+    });
+  };
+
+  useEffect(() => {
+    const updateMarkers = async () => {
+      if (editorRef.current && monacoRef.current) {
+        console.log('[Chat] Updating markers for code change');
+        const model = editorRef.current.getModel();
+        const markers = await validateSolidity(code);
+        console.log('[Chat] Setting markers in editor:', markers);
+        monacoRef.current.editor.setModelMarkers(model, 'solidity', markers);
+      }
+    };
+    updateMarkers();
+  }, [code]);
 
   return (
     <div className="h-[calc(100vh-6rem)] flex gap-4">
