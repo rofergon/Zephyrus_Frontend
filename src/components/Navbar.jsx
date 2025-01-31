@@ -26,10 +26,10 @@ const Navbar = () => {
           <div className="flex items-center">
             <Link to="/" className="flex items-center">
               <div className="h-10 w-10 bg-gradient-to-br from-gray-700 to-gray-800 rounded-lg flex items-center justify-center">
-                <span className="text-2xl font-bold text-gray-200">W3</span>
+                <span className="text-2xl font-bold text-gray-200">Z</span>
               </div>
               <span className="ml-3 text-xl font-bold text-gray-200">
-                Web3 AI Platform
+                Zephyrus Contract Builder Agent
               </span>
             </Link>
           </div>

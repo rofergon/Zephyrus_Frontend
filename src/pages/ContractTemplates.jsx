@@ -5,8 +5,8 @@ import { motion } from 'framer-motion';
 const templates = [
   {
     id: 1,
-    title: 'ERC20 Token',
-    description: 'Standard ERC20 token with customizable supply and features',
+    title: 'Zephyrus ERC20 Token',
+    description: 'Standard ERC20 token with Zephyrus enhanced features and security',
     category: 'Token',
     features: ['Mintable', 'Burnable', 'Pausable'],
     complexity: 'Beginner',
@@ -16,8 +16,8 @@ pragma solidity ^0.8.9;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract MyToken is ERC20, Ownable {
-    constructor() ERC20("MyToken", "MTK") {}
+contract ZephyrusToken is ERC20, Ownable {
+    constructor() ERC20("ZephyrusToken", "ZEPH") {}
 
     function mint(address to, uint256 amount) public onlyOwner {
         _mint(to, amount);
@@ -30,8 +30,8 @@ contract MyToken is ERC20, Ownable {
   },
   {
     id: 2,
-    title: 'NFT Collection',
-    description: 'ERC721 NFT collection with minting and metadata support',
+    title: 'Zephyrus NFT Collection',
+    description: 'Advanced ERC721 NFT collection with Zephyrus metadata support',
     category: 'NFT',
     features: ['Batch Minting', 'Metadata', 'Royalties'],
     complexity: 'Intermediate',
@@ -42,11 +42,11 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
-contract MyNFT is ERC721, Ownable {
+contract ZephyrusNFT is ERC721, Ownable {
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIds;
 
-    constructor() ERC721("MyNFT", "MNFT") {}
+    constructor() ERC721("ZephyrusNFT", "ZNFT") {}
 
     function mint(address to) public onlyOwner returns (uint256) {
         _tokenIds.increment();
@@ -58,8 +58,8 @@ contract MyNFT is ERC721, Ownable {
   },
   {
     id: 3,
-    title: 'Marketplace',
-    description: 'Decentralized marketplace for trading tokens and NFTs',
+    title: 'Zephyrus Marketplace',
+    description: 'Secure decentralized marketplace powered by Zephyrus',
     category: 'DeFi',
     features: ['Multi-token', 'Auctions', 'Offers'],
     complexity: 'Advanced',

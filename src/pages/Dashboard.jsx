@@ -72,10 +72,10 @@ const Dashboard = () => {
           </h2>
           <div className="grid grid-cols-2 gap-4">
             {[
-              { to: '/chat', title: 'Start AI Chat', desc: 'Get help with your smart contracts', gradient: 'from-blue-500 to-blue-600' },
-              { to: '/templates', title: 'Browse Templates', desc: 'Start with pre-built contracts', gradient: 'from-green-500 to-green-600' },
-              { to: '/image-generator', title: 'Generate Images', desc: 'Create token artwork', gradient: 'from-purple-500 to-purple-600' },
-              { to: '/deploy', title: 'Deploy Contract', desc: 'Launch your smart contract', gradient: 'from-yellow-500 to-yellow-600' }
+              { to: '/chat', title: 'Start AI Chat', desc: 'Get help with your Zephyrus contracts', gradient: 'from-blue-500 to-blue-600' },
+              { to: '/templates', title: 'Browse Templates', desc: 'Start with pre-built Zephyrus contracts', gradient: 'from-green-500 to-green-600' },
+              { to: '/image-generator', title: 'Generate Images', desc: 'Create contract artwork', gradient: 'from-purple-500 to-purple-600' },
+              { to: '/deploy', title: 'Deploy Contract', desc: 'Launch your Zephyrus contract', gradient: 'from-yellow-500 to-yellow-600' }
             ].map((action, index) => (
               <Link
                 key={index}

@@ -175,10 +175,10 @@ function DeploymentConsole() {
               className="glass-morphism rounded-lg p-6 max-w-lg w-full mx-4"
             >
               <h2 className="text-xl font-bold mb-4 text-gray-200">
-                Contract Deployed Successfully! 🎉
+                Zephyrus Contract Deployed Successfully! 🎉
               </h2>
               <p className="text-gray-300 mb-6">
-                Share your contract with the community and earn rewards when others use it as a template.
+                Share your Zephyrus contract with the community and earn rewards when others use it as a template.
               </p>
 
               <div className="space-y-4 mb-6">
@@ -191,7 +191,7 @@ function DeploymentConsole() {
                     value={shareFormData.title}
                     onChange={(e) => setShareFormData({...shareFormData, title: e.target.value})}
                     className="w-full p-3 glass-morphism rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="E.g., NFT Marketplace Pro"
+                    placeholder="E.g., Zephyrus NFT Marketplace Pro"
                   />
                 </div>
 
