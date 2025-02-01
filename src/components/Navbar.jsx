@@ -4,7 +4,6 @@ import { useAccount, useChainId, useDisconnect, useSwitchChain } from 'wagmi'
 import { useAppKit } from '@reown/appkit/react'
 
 const Navbar = () => {
-  const { open } = useAppKit();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { disconnect } = useDisconnect();
@@ -22,18 +21,6 @@ const Navbar = () => {
     const networkName = chainId === 57054 ? 'Sonic Blaze Testnet' : (chainId ? `Chain ${chainId}` : 'No Network');
     document.title = `${networkName} • Zephyrus Contract Builder Agent`;
   }, [chainId]);
-
-  const handleConnect = async () => {
-    try {
-      if (isConnected) {
-        await disconnect();
-      } else {
-        await open();
-      }
-    } catch (error) {
-      console.error('Error al conectar/desconectar wallet:', error);
-    }
-  };
 
   // Función para obtener el color del indicador de red
   const getNetworkIndicatorColor = () => {

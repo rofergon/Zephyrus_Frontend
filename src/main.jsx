@@ -12,6 +12,9 @@ import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import App from './App'
 import './index.css'
 
+// Create react-query client
+const queryClient = new QueryClient()
+
 // Configurar la red Sonic Blaze Testnet según la documentación oficial
 const sonicBlaze = {
   id: 57054,
@@ -45,15 +48,14 @@ const metadata = {
   icons: ['https://avatars.githubusercontent.com/u/37784886']
 }
 
-// Create react-query client
-const queryClient = new QueryClient()
-
 // Create Wagmi Adapter
 const wagmiAdapter = new WagmiAdapter({
   networks: [sonicBlaze],
   projectId,
-  metadata,
-  ssr: true
+  ssr: true,
+  transports: {
+    [sonicBlaze.id]: http(sonicBlaze.rpcUrls.default.http[0])
+  }
 })
 
 // Create AppKit
@@ -72,12 +74,21 @@ createAppKit({
 // Establecer el título inicial
 document.title = 'Sonic Blaze Testnet • Zephyrus Contract Builder Agent'
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
+// Create AppKit Provider component
+function AppKitProvider({ children }) {
+  return (
     <WagmiProvider config={wagmiAdapter.wagmiConfig}>
       <QueryClientProvider client={queryClient}>
-        <App />
+        {children}
       </QueryClientProvider>
     </WagmiProvider>
+  )
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <AppKitProvider>
+      <App />
+    </AppKitProvider>
   </React.StrictMode>,
 )
