@@ -1,22 +1,45 @@
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { useAccount, useChainId, useDisconnect, useSwitchChain } from 'wagmi'
+import { useAppKit } from '@reown/appkit/react'
 
 const Navbar = () => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [walletAddress, setWalletAddress] = useState('');
+  const { open } = useAppKit();
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const { disconnect } = useDisconnect();
+  const { switchChain } = useSwitchChain();
 
-  const connectWallet = async () => {
-    if (window.ethereum) {
-      try {
-        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-        setWalletAddress(accounts[0]);
-        setIsConnected(true);
-      } catch (error) {
-        console.error('Error connecting wallet:', error);
-      }
-    } else {
-      alert('Please install MetaMask to use this feature!');
+  // Cambiar a la red Sonic cuando se conecte
+  useEffect(() => {
+    if (isConnected && chainId !== 57054) {
+      switchChain?.({ chainId: 57054 });
     }
+  }, [isConnected, chainId, switchChain]);
+
+  // Actualizar el título de la página cuando cambie la red
+  useEffect(() => {
+    const networkName = chainId === 57054 ? 'Sonic Blaze Testnet' : (chainId ? `Chain ${chainId}` : 'No Network');
+    document.title = `${networkName} • Zephyrus Contract Builder Agent`;
+  }, [chainId]);
+
+  const handleConnect = async () => {
+    try {
+      if (isConnected) {
+        await disconnect();
+      } else {
+        await open();
+      }
+    } catch (error) {
+      console.error('Error al conectar/desconectar wallet:', error);
+    }
+  };
+
+  // Función para obtener el color del indicador de red
+  const getNetworkIndicatorColor = () => {
+    if (!isConnected) return 'bg-gray-500/70';
+    if (chainId === 57054) return 'bg-emerald-500/70';
+    return 'bg-yellow-500/70';
   };
 
   return (
@@ -34,22 +57,21 @@ const Navbar = () => {
             </Link>
           </div>
           <div className="flex items-center space-x-4">
-            <div className="hidden md:flex items-center space-x-1">
-              <span className="h-2 w-2 bg-emerald-500/70 rounded-full animate-pulse"></span>
-              <span className="text-gray-400 text-sm">Ethereum Mainnet</span>
+            <div className="hidden md:flex items-center space-x-2">
+              <span className={`h-2 w-2 ${getNetworkIndicatorColor()} rounded-full animate-pulse`}></span>
+              <span className={`text-sm ${chainId === 57054 ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                {chainId === 57054 ? 'Sonic Blaze Testnet' : (chainId ? `Chain ${chainId}` : 'No Network')}
+                {isConnected && chainId !== 57054 && (
+                  <button
+                    onClick={() => switchChain?.({ chainId: 57054 })}
+                    className="ml-2 text-xs bg-emerald-900/20 hover:bg-emerald-900/30 text-emerald-300/90 px-2 py-1 rounded"
+                  >
+                    Switch to Sonic
+                  </button>
+                )}
+              </span>
             </div>
-            <button
-              onClick={connectWallet}
-              className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
-                isConnected
-                  ? 'bg-emerald-900/20 hover:bg-emerald-900/30 text-emerald-300/90'
-                  : 'bg-gray-700/50 hover:bg-gray-700/70 text-gray-300'
-              }`}
-            >
-              {isConnected
-                ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
-                : 'Connect Wallet'}
-            </button>
+            <appkit-button />
           </div>
         </div>
       </div>

@@ -17,39 +17,122 @@ function DeploymentConsole() {
   });
 
   const networks = [
-    { id: 'ethereum', name: 'Ethereum Mainnet', icon: '🌐' },
-    { id: 'goerli', name: 'Goerli Testnet', icon: '🔷' },
-    { id: 'polygon', name: 'Polygon', icon: '💜' },
-    { id: 'bsc', name: 'BSC', icon: '💛' },
+    { 
+      id: 'ethereum', 
+      name: 'Ethereum Mainnet', 
+      icon: '🌐',
+      chainId: 1
+    },
+    { 
+      id: 'goerli', 
+      name: 'Goerli Testnet', 
+      icon: '🔷',
+      chainId: 5
+    },
+    { 
+      id: 'polygon', 
+      name: 'Polygon', 
+      icon: '💜',
+      chainId: 137
+    },
+    { 
+      id: 'bsc', 
+      name: 'BSC', 
+      icon: '💛',
+      chainId: 56
+    },
+    { 
+      id: 'sonic', 
+      name: 'Sonic Blaze Testnet', 
+      icon: '⚡',
+      chainId: 57054,
+      rpcUrl: 'https://rpc.blaze.soniclabs.com',
+      nativeCurrency: {
+        name: 'Sonic',
+        symbol: 'S',
+        decimals: 18
+      }
+    }
   ];
 
-  const handleDeploy = () => {
-    setIsDeploying(true);
-    const newLogs = [
-      { type: 'info', message: 'Starting deployment process...' },
-      { type: 'process', message: 'Compiling contracts...' },
-      { type: 'process', message: 'Optimizing bytecode...' },
-      { type: 'success', message: 'Compilation successful!' },
-      { type: 'process', message: 'Deploying to network...' },
-      { type: 'success', message: 'Contract deployed successfully!' },
-      { type: 'info', message: 'Contract Address: 0x1234...5678' },
-    ];
-    
-    newLogs.forEach((log, index) => {
-      setTimeout(() => {
-        setLogs(prev => [...prev, log]);
-        if (index === newLogs.length - 1) {
-          setIsDeploying(false);
-          setDeployedContract({
-            address: '0x1234...5678',
-            network: selectedNetwork,
-            timestamp: new Date().toISOString(),
-            code: '// Contract code here...'
-          });
-          setShowShareDialog(true);
+  const switchNetwork = async (networkId) => {
+    const network = networks.find(n => n.id === networkId);
+    if (!network) return;
+
+    if (window.ethereum) {
+      try {
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: `0x${network.chainId.toString(16)}` }],
+        });
+      } catch (switchError) {
+        // This error code indicates that the chain has not been added to MetaMask
+        if (switchError.code === 4902) {
+          try {
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [
+                {
+                  chainId: `0x${network.chainId.toString(16)}`,
+                  chainName: network.name,
+                  rpcUrls: network.rpcUrl ? [network.rpcUrl] : [],
+                  nativeCurrency: network.nativeCurrency,
+                },
+              ],
+            });
+          } catch (addError) {
+            console.error('Error adding network:', addError);
+            setLogs(prev => [...prev, { type: 'error', message: `Failed to add network: ${addError.message}` }]);
+          }
         }
-      }, index * 1000);
-    });
+        console.error('Error switching network:', switchError);
+        setLogs(prev => [...prev, { type: 'error', message: `Failed to switch network: ${switchError.message}` }]);
+      }
+    }
+  };
+
+  const handleNetworkChange = async (e) => {
+    const newNetwork = e.target.value;
+    setSelectedNetwork(newNetwork);
+    await switchNetwork(newNetwork);
+  };
+
+  const handleDeploy = async () => {
+    setIsDeploying(true);
+    setLogs([{ type: 'info', message: 'Starting deployment process...' }]);
+
+    try {
+      // Ensure correct network
+      await switchNetwork(selectedNetwork);
+      
+      setLogs(prev => [...prev, 
+        { type: 'process', message: 'Compiling contracts...' },
+        { type: 'process', message: 'Optimizing bytecode...' },
+        { type: 'success', message: 'Compilation successful!' },
+        { type: 'process', message: 'Deploying to network...' },
+      ]);
+
+      // Deployment logic here...
+      
+      setLogs(prev => [...prev,
+        { type: 'success', message: 'Contract deployed successfully!' },
+        { type: 'info', message: 'Contract Address: 0x1234...5678' }
+      ]);
+
+      setDeployedContract({
+        address: '0x1234...5678',
+        network: selectedNetwork,
+        timestamp: new Date().toISOString(),
+        code: '// Contract code here...'
+      });
+      
+      setShowShareDialog(true);
+    } catch (error) {
+      console.error('Deployment error:', error);
+      setLogs(prev => [...prev, { type: 'error', message: `Deployment failed: ${error.message}` }]);
+    } finally {
+      setIsDeploying(false);
+    }
   };
 
   const handleShare = () => {
@@ -89,7 +172,7 @@ function DeploymentConsole() {
               </label>
               <select
                 value={selectedNetwork}
-                onChange={(e) => setSelectedNetwork(e.target.value)}
+                onChange={handleNetworkChange}
                 className="w-full p-3 glass-morphism rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500"
               >
                 {networks.map((network) => (

@@ -16,6 +16,27 @@ export default defineConfig({
   define: {
     'global': 'globalThis'
   },
+  worker: {
+    format: 'es',
+    plugins: [
+      NodeGlobalsPolyfillPlugin({
+        buffer: true,
+        process: true
+      })
+    ]
+  },
+  build: {
+    rollupOptions: {
+      plugins: [rollupNodePolyFill()],
+      output: {
+        manualChunks: undefined
+      }
+    },
+    worker: {
+      format: 'es',
+      plugins: []
+    }
+  },
   resolve: {
     alias: {
       stream: 'rollup-plugin-node-polyfills/polyfills/stream',
@@ -39,11 +60,12 @@ export default defineConfig({
         }),
         NodeModulesPolyfillPlugin()
       ]
-    }
+    },
+    exclude: ['@openzeppelin/contracts']
   },
-  build: {
-    rollupOptions: {
-      plugins: [rollupNodePolyFill()]
+  server: {
+    fs: {
+      allow: ['..', 'node_modules']
     }
   }
 })
