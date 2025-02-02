@@ -65,7 +65,7 @@ contract CustomizableERC721 is ERC721, ERC721Enumerable, ERC721URIStorage, ERC72
      */
     function burn(uint256 tokenId) public {
         if (_ownerOf(tokenId) == address(0)) revert TokenDoesNotExist();
-        if (!_isAuthorized(_ownerOf(tokenId), msg.sender, tokenId)) revert CallerNotOwnerNorApproved();
+        if (!_isApprovedOrOwner(msg.sender, tokenId)) revert CallerNotOwnerNorApproved();
         _burn(tokenId);
     }
 
@@ -99,19 +99,13 @@ contract CustomizableERC721 is ERC721, ERC721Enumerable, ERC721URIStorage, ERC72
     }
 
     // Required overrides for inherited contracts
-    function _update(
+    function _beforeTokenTransfer(
+        address from,
         address to,
-        uint256 tokenId,
-        address auth
-    ) internal virtual override(ERC721, ERC721Enumerable, ERC721Pausable) returns (address) {
-        return super._update(to, tokenId, auth);
-    }
-
-    function _increaseBalance(
-        address account,
-        uint128 value
-    ) internal virtual override(ERC721, ERC721Enumerable) {
-        super._increaseBalance(account, value);
+        uint256 firstTokenId,
+        uint256 batchSize
+    ) internal virtual override(ERC721, ERC721Enumerable, ERC721Pausable) {
+        super._beforeTokenTransfer(from, to, firstTokenId, batchSize);
     }
 
     function tokenURI(
@@ -124,5 +118,9 @@ contract CustomizableERC721 is ERC721, ERC721Enumerable, ERC721URIStorage, ERC72
         bytes4 interfaceId
     ) public view virtual override(ERC721, ERC721Enumerable, ERC721URIStorage, AccessControl) returns (bool) {
         return super.supportsInterface(interfaceId);
+    }
+
+    function _burn(uint256 tokenId) internal virtual override(ERC721, ERC721URIStorage) {
+        super._burn(tokenId);
     }
 } 

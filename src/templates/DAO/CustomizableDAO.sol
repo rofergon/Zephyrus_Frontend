@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-// Importación de OpenZeppelin 4.x
+// Import OpenZeppelin 4.x
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 contract DAO is ReentrancyGuard {
@@ -21,8 +21,8 @@ contract DAO is ReentrancyGuard {
     uint256 public constant QUORUM_PERCENTAGE = 4;
     uint256 public constant MAJORITY_PERCENTAGE = 51;
 
-    uint256 private nextProposalId;
-    address[] private members;
+    uint256 private _nextProposalId;
+    address[] private _members;
     mapping(address => bool) public isMember;
     mapping(uint256 => Proposal) public proposals;
     mapping(uint256 => mapping(address => bool)) public voted;
@@ -32,13 +32,25 @@ contract DAO is ReentrancyGuard {
     event ProposalExecuted(uint256 indexed proposalId, address indexed executor);
     event MemberJoined(address indexed member);
 
+    // Custom Errors
+    error NotMember();
+    error AlreadyMember();
+    error ProposalNotFound();
+    error VotingEnded();
+    error AlreadyVoted();
+    error VotingActive();
+    error AlreadyExecuted();
+    error QuorumNotReached();
+    error MajorityNotReached();
+    error ExecutionFailed();
+
     modifier onlyMember() {
-        require(isMember[msg.sender], "DAO: No es miembro");
+        if (!isMember[msg.sender]) revert NotMember();
         _;
     }
 
     modifier proposalExists(uint256 proposalId) {
-        require(proposals[proposalId].id == proposalId, "DAO: Propuesta inexistente");
+        if (proposals[proposalId].id != proposalId) revert ProposalNotFound();
         _;
     }
 
@@ -47,7 +59,7 @@ contract DAO is ReentrancyGuard {
     }
 
     function join() external {
-        require(!isMember[msg.sender], "DAO: Ya es miembro");
+        if (isMember[msg.sender]) revert AlreadyMember();
         _addMember(msg.sender);
     }
 
@@ -56,7 +68,7 @@ contract DAO is ReentrancyGuard {
         address _target,
         bytes memory _calldata
     ) external onlyMember {
-        uint256 proposalId = nextProposalId++;
+        uint256 proposalId = _nextProposalId++;
         
         proposals[proposalId] = Proposal({
             id: proposalId,
@@ -65,7 +77,7 @@ contract DAO is ReentrancyGuard {
             data: _calldata,
             forVotes: 0,
             againstVotes: 0,
-            snapshotTotalMembers: members.length,
+            snapshotTotalMembers: _members.length,
             deadline: block.timestamp + VOTING_PERIOD,
             executed: false
         });
@@ -76,8 +88,8 @@ contract DAO is ReentrancyGuard {
     function vote(uint256 proposalId, bool support) external onlyMember proposalExists(proposalId) {
         Proposal storage proposal = proposals[proposalId];
         
-        require(block.timestamp <= proposal.deadline, "DAO: Votacion finalizada");
-        require(!voted[proposalId][msg.sender], "DAO: Ya voto");
+        if (block.timestamp > proposal.deadline) revert VotingEnded();
+        if (voted[proposalId][msg.sender]) revert AlreadyVoted();
 
         voted[proposalId][msg.sender] = true;
         
@@ -93,32 +105,31 @@ contract DAO is ReentrancyGuard {
     function executeProposal(uint256 proposalId) external nonReentrant proposalExists(proposalId) {
         Proposal storage proposal = proposals[proposalId];
         
-        require(block.timestamp > proposal.deadline, "DAO: Votacion activa");
-        require(!proposal.executed, "DAO: Ya ejecutada");
+        if (block.timestamp <= proposal.deadline) revert VotingActive();
+        if (proposal.executed) revert AlreadyExecuted();
         
         uint256 totalVotes = proposal.forVotes + proposal.againstVotes;
         uint256 quorum = (proposal.snapshotTotalMembers * QUORUM_PERCENTAGE) / 100;
         
-        require(totalVotes >= quorum, "DAO: Quorum no alcanzado");
-        require(
-            proposal.forVotes * 100 > totalVotes * MAJORITY_PERCENTAGE,
-            "DAO: Mayoria no alcanzada"
-        );
+        if (totalVotes < quorum) revert QuorumNotReached();
+        if (proposal.forVotes * 100 <= totalVotes * MAJORITY_PERCENTAGE) revert MajorityNotReached();
 
         proposal.executed = true;
+        // solhint-disable-next-line avoid-low-level-calls
+        // Low level call is required for DAO to execute arbitrary functions voted by members
         (bool success, ) = proposal.target.call(proposal.data);
-        require(success, "DAO: Ejecucion fallida");
+        if (!success) revert ExecutionFailed();
 
         emit ProposalExecuted(proposalId, msg.sender);
     }
 
     function getMembers() external view returns (address[] memory) {
-        return members;
+        return _members;
     }
 
     function _addMember(address _member) private {
         isMember[_member] = true;
-        members.push(_member);
+        _members.push(_member);
         emit MemberJoined(_member);
     }
 }
