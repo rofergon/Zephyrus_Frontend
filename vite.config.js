@@ -14,39 +14,36 @@ export default defineConfig({
     NodeModulesPolyfillPlugin()
   ],
   define: {
-    'global': 'globalThis'
-  },
-  worker: {
-    format: 'es',
-    plugins: [
-      NodeGlobalsPolyfillPlugin({
-        buffer: true,
-        process: true
-      })
-    ]
+    'global': 'globalThis',
+    'process.env': process.env ?? {},
   },
   build: {
+    commonjsOptions: {
+      transformMixedEsModules: true
+    },
     rollupOptions: {
       plugins: [rollupNodePolyFill()],
       output: {
         manualChunks: undefined
-      }
-    },
-    worker: {
-      format: 'es',
-      plugins: []
+      },
+      external: [
+        '@safe-global/safe-apps-sdk',
+        '@safe-global/safe-apps-provider'
+      ]
     }
   },
   resolve: {
     alias: {
-      stream: 'rollup-plugin-node-polyfills/polyfills/stream',
+      stream: 'stream-browserify',
       events: 'rollup-plugin-node-polyfills/polyfills/events',
       util: 'rollup-plugin-node-polyfills/polyfills/util',
-      url: 'rollup-plugin-node-polyfills/polyfills/url',
+      url: 'url',
       assert: 'assert',
+      process: 'process/browser',
       buffer: 'rollup-plugin-node-polyfills/polyfills/buffer-es6',
-      process: 'rollup-plugin-node-polyfills/polyfills/process-es6',
-      '@openzeppelin/contracts': './node_modules/@openzeppelin/contracts'
+      '@openzeppelin/contracts': './node_modules/@openzeppelin/contracts',
+      '@safe-globalThis/safe-apps-sdk': '@safe-global/safe-apps-sdk',
+      '@safe-globalThis/safe-apps-provider': '@safe-global/safe-apps-provider'
     }
   },
   optimizeDeps: {
@@ -62,7 +59,11 @@ export default defineConfig({
         NodeModulesPolyfillPlugin()
       ]
     },
-    exclude: ['@openzeppelin/contracts']
+    include: [
+      'process/browser',
+      '@safe-global/safe-apps-sdk',
+      '@safe-global/safe-apps-provider'
+    ]
   },
   server: {
     fs: {

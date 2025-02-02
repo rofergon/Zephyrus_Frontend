@@ -1,5 +1,11 @@
-import { Buffer } from 'buffer';
-window.Buffer = Buffer;
+import { Buffer as BufferPolyfill } from 'rollup-plugin-node-polyfills/polyfills/buffer-es6';
+import process from 'process';
+
+if (typeof window !== 'undefined') {
+  window.global = window;
+  window.Buffer = BufferPolyfill;
+  window.process = process;
+}
 
 import React from 'react'
 import ReactDOM from 'react-dom/client'
@@ -8,6 +14,7 @@ import { http } from 'viem'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createAppKit } from '@reown/appkit/react'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
+import { safe } from 'wagmi/connectors'
 
 import App from './App'
 import './index.css'
@@ -48,6 +55,15 @@ const metadata = {
   icons: ['https://avatars.githubusercontent.com/u/37784886']
 }
 
+// Create Safe Connector
+const safeConnector = safe({
+  chains: [sonicBlaze],
+  options: {
+    allowedDomains: [/gnosis-safe.io$/, /app.safe.global$/],
+    debug: false,
+  },
+})
+
 // Create Wagmi Adapter
 const wagmiAdapter = new WagmiAdapter({
   networks: [sonicBlaze],
@@ -55,7 +71,8 @@ const wagmiAdapter = new WagmiAdapter({
   ssr: true,
   transports: {
     [sonicBlaze.id]: http(sonicBlaze.rpcUrls.default.http[0])
-  }
+  },
+  connectors: [safeConnector]
 })
 
 // Create AppKit

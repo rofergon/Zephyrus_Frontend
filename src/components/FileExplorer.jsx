@@ -170,13 +170,13 @@ const FileExplorer = ({ onFileSelect, selectedFile }) => {
   };
 
   const handleDelete = async (path) => {
-    try {
+      try {
       setIsLoading(true);
       setError(null);
-      await virtualFS.delete(path);
-      await loadFiles();
+        await virtualFS.delete(path);
+        await loadFiles();
       showSuccess('Item deleted successfully');
-    } catch (error) {
+      } catch (error) {
       setError('Error deleting item: ' + error.message);
     } finally {
       setIsLoading(false);
@@ -464,45 +464,45 @@ const FileExplorer = ({ onFileSelect, selectedFile }) => {
     >
       <div className="p-2 border-b border-gray-700 space-y-2">
         <div className="flex justify-between items-center">
-          <span className="text-sm font-medium text-gray-300">FILE EXPLORER</span>
-          <div className="relative">
-            <button 
-              className="p-1 hover:bg-gray-700 rounded"
-              onClick={() => setShowNewItemMenu(!showNewItemMenu)}
+        <span className="text-sm font-medium text-gray-300">FILE EXPLORER</span>
+        <div className="relative">
+          <button 
+            className="p-1 hover:bg-gray-700 rounded"
+            onClick={() => setShowNewItemMenu(!showNewItemMenu)}
               data-tooltip-id="new-item-tooltip"
               data-tooltip-content="Create new item"
-            >
-              <PlusIcon className="w-4 h-4 text-gray-300" />
-            </button>
+          >
+            <PlusIcon className="w-4 h-4 text-gray-300" />
+          </button>
             <Tooltip id="new-item-tooltip" />
-            {showNewItemMenu && (
-              <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-gray-800 ring-1 ring-black ring-opacity-5 z-50">
-                <div className="py-1">
-                  <button
-                    className="w-full px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 flex items-center"
+          {showNewItemMenu && (
+            <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-gray-800 ring-1 ring-black ring-opacity-5 z-50">
+              <div className="py-1">
+                <button
+                  className="w-full px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 flex items-center"
                     onClick={() => {
                       setShowNewFileModal(true);
                       setShowNewItemMenu(false);
                     }}
-                  >
-                    <DocumentPlusIcon className="w-4 h-4 mr-2" />
-                    New File
-                  </button>
-                  <button
-                    className="w-full px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 flex items-center"
+                >
+                  <DocumentPlusIcon className="w-4 h-4 mr-2" />
+                  New File
+                </button>
+                <button
+                  className="w-full px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 flex items-center"
                     onClick={() => {
                       setShowNewFolderModal(true);
                       setShowNewItemMenu(false);
                     }}
-                  >
-                    <FolderPlusIcon className="w-4 h-4 mr-2" />
-                    New Folder
-                  </button>
-                </div>
+                >
+                  <FolderPlusIcon className="w-4 h-4 mr-2" />
+                  New Folder
+                </button>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
+      </div>
         
         {/* Search bar */}
         <div className="relative">
