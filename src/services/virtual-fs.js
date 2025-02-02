@@ -209,10 +209,193 @@ class VirtualFileSystem {
     return new Promise((resolve, reject) => {
       const transaction = this.db.transaction([this.storeName], 'readwrite');
       const store = transaction.objectStore(this.storeName);
-      const request = store.delete(this.normalizePath(path));
+      
+      // Obtener todos los archivos para encontrar los que están dentro de la carpeta
+      const getAllRequest = store.getAll();
+      
+      getAllRequest.onsuccess = async () => {
+        const files = getAllRequest.result;
+        const normalizedPath = this.normalizePath(path);
+        
+        // Encontrar todos los archivos que comienzan con la ruta de la carpeta
+        const filesToDelete = files.filter(file => 
+          file.path === normalizedPath || // el archivo/carpeta exacto
+          (file.path.startsWith(normalizedPath + '/') && file.path.split('/').length === normalizedPath.split('/').length + 1) // solo los archivos directamente dentro de la carpeta
+        );
+        
+        try {
+          // Eliminar cada archivo encontrado
+          for (const file of filesToDelete) {
+            await new Promise((res, rej) => {
+              const deleteRequest = store.delete(file.path);
+              deleteRequest.onsuccess = () => res();
+              deleteRequest.onerror = () => rej(deleteRequest.error);
+            });
+          }
+          resolve(true);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      
+      getAllRequest.onerror = () => reject(getAllRequest.error);
+    });
+  }
 
-      request.onsuccess = () => resolve(true);
-      request.onerror = () => reject(request.error);
+  async fileExists(path) {
+    return new Promise((resolve) => {
+      const transaction = this.db.transaction([this.storeName], 'readonly');
+      const store = transaction.objectStore(this.storeName);
+      const request = store.get(this.normalizePath(path));
+
+      request.onsuccess = () => {
+        resolve(!!request.result);
+      };
+      request.onerror = () => resolve(false);
+    });
+  }
+
+  generateUniqueName(basePath, originalName) {
+    const ext = originalName.includes('.') ? 
+      '.' + originalName.split('.').pop() : '';
+    const nameWithoutExt = originalName.replace(ext, '');
+    let counter = 1;
+    let newName = originalName;
+    let newPath = basePath ? `${basePath}/${newName}` : newName;
+
+    return {
+      async getUniqueName() {
+        while (await this.fileExists(newPath)) {
+          newName = `${nameWithoutExt} (${counter})${ext}`;
+          newPath = basePath ? `${basePath}/${newName}` : newName;
+          counter++;
+        }
+        return { newName, newPath };
+      }
+    };
+  }
+
+  async moveFile(sourcePath, targetPath, options = {}) {
+    const { overwrite = false, autoRename = true } = options;
+    
+    try {
+      const normalizedSourcePath = this.normalizePath(sourcePath);
+      let normalizedTargetPath = this.normalizePath(targetPath);
+      
+      // Verificar si el archivo destino ya existe
+      const targetExists = await this.fileExists(normalizedTargetPath);
+      
+      if (targetExists && !overwrite) {
+        if (!autoRename) {
+          throw new Error('FILE_EXISTS');
+        }
+        
+        // Generar un nuevo nombre único
+        const targetDir = targetPath.split('/').slice(0, -1).join('/');
+        const fileName = targetPath.split('/').pop();
+        const { newPath } = await this.generateUniqueName(targetDir, fileName).getUniqueName();
+        normalizedTargetPath = newPath;
+      }
+
+      // Leer el contenido del archivo original
+      const content = await this.readFile(normalizedSourcePath);
+      
+      // Escribir en la nueva ubicación
+      await this.writeFile(normalizedTargetPath, content);
+      
+      // Eliminar el archivo original
+      await this.delete(normalizedSourcePath);
+      
+      return {
+        success: true,
+        newPath: normalizedTargetPath,
+        renamed: normalizedTargetPath !== this.normalizePath(targetPath)
+      };
+    } catch (error) {
+      if (error.message === 'FILE_EXISTS') {
+        throw new Error('Destination file already exists');
+      }
+      throw error;
+    }
+  }
+
+  async moveDirectory(oldPath, newPath, options = {}) {
+    const transaction = this.db.transaction([this.storeName], 'readwrite');
+    const store = transaction.objectStore(this.storeName);
+    
+    return new Promise((resolve, reject) => {
+      const getAllRequest = store.getAll();
+      
+      getAllRequest.onsuccess = async () => {
+        const files = getAllRequest.result;
+        const normalizedOldPath = this.normalizePath(oldPath);
+        let normalizedNewPath = this.normalizePath(newPath);
+        
+        try {
+          // Verificar si el directorio destino ya existe
+          const targetExists = await this.fileExists(normalizedNewPath);
+          
+          if (targetExists) {
+            if (!options.overwrite) {
+              if (!options.autoRename) {
+                throw new Error('DIRECTORY_EXISTS');
+              }
+              
+              // Generar un nuevo nombre único para el directorio
+              const targetDir = newPath.split('/').slice(0, -1).join('/');
+              const dirName = newPath.split('/').pop();
+              const { newPath: uniquePath } = await this.generateUniqueName(targetDir, dirName).getUniqueName();
+              normalizedNewPath = uniquePath;
+            }
+          }
+
+          // Encontrar todos los archivos que necesitan ser movidos
+          const filesToMove = files.filter(file => 
+            file.path === normalizedOldPath || 
+            file.path.startsWith(normalizedOldPath + '/')
+          );
+
+          const movedFiles = [];
+          
+          // Mover cada archivo a su nueva ubicación
+          for (const file of filesToMove) {
+            const relativePath = file.path.slice(normalizedOldPath.length);
+            const newFilePath = normalizedNewPath + (relativePath || '');
+            
+            try {
+              // Intentar mover el archivo con manejo de duplicados
+              const result = await this.moveFile(file.path, newFilePath, {
+                ...options,
+                autoRename: true // Siempre auto-renombrar archivos dentro de carpetas
+              });
+              
+              movedFiles.push({
+                oldPath: file.path,
+                newPath: result.newPath,
+                renamed: result.renamed
+              });
+            } catch (error) {
+              console.error(`Error moving file ${file.path}:`, error);
+              // Continuar con el siguiente archivo
+            }
+          }
+          
+          resolve({
+            success: true,
+            newPath: normalizedNewPath,
+            renamed: normalizedNewPath !== this.normalizePath(newPath),
+            movedFiles
+          });
+        } catch (error) {
+          if (error.message === 'DIRECTORY_EXISTS') {
+            reject(new Error('Destination directory already exists'));
+          } else {
+            reject(error);
+          }
+        }
+      };
+      
+      getAllRequest.onerror = () => reject(getAllRequest.error);
     });
   }
 
