@@ -39,39 +39,26 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-gray-900 text-gray-100;
   }
 }
 
 .glass-morphism {
-  background: rgba(30, 35, 45, 0.7);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  @apply bg-gray-900/50 backdrop-blur-lg border border-gray-700/50;
 }
 
 .gradient-border {
-  position: relative;
+  @apply relative;
 }
 
 .gradient-border::before {
   content: '';
-  position: absolute;
-  top: -1px;
-  left: -1px;
-  right: -1px;
-  bottom: -1px;
-  background: linear-gradient(45deg, 
-    rgba(59, 130, 246, 0.3), 
-    rgba(99, 102, 241, 0.3), 
-    rgba(139, 92, 246, 0.3)
-  );
-  z-index: -1;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.gradient-border:hover::before {
-  opacity: 0.5;
+  @apply absolute inset-0 rounded-lg p-[1px] bg-gradient-to-r from-gray-800 via-gray-700 to-gray-800;
+  -webkit-mask: 
+    linear-gradient(#fff 0 0) content-box, 
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
 }
 
 .animate-glow {
@@ -122,4 +109,40 @@
 
 .react-resizable-handle:hover::after {
   background-color: rgba(59, 130, 246, 0.8);
+}
+
+/* AppKit Button Styles */
+appkit-button::part(button) {
+  @apply bg-transparent !important;
+  @apply border-0 !important;
+  @apply p-0 !important;
+  @apply text-gray-200 !important;
+  @apply font-normal !important;
+}
+
+appkit-button::part(button):hover {
+  @apply bg-transparent !important;
+}
+
+/* Solo aplicar estos estilos al botón en la landing page */
+.landing-connect appkit-button::part(button) {
+  @apply text-transparent !important;
+  @apply w-0 !important;
+  @apply h-0 !important;
+  @apply overflow-hidden !important;
+}
+
+/* Perspective para efectos 3D */
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+/* Animaciones */
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+  50% {
+    border-color: rgba(59, 130, 246, 0.2);
+  }
 }

@@ -23,7 +23,7 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
   }, [location.pathname]);
 
   const menuItems = [
-    { path: '/', icon: HomeIcon, text: 'Dashboard' },
+    { path: '/dashboard', icon: HomeIcon, text: 'Dashboard' },
     { path: '/chat', icon: ChatBubbleLeftRightIcon, text: 'Solidity Assistant' },
     { path: '/templates', icon: DocumentDuplicateIcon, text: 'Contract Templates' },
     { path: '/deploy', icon: CogIcon, text: 'Deploy' },

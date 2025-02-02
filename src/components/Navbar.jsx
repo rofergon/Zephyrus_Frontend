@@ -1,13 +1,20 @@
 import React, { useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAccount, useChainId, useDisconnect, useSwitchChain } from 'wagmi'
 import { useAppKit } from '@reown/appkit/react'
+import { 
+  HomeIcon, 
+  ArrowRightOnRectangleIcon,
+  ChevronDownIcon
+} from '@heroicons/react/24/outline';
 
 const Navbar = () => {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
+  const location = useLocation();
+  const isLandingPage = location.pathname === '/';
 
   // Cambiar a la red Sonic cuando se conecte
   useEffect(() => {
@@ -43,7 +50,9 @@ const Navbar = () => {
               </span>
             </Link>
           </div>
+
           <div className="flex items-center space-x-4">
+            {/* Network Status */}
             <div className="hidden md:flex items-center space-x-2">
               <span className={`h-2 w-2 ${getNetworkIndicatorColor()} rounded-full animate-pulse`}></span>
               <span className={`text-sm ${chainId === 57054 ? 'text-emerald-400' : 'text-yellow-400'}`}>
@@ -58,7 +67,53 @@ const Navbar = () => {
                 )}
               </span>
             </div>
-            <appkit-button />
+
+            {/* Navigation Links - Only show when connected */}
+            {isConnected && !isLandingPage && (
+              <div className="hidden md:flex items-center space-x-4">
+                <Link
+                  to="/dashboard"
+                  className="flex items-center px-3 py-2 rounded-lg text-gray-300 hover:bg-gray-700/50 transition-colors"
+                >
+                  <HomeIcon className="w-5 h-5 mr-1" />
+                  Dashboard
+                </Link>
+              </div>
+            )}
+
+            {/* Connect Wallet Button */}
+            <div className="flex items-center">
+              <appkit-button />
+            </div>
+
+            {/* User Menu - Only show when connected */}
+            {isConnected && (
+              <div className="relative group">
+                <button className="flex items-center space-x-2 px-3 py-2 rounded-lg text-gray-300 hover:bg-gray-700/50 transition-colors">
+                  <span className="text-sm">
+                    {address?.slice(0, 6)}...{address?.slice(-4)}
+                  </span>
+                  <ChevronDownIcon className="w-4 h-4" />
+                </button>
+                <div className="absolute right-0 mt-2 w-48 rounded-lg shadow-lg bg-gray-800 ring-1 ring-black ring-opacity-5 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+                  <div className="py-1">
+                    <Link
+                      to="/dashboard"
+                      className="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
+                    >
+                      Dashboard
+                    </Link>
+                    <button
+                      onClick={() => disconnect()}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 flex items-center"
+                    >
+                      <ArrowRightOnRectangleIcon className="w-4 h-4 mr-2" />
+                      Disconnect
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
