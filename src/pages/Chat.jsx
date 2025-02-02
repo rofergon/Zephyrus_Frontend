@@ -47,6 +47,8 @@ contract MyToken is ERC20, Ownable {
   const containerRef = useRef(null);
   const chatContainerRef = useRef(null);
 
+  const [fileExplorerWidth, setFileExplorerWidth] = useState(256); // 16rem = 256px default width
+
   useEffect(() => {
     if (location.state?.templateCode) {
       setCode(location.state.templateCode);
@@ -453,16 +455,42 @@ contract MyToken is ERC20, Ownable {
 
   return (
     <div className="h-[calc(100vh-4rem)] flex">
-      {/* File Explorer */}
-      <div className="w-64 h-full">
-        <FileExplorer onFileSelect={handleFileSelect} selectedFile={selectedFile} />
+      {/* File Explorer with resize handle */}
+      <div className="relative" style={{ width: `${fileExplorerWidth}px`, minWidth: '150px' }}>
+        <div className="h-full">
+          <FileExplorer onFileSelect={handleFileSelect} selectedFile={selectedFile} />
+        </div>
+        {/* Vertical resize handle */}
+        <div
+          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500/20 transition-colors"
+          onMouseDown={(e) => {
+            const startX = e.clientX;
+            const startWidth = fileExplorerWidth;
+            
+            const handleMouseMove = (moveEvent) => {
+              const delta = moveEvent.clientX - startX;
+              const newWidth = Math.max(150, Math.min(startWidth + delta, window.innerWidth * 0.8));
+              setFileExplorerWidth(newWidth);
+            };
+            
+            const handleMouseUp = () => {
+              document.removeEventListener('mousemove', handleMouseMove);
+              document.removeEventListener('mouseup', handleMouseUp);
+            };
+            
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+          }}
+        >
+          <div className="w-1 h-full bg-gray-600 opacity-0 hover:opacity-100"></div>
+        </div>
       </div>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Editor Section */}
         <div 
-          className="flex-1 bg-gray-900 min-h-0"
+          className="flex-1 bg-gray-900 min-h-0 relative"
           style={{ height: `calc(100% - ${chatHeight}px)` }}
         >
           {renderEditorToolbar()}
@@ -496,6 +524,38 @@ contract MyToken is ERC20, Ownable {
               }}
             />
           </div>
+          
+          {/* Resize handle between editor and chat */}
+          <div
+            className="absolute bottom-0 left-0 w-full h-2 cursor-row-resize group bg-transparent hover:bg-blue-500/20 transition-colors z-10"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startY = e.clientY;
+              const startHeight = chatHeight;
+              const totalHeight = window.innerHeight - 64; // 4rem for top bar
+              
+              const handleMouseMove = (moveEvent) => {
+                const delta = startY - moveEvent.clientY;
+                const newChatHeight = Math.min(
+                  Math.max(150, startHeight + delta),
+                  totalHeight - 200 // Ensure minimum editor height of 200px
+                );
+                setChatHeight(newChatHeight);
+              };
+              
+              const handleMouseUp = () => {
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+                document.body.style.cursor = 'default';
+              };
+              
+              document.addEventListener('mousemove', handleMouseMove);
+              document.addEventListener('mouseup', handleMouseUp);
+              document.body.style.cursor = 'row-resize';
+            }}
+          >
+            <div className="w-full h-0.5 bg-gray-400 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          </div>
         </div>
 
         {/* Chat Section */}
@@ -504,34 +564,7 @@ contract MyToken is ERC20, Ownable {
           className="bg-gray-900 border-t border-gray-700"
           style={{ height: `${chatHeight}px` }}
         >
-          <div
-            className="absolute top-0 left-0 w-full h-4 cursor-row-resize flex items-center justify-center hover:bg-blue-500/20 transition-colors"
-            onMouseDown={(e) => {
-              const startY = e.clientY;
-              const startHeight = chatHeight;
-              
-              const handleMouseMove = (moveEvent) => {
-                const delta = startY - moveEvent.clientY;
-                const newHeight = Math.min(
-                  Math.max(150, startHeight + delta),
-                  window.innerHeight - 264 // 4rem (top) + 100px (min editor)
-                );
-                setChatHeight(newHeight);
-              };
-              
-              const handleMouseUp = () => {
-                document.removeEventListener('mousemove', handleMouseMove);
-                document.removeEventListener('mouseup', handleMouseUp);
-              };
-              
-              document.addEventListener('mousemove', handleMouseMove);
-              document.addEventListener('mouseup', handleMouseUp);
-            }}
-          >
-            <div className="w-8 h-0.5 bg-gray-400 rounded-full"></div>
-          </div>
-
-          <div className="h-full flex flex-col pt-4">
+          <div className="h-full flex flex-col">
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {messages.map((message) => (
                 <div
