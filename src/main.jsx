@@ -102,10 +102,18 @@ function AppKitProvider({ children }) {
   )
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
+// Prevent multiple root creation
+let root
+const rootElement = document.getElementById('root')
+
+if (!root && rootElement) {
+  root = ReactDOM.createRoot(rootElement)
+}
+
+root.render(
   <React.StrictMode>
     <AppKitProvider>
       <App />
     </AppKitProvider>
-  </React.StrictMode>,
+  </React.StrictMode>
 )
