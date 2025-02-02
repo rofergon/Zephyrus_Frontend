@@ -5,133 +5,270 @@ import { motion } from 'framer-motion';
 const templates = [
   {
     id: 1,
-    title: 'Zephyrus ERC20 Token',
-    description: 'Standard ERC20 token with Zephyrus enhanced features and security',
+    title: 'Customizable ERC20 Token',
+    description: 'Advanced ERC20 token with customizable features and role-based access control',
     category: 'Token',
-    features: ['Mintable', 'Burnable', 'Pausable'],
-    complexity: 'Beginner',
+    features: ['Mintable', 'Burnable', 'Pausable', 'Role-Based Access Control', 'Max Supply', 'Custom Decimals'],
+    complexity: 'Intermediate',
     code: `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.9;
+pragma solidity 0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Pausable.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 
-contract ZephyrusToken is ERC20, Ownable {
-    constructor() ERC20("ZephyrusToken", "ZEPH") {}
+contract CustomizableERC20 is ERC20, ERC20Burnable, ERC20Pausable, AccessControl {
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    
+    uint8 private _decimals;
+    uint256 private _maxSupply;
 
-    function mint(address to, uint256 amount) public onlyOwner {
+    error InitialSupplyExceedsMaxSupply();
+    error WouldExceedMaxSupply();
+
+    constructor(
+        string memory name,
+        string memory symbol,
+        uint256 initialSupply,
+        uint8 tokenDecimals,
+        uint256 initialMaxSupply
+    ) ERC20(name, symbol) {
+        if (initialMaxSupply != 0 && initialSupply > initialMaxSupply) revert InitialSupplyExceedsMaxSupply();
+        
+        _decimals = tokenDecimals;
+        _maxSupply = initialMaxSupply;
+        
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(MINTER_ROLE, msg.sender);
+        _grantRole(PAUSER_ROLE, msg.sender);
+
+        if (initialSupply > 0) {
+            _mint(msg.sender, initialSupply);
+        }
+    }
+
+    function mint(address to, uint256 amount) public onlyRole(MINTER_ROLE) {
+        if (_maxSupply != 0 && totalSupply() + amount > _maxSupply) revert WouldExceedMaxSupply();
         _mint(to, amount);
     }
 
-    function burn(uint256 amount) public {
-        _burn(msg.sender, amount);
+    function pause() public onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    function unpause() public onlyRole(PAUSER_ROLE) {
+        _unpause();
+    }
+
+    function decimals() public view virtual override returns (uint8) {
+        return _decimals;
+    }
+
+    function maxSupply() public view returns (uint256) {
+        return _maxSupply;
     }
 }`
   },
   {
     id: 2,
-    title: 'Zephyrus NFT Collection',
-    description: 'Advanced ERC721 NFT collection with Zephyrus metadata support',
+    title: 'Customizable ERC721 NFT Collection',
+    description: 'Advanced ERC721 NFT collection with enumerable, URI storage, and role-based access control',
     category: 'NFT',
-    features: ['Batch Minting', 'Metadata', 'Royalties'],
+    features: ['Mintable', 'Burnable', 'Pausable', 'Enumerable', 'URI Storage', 'Role-Based Access Control'],
     complexity: 'Intermediate',
     code: `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Pausable.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 
-contract ZephyrusNFT is ERC721, Ownable {
-    using Counters for Counters.Counter;
-    Counters.Counter private _tokenIds;
+contract CustomizableERC721 is ERC721, ERC721Enumerable, ERC721URIStorage, ERC721Pausable, AccessControl {
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    
+    uint256 private _nextTokenId;
+    uint256 private _maxSupply;
 
-    constructor() ERC721("ZephyrusNFT", "ZNFT") {}
+    error MaxSupplyExceeded();
+    error TokenDoesNotExist();
+    error CallerNotOwnerNorApproved();
 
-    function mint(address to) public onlyOwner returns (uint256) {
-        _tokenIds.increment();
-        uint256 newTokenId = _tokenIds.current();
-        _safeMint(to, newTokenId);
-        return newTokenId;
+    constructor(
+        string memory name,
+        string memory symbol,
+        uint256 maxSupply_
+    ) ERC721(name, symbol) {
+        _maxSupply = maxSupply_;
+        
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(MINTER_ROLE, msg.sender);
+        _grantRole(PAUSER_ROLE, msg.sender);
+    }
+
+    function safeMint(address to, string memory uri) public onlyRole(MINTER_ROLE) {
+        if (_maxSupply != 0 && _nextTokenId >= _maxSupply) revert MaxSupplyExceeded();
+        
+        uint256 tokenId = _nextTokenId++;
+        _safeMint(to, tokenId);
+        _setTokenURI(tokenId, uri);
+    }
+
+    function burn(uint256 tokenId) public {
+        if (_ownerOf(tokenId) == address(0)) revert TokenDoesNotExist();
+        if (!_isAuthorized(_ownerOf(tokenId), msg.sender, tokenId)) revert CallerNotOwnerNorApproved();
+        _burn(tokenId);
+    }
+
+    function pause() public onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    function unpause() public onlyRole(PAUSER_ROLE) {
+        _unpause();
+    }
+
+    function maxSupply() public view returns (uint256) {
+        return _maxSupply;
+    }
+
+    function totalMinted() public view returns (uint256) {
+        return _nextTokenId;
     }
 }`
   },
   {
     id: 3,
-    title: 'Zephyrus Marketplace',
-    description: 'Secure decentralized marketplace powered by Zephyrus',
-    category: 'DeFi',
-    features: ['Multi-token', 'Auctions', 'Offers'],
+    title: 'Customizable DAO',
+    description: 'Advanced DAO contract with proposal system, voting, and member management',
+    category: 'Governance',
+    features: ['Proposal System', 'Voting', 'Member Management', 'Quorum', 'Timelock', 'Reentrancy Protection'],
     complexity: 'Advanced',
     code: `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.9;
+pragma solidity 0.8.28;
 
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
-contract NFTMarketplace is ReentrancyGuard {
-    struct Listing {
-        address seller;
-        uint256 price;
-        bool active;
+contract DAO is ReentrancyGuard {
+    struct Proposal {
+        uint256 id;
+        string description;
+        address target;
+        bytes data;
+        uint256 forVotes;
+        uint256 againstVotes;
+        uint256 snapshotTotalMembers;
+        uint256 deadline;
+        bool executed;
     }
 
-    mapping(address => mapping(uint256 => Listing)) public listings;
+    uint256 public constant VOTING_PERIOD = 7 days;
+    uint256 public constant QUORUM_PERCENTAGE = 4;
+    uint256 public constant MAJORITY_PERCENTAGE = 51;
 
-    function listNFT(address nftContract, uint256 tokenId, uint256 price) external {
-        IERC721(nftContract).transferFrom(msg.sender, address(this), tokenId);
-        listings[nftContract][tokenId] = Listing(msg.sender, price, true);
+    uint256 private nextProposalId;
+    address[] private members;
+    mapping(address => bool) public isMember;
+    mapping(uint256 => Proposal) public proposals;
+    mapping(uint256 => mapping(address => bool)) public voted;
+
+    event ProposalCreated(uint256 indexed proposalId, address indexed proposer, string description);
+    event VoteCast(uint256 indexed proposalId, address indexed voter, bool support);
+    event ProposalExecuted(uint256 indexed proposalId, address indexed executor);
+    event MemberJoined(address indexed member);
+
+    modifier onlyMember() {
+        require(isMember[msg.sender], "DAO: No es miembro");
+        _;
     }
 
-    function buyNFT(address nftContract, uint256 tokenId) external payable nonReentrant {
-        Listing memory listing = listings[nftContract][tokenId];
-        require(listing.active, "Not for sale");
-        require(msg.value >= listing.price, "Insufficient payment");
+    modifier proposalExists(uint256 proposalId) {
+        require(proposals[proposalId].id == proposalId, "DAO: Propuesta inexistente");
+        _;
+    }
+
+    constructor() {
+        _addMember(msg.sender);
+    }
+
+    function join() external {
+        require(!isMember[msg.sender], "DAO: Ya es miembro");
+        _addMember(msg.sender);
+    }
+
+    function createProposal(
+        string memory _description,
+        address _target,
+        bytes memory _calldata
+    ) external onlyMember {
+        uint256 proposalId = nextProposalId++;
         
-        listings[nftContract][tokenId].active = false;
-        IERC721(nftContract).transferFrom(address(this), msg.sender, tokenId);
-        payable(listing.seller).transfer(msg.value);
-    }
-}`
-  },
-  {
-    id: 4,
-    title: 'DAO',
-    description: 'Governance contract for decentralized autonomous organizations',
-    category: 'Governance',
-    features: ['Voting', 'Proposals', 'Treasury'],
-    complexity: 'Advanced',
-    code: `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.9;
+        proposals[proposalId] = Proposal({
+            id: proposalId,
+            description: _description,
+            target: _target,
+            data: _calldata,
+            forVotes: 0,
+            againstVotes: 0,
+            snapshotTotalMembers: members.length,
+            deadline: block.timestamp + VOTING_PERIOD,
+            executed: false
+        });
 
-import "@openzeppelin/contracts/governance/Governor.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
-
-contract MyGovernor is Governor, GovernorSettings, GovernorCountingSimple, GovernorVotes, GovernorVotesQuorumFraction {
-    constructor(IVotes _token)
-        Governor("MyGovernor")
-        GovernorSettings(1, 50400, 0)
-        GovernorVotes(_token)
-        GovernorVotesQuorumFraction(4)
-    {}
-
-    function votingDelay() public view override(IGovernor, GovernorSettings) returns (uint256) {
-        return super.votingDelay();
+        emit ProposalCreated(proposalId, msg.sender, _description);
     }
 
-    function votingPeriod() public view override(IGovernor, GovernorSettings) returns (uint256) {
-        return super.votingPeriod();
+    function vote(uint256 proposalId, bool support) external onlyMember proposalExists(proposalId) {
+        Proposal storage proposal = proposals[proposalId];
+        
+        require(block.timestamp <= proposal.deadline, "DAO: Votacion finalizada");
+        require(!voted[proposalId][msg.sender], "DAO: Ya voto");
+
+        voted[proposalId][msg.sender] = true;
+        
+        if (support) {
+            proposal.forVotes += 1;
+        } else {
+            proposal.againstVotes += 1;
+        }
+
+        emit VoteCast(proposalId, msg.sender, support);
     }
 
-    function quorum(uint256 blockNumber) public view override(IGovernor, GovernorVotesQuorumFraction) returns (uint256) {
-        return super.quorum(blockNumber);
+    function executeProposal(uint256 proposalId) external nonReentrant proposalExists(proposalId) {
+        Proposal storage proposal = proposals[proposalId];
+        
+        require(block.timestamp > proposal.deadline, "DAO: Votacion activa");
+        require(!proposal.executed, "DAO: Ya ejecutada");
+        
+        uint256 totalVotes = proposal.forVotes + proposal.againstVotes;
+        uint256 quorum = (proposal.snapshotTotalMembers * QUORUM_PERCENTAGE) / 100;
+        
+        require(totalVotes >= quorum, "DAO: Quorum no alcanzado");
+        require(
+            proposal.forVotes * 100 > totalVotes * MAJORITY_PERCENTAGE,
+            "DAO: Mayoria no alcanzada"
+        );
+
+        proposal.executed = true;
+        (bool success, ) = proposal.target.call(proposal.data);
+        require(success, "DAO: Ejecucion fallida");
+
+        emit ProposalExecuted(proposalId, msg.sender);
     }
 
-    function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) {
-        return super.proposalThreshold();
+    function getMembers() external view returns (address[] memory) {
+        return members;
+    }
+
+    function _addMember(address _member) private {
+        isMember[_member] = true;
+        members.push(_member);
+        emit MemberJoined(_member);
     }
 }`
   }
