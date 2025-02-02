@@ -5,10 +5,55 @@ import { virtualFS } from '../services/virtual-fs';
 let compiler = null;
 let compilerInitPromise = null;
 let isInitializing = false;
+let currentVersion = '0.8.20';
+let versionList = null;
+let availableVersions = [];
+
+async function getCompilerVersions() {
+  if (versionList) return { versionList, availableVersions };
+  
+  try {
+    const response = await fetch('https://binaries.soliditylang.org/bin/list.json');
+    if (!response.ok) {
+      throw new Error('Failed to fetch compiler versions');
+    }
+    const data = await response.json();
+    
+    // Filtrar solo las versiones estables (no nightly)
+    versionList = data.builds.reduce((acc, build) => {
+      // Solo incluir versiones que no sean nightly builds
+      if (!build.path.includes('nightly')) {
+        const version = build.version;
+        if (!acc[version]) {
+          acc[version] = build;
+          availableVersions.push(version);
+        }
+      }
+      return acc;
+    }, {});
+
+    // Ordenar las versiones disponibles
+    availableVersions.sort((a, b) => {
+      const partsA = a.split('.').map(Number);
+      const partsB = b.split('.').map(Number);
+      for (let i = 0; i < 3; i++) {
+        if (partsA[i] !== partsB[i]) {
+          return partsB[i] - partsA[i];
+        }
+      }
+      return 0;
+    });
+
+    return { versionList, availableVersions };
+  } catch (error) {
+    console.error('[Worker] Error fetching compiler versions:', error);
+    throw error;
+  }
+}
 
 // Initialize compiler
-async function initCompiler() {
-  if (compiler) {
+async function initCompiler(version = '0.8.20') {
+  if (compiler && currentVersion === version) {
     return compiler;
   }
 
@@ -19,15 +64,27 @@ async function initCompiler() {
   if (isInitializing) {
     // Esperar un poco y reintentar
     await new Promise(resolve => setTimeout(resolve, 100));
-    return initCompiler();
+    return initCompiler(version);
   }
 
   isInitializing = true;
-  console.log('[Worker] Starting compiler initialization');
+  console.log('[Worker] Starting compiler initialization for version:', version);
 
   compilerInitPromise = (async () => {
     try {
-      const wasmBinaryURL = 'https://binaries.soliditylang.org/bin/soljson-v0.8.20+commit.a1b79de6.js';
+      // Obtener la lista de versiones y encontrar la URL correcta
+      const { versionList, availableVersions } = await getCompilerVersions();
+      
+      // Verificar si la versión solicitada está disponible
+      if (!versionList[version]) {
+        const latestVersion = availableVersions[0];
+        throw new Error(`Compiler version ${version} not found. Available versions are: ${availableVersions.slice(0, 5).join(', ')}... Latest version is ${latestVersion}`);
+      }
+
+      const versionData = versionList[version];
+      const wasmBinaryURL = `https://binaries.soliditylang.org/bin/${versionData.path}`;
+      console.log('[Worker] Using compiler URL:', wasmBinaryURL);
+      
       const response = await fetch(wasmBinaryURL);
       if (!response.ok) {
         throw new Error(`Failed to fetch compiler: ${response.statusText}`);
@@ -43,7 +100,8 @@ async function initCompiler() {
               const solc = wrapper(Module);
               solc.loadRemoteVersion = (x, cb) => cb(null, solc);
               compiler = solc;
-              console.log('[Worker] Compiler initialized successfully');
+              currentVersion = version;
+              console.log('[Worker] Compiler initialized successfully for version:', version);
               resolve(solc);
             } catch (err) {
               console.error('[Worker] Failed to initialize compiler:', err);
@@ -166,10 +224,63 @@ async function compileContract(sourceCode, sourcePath = 'main.sol') {
 // Update the main message handler
 self.onmessage = async (event) => {
   try {
-    const { sourceCode, sourcePath } = event.data;
+    const { sourceCode, sourcePath, compilerVersion } = event.data;
     
-    // Compile the contract
-    const output = await compileContract(sourceCode, sourcePath);
+    // Compile the contract using the specified version
+    const solc = await initCompiler(compilerVersion);
+    
+    // Prepare input for the compiler
+    const input = {
+      language: 'Solidity',
+      sources: {
+        [sourcePath]: {
+          content: sourceCode
+        }
+      },
+      settings: {
+        optimizer: {
+          enabled: true,
+          runs: 200
+        },
+        outputSelection: {
+          '*': {
+            '*': ['*']
+          }
+        }
+      }
+    };
+
+    // Pre-cargar las importaciones conocidas
+    const imports = sourceCode.match(/import\s+(?:{[^}]+}\s+from\s+)?["'][^"']+["']/g) || [];
+    console.log('[Worker] Found imports:', imports);
+
+    for (const importStatement of imports) {
+      const match = importStatement.match(/["'](.*?)["']/);
+      if (match) {
+        const path = match[1];
+        try {
+          const { path: resolvedPath, content } = await virtualFS.resolveImport(path, sourcePath);
+          console.log('[Worker] Pre-loaded import:', resolvedPath);
+          input.sources[resolvedPath] = { content };
+        } catch (error) {
+          console.warn('[Worker] Could not pre-load import:', path, error);
+        }
+      }
+    }
+
+    console.log('[Worker] Compiling with input:', input);
+    const jsonInput = JSON.stringify(input);
+    const output = JSON.parse(solc.compile(jsonInput, { 
+      import: async (path) => {
+        try {
+          const { content } = await virtualFS.resolveImport(path, sourcePath);
+          return { contents: content };
+        } catch (error) {
+          console.error('[Worker] Import resolution error:', error);
+          return { error: error.message };
+        }
+      }
+    }));
     
     // Process compilation results
     const markers = [];

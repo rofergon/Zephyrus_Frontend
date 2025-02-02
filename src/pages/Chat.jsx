@@ -207,6 +207,35 @@ contract MyToken is ERC20, Ownable {
     console.log('[Chat] Starting validation for code:', codeContent.substring(0, 100) + '...');
     return new Promise((resolve) => {
       try {
+        // Extraer la versión del pragma
+        const pragmaMatch = codeContent.match(/pragma solidity\s+(\^?\d+\.\d+\.\d+);/);
+        let version = selectedVersion;
+        
+        if (pragmaMatch) {
+          // Remover el ^ si existe y usar la versión exacta del pragma
+          version = pragmaMatch[1].replace('^', '');
+          console.log('[Chat] Detected pragma version:', version);
+          
+          // Verificar si la versión es mayor a 0.8.24 (última versión estable disponible)
+          const versionParts = version.split('.').map(Number);
+          if (versionParts[0] === 0 && versionParts[1] === 8 && versionParts[2] > 24) {
+            resolve([{
+              startLineNumber: 1,
+              startColumn: 1,
+              endLineNumber: 1,
+              endColumn: 1000,
+              message: `La versión ${version} no está disponible. La última versión estable es 0.8.24. Por favor, actualiza el pragma solidity a una versión disponible.`,
+              severity: 8
+            }]);
+            return;
+          }
+          
+          // Actualizar la versión seleccionada en el UI si es diferente
+          if (version !== selectedVersion) {
+            setSelectedVersion(version);
+          }
+        }
+
         const worker = new Worker(
           new URL('../workers/solc.worker.js', import.meta.url),
           { type: 'module' }
@@ -216,26 +245,53 @@ contract MyToken is ERC20, Ownable {
           const { markers, error } = event.data;
           if (error) {
             console.error('[Chat] Compilation error:', error);
+            // Si el error es sobre la versión del compilador, mostrar un mensaje más amigable
+            if (error.includes('Compiler version') && error.includes('not found')) {
+              resolve([{
+                startLineNumber: 1,
+                startColumn: 1,
+                endLineNumber: 1,
+                endColumn: 1000,
+                message: error,
+                severity: 8
+              }]);
+              return;
+            }
           }
           console.log('[Chat] Received markers from worker:', markers);
-          worker.terminate(); // Importante: terminar el worker después de usarlo
+          worker.terminate();
           resolve(markers || []);
         };
 
         worker.onerror = (error) => {
           console.error('[Chat] Worker error:', error);
-          worker.terminate(); // Importante: terminar el worker en caso de error
-          resolve([]);
+          worker.terminate();
+          resolve([{
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: 1,
+            endColumn: 1000,
+            message: `Error al compilar: ${error.message}`,
+            severity: 8
+          }]);
         };
 
-        console.log('[Chat] Sending code to worker');
+        console.log('[Chat] Sending code to worker with version:', version);
         worker.postMessage({
           sourceCode: codeContent,
-          sourcePath: selectedFile || 'main.sol'
+          sourcePath: selectedFile || 'main.sol',
+          compilerVersion: version
         });
       } catch (error) {
         console.error('[Chat] Error creating worker:', error);
-        resolve([]);
+        resolve([{
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 1000,
+          message: `Error inesperado: ${error.message}`,
+          severity: 8
+        }]);
       }
     });
   };
