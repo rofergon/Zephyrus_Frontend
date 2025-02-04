@@ -1,293 +1,126 @@
-// Import solc wrapper
-import wrapper from 'solc/wrapper';
+// Explicitly mark as module worker
+self.window = self; // Some libraries expect window to be defined
+
+import { Solc } from '../services/solc-browserify';
 import { virtualFS } from '../services/virtual-fs';
 
 let compiler = null;
-let compilerInitPromise = null;
-let isInitializing = false;
-let currentVersion = '0.8.20';
-let versionList = null;
-let availableVersions = [];
+const fileCache = new Map();
 
-async function getCompilerVersions() {
-  if (versionList) return { versionList, availableVersions };
-  
+// Function to preload all local dependencies
+async function preloadDependencies(sourceCode, sourcePath) {
   try {
-    const response = await fetch('https://binaries.soliditylang.org/bin/list.json');
-    if (!response.ok) {
-      throw new Error('Failed to fetch compiler versions');
-    }
-    const data = await response.json();
+    // Store the main file
+    fileCache.set(sourcePath, sourceCode);
     
-    // Filtrar solo las versiones estables (no nightly)
-    versionList = data.builds.reduce((acc, build) => {
-      // Solo incluir versiones que no sean nightly builds
-      if (!build.path.includes('nightly')) {
-        const version = build.version;
-        if (!acc[version]) {
-          acc[version] = build;
-          availableVersions.push(version);
-        }
-      }
-      return acc;
-    }, {});
-
-    // Ordenar las versiones disponibles
-    availableVersions.sort((a, b) => {
-      const partsA = a.split('.').map(Number);
-      const partsB = b.split('.').map(Number);
-      for (let i = 0; i < 3; i++) {
-        if (partsA[i] !== partsB[i]) {
-          return partsB[i] - partsA[i];
-        }
-      }
-      return 0;
-    });
-
-    return { versionList, availableVersions };
-  } catch (error) {
-    console.error('[Worker] Error fetching compiler versions:', error);
-    throw error;
-  }
-}
-
-// Initialize compiler
-async function initCompiler(version = '0.8.20') {
-  if (compiler && currentVersion === version) {
-    return compiler;
-  }
-
-  if (compilerInitPromise) {
-    return compilerInitPromise;
-  }
-
-  if (isInitializing) {
-    // Esperar un poco y reintentar
-    await new Promise(resolve => setTimeout(resolve, 100));
-    return initCompiler(version);
-  }
-
-  isInitializing = true;
-  console.log('[Worker] Starting compiler initialization for version:', version);
-
-  compilerInitPromise = (async () => {
-    try {
-      // Obtener la lista de versiones y encontrar la URL correcta
-      const { versionList, availableVersions } = await getCompilerVersions();
+    // Find all imports
+    const importRegex = /import\s+(?:{[^}]+}\s+from\s+)?["']([^"']+)["']/g;
+    let match;
+    
+    while ((match = importRegex.exec(sourceCode)) !== null) {
+      const importPath = match[1];
       
-      // Verificar si la versión solicitada está disponible
-      if (!versionList[version]) {
-        const latestVersion = availableVersions[0];
-        throw new Error(`Compiler version ${version} not found. Available versions are: ${availableVersions.slice(0, 5).join(', ')}... Latest version is ${latestVersion}`);
+      // Skip OpenZeppelin imports as they'll be handled separately
+      if (importPath.startsWith('@openzeppelin/')) {
+        continue;
       }
-
-      const versionData = versionList[version];
-      const wasmBinaryURL = `https://binaries.soliditylang.org/bin/${versionData.path}`;
-      console.log('[Worker] Using compiler URL:', wasmBinaryURL);
       
-      const response = await fetch(wasmBinaryURL);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch compiler: ${response.statusText}`);
-      }
-      const code = await response.text();
+      // Normalize the path
+      const normalizedPath = importPath.replace(/^\.\//, '').replace(/^\.\.\//, '');
       
-      return new Promise((resolve, reject) => {
-        const Module = {
-          print: (text) => console.log('[Solc]', text),
-          printErr: (text) => console.error('[Solc Error]', text),
-          onRuntimeInitialized: () => {
-            try {
-              const solc = wrapper(Module);
-              solc.loadRemoteVersion = (x, cb) => cb(null, solc);
-              compiler = solc;
-              currentVersion = version;
-              console.log('[Worker] Compiler initialized successfully for version:', version);
-              resolve(solc);
-            } catch (err) {
-              console.error('[Worker] Failed to initialize compiler:', err);
-              reject(err);
-            } finally {
-              isInitializing = false;
-              compilerInitPromise = null;
-            }
-          }
-        };
-
+      // Only load if not already in cache
+      if (!fileCache.has(normalizedPath)) {
         try {
-          console.log('[Worker] Evaluating compiler code');
-          const initialize = new Function('Module', code);
-          initialize(Module);
-        } catch (err) {
-          isInitializing = false;
-          compilerInitPromise = null;
-          console.error('[Worker] Failed to evaluate compiler code:', err);
-          reject(err);
+          const content = await virtualFS.readFile(normalizedPath);
+          console.log(`[Worker] Loaded local file ${normalizedPath}:`, content);
+          fileCache.set(normalizedPath, content);
+          // Recursively preload dependencies
+          await preloadDependencies(content, normalizedPath);
+        } catch (error) {
+          console.error(`[Worker] Failed to load dependency ${normalizedPath}:`, error);
         }
-      });
-    } catch (error) {
-      isInitializing = false;
-      compilerInitPromise = null;
-      console.error('[Worker] Compiler initialization failed:', error);
-      throw error;
+      }
     }
-  })();
-
-  return compilerInitPromise;
+  } catch (error) {
+    console.error('[Worker] Error preloading dependencies:', error);
+  }
 }
 
-// Improved import resolution function
-async function findImports(path, fromPath) {
-  console.log('[Worker] Resolving import:', path, 'from:', fromPath);
+// Import resolution callback function - must be synchronous
+function importCallback(path) {
+  console.log('[Worker] Resolving import:', path);
   
   try {
-    // Usar el sistema de archivos virtual para resolver la importación
-    const { path: resolvedPath, content } = await virtualFS.resolveImport(path, fromPath);
-    console.log('[Worker] Successfully resolved import:', resolvedPath);
-    return { contents: content };
+    // Handle OpenZeppelin imports
+    if (path.startsWith('@openzeppelin/')) {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', `https://raw.githubusercontent.com/OpenZeppelin/openzeppelin-contracts/v4.9.0/contracts/${path.replace('@openzeppelin/contracts/', '')}`, false);
+      xhr.send(null);
+      
+      if (xhr.status === 200) {
+        console.log('[Worker] Successfully resolved OpenZeppelin import:', path);
+        return { contents: xhr.responseText };
+      } else {
+        console.error('[Worker] OpenZeppelin import resolution error:', xhr.statusText);
+        return { error: `Failed to load ${path}: ${xhr.statusText}` };
+      }
+    }
+    
+    // Handle local imports from cache
+    const normalizedPath = path.replace(/^\.\//, '').replace(/^\.\.\//, '');
+    if (fileCache.has(normalizedPath)) {
+      console.log('[Worker] Successfully resolved local import from cache:', normalizedPath);
+      return { contents: fileCache.get(normalizedPath) };
+    }
+    
+    throw new Error(`Could not find ${path}`);
   } catch (error) {
     console.error('[Worker] Import resolution error:', error);
     return { error: error.message };
   }
 }
 
-// Improved compilation function
-async function compileContract(sourceCode, sourcePath = 'main.sol') {
-  try {
-    console.log('[Worker] Compiling contract from:', sourcePath);
-    
-    // Asegurarse de que el compilador esté inicializado
-    const solc = await initCompiler();
-    if (!solc) {
-      throw new Error('Failed to initialize compiler');
-    }
-    
-    // Prepare input for the compiler
-    const input = {
-      language: 'Solidity',
-      sources: {
-        [sourcePath]: {
-          content: sourceCode
-        }
-      },
-      settings: {
-        optimizer: {
-          enabled: true,
-          runs: 200
-        },
-        outputSelection: {
-          '*': {
-            '*': ['*']
-          }
-        }
-      }
-    };
-
-    // Pre-cargar las importaciones conocidas
-    const imports = sourceCode.match(/import\s+(?:{[^}]+}\s+from\s+)?["'][^"']+["']/g) || [];
-    console.log('[Worker] Found imports:', imports);
-
-    for (const importStatement of imports) {
-      const match = importStatement.match(/["'](.*?)["']/);
-      if (match) {
-        const path = match[1];
-        try {
-          const { path: resolvedPath, content } = await virtualFS.resolveImport(path, sourcePath);
-          console.log('[Worker] Pre-loaded import:', resolvedPath);
-          input.sources[resolvedPath] = { content };
-        } catch (error) {
-          console.warn('[Worker] Could not pre-load import:', path, error);
-        }
-      }
-    }
-
-    console.log('[Worker] Compiling with input:', input);
-    const jsonInput = JSON.stringify(input);
-    const output = JSON.parse(solc.compile(jsonInput, { 
-      import: async (path) => {
-        try {
-          const { content } = await virtualFS.resolveImport(path, sourcePath);
-          return { contents: content };
-        } catch (error) {
-          console.error('[Worker] Import resolution error:', error);
-          return { error: error.message };
-        }
-      }
-    }));
-    
-    return output;
-  } catch (error) {
-    console.error('[Worker] Compilation error:', error);
-    throw error;
-  }
-}
-
-// Update the main message handler
+// Main message handler
 self.onmessage = async (event) => {
   try {
-    const { sourceCode, sourcePath, compilerVersion } = event.data;
+    const { sourceCode, sourcePath } = event.data;
     
-    // Compile the contract using the specified version
-    const solc = await initCompiler(compilerVersion);
+    // Initialize the compiler if not already initialized
+    if (!compiler) {
+      compiler = new Solc((solc) => {
+        console.log('[Worker] Compiler initialized successfully');
+      });
+    }
     
-    // Prepare input for the compiler
-    const input = {
-      language: 'Solidity',
-      sources: {
-        [sourcePath]: {
-          content: sourceCode
-        }
-      },
-      settings: {
-        optimizer: {
-          enabled: true,
-          runs: 200
-        },
-        outputSelection: {
-          '*': {
-            '*': ['*']
-          }
-        }
-      }
-    };
-
-    // Pre-cargar las importaciones conocidas
-    const imports = sourceCode.match(/import\s+(?:{[^}]+}\s+from\s+)?["'][^"']+["']/g) || [];
-    console.log('[Worker] Found imports:', imports);
-
-    for (const importStatement of imports) {
-      const match = importStatement.match(/["'](.*?)["']/);
-      if (match) {
-        const path = match[1];
-        try {
-          const { path: resolvedPath, content } = await virtualFS.resolveImport(path, sourcePath);
-          console.log('[Worker] Pre-loaded import:', resolvedPath);
-          input.sources[resolvedPath] = { content };
-        } catch (error) {
-          console.warn('[Worker] Could not pre-load import:', path, error);
-        }
+    // Verify solidity version in pragma
+    const pragmaMatch = sourceCode.match(/pragma solidity\s+(\^?\d+\.\d+\.\d+);/);
+    if (pragmaMatch) {
+      const version = pragmaMatch[1].replace('^', '');
+      const versionParts = version.split('.').map(Number);
+      if (versionParts[0] === 0 && versionParts[1] === 8 && versionParts[2] > 20) {
+        throw new Error(`La versión ${version} no está disponible. La última versión estable es 0.8.20. Por favor, actualiza el pragma solidity a una versión disponible.`);
       }
     }
-
-    console.log('[Worker] Compiling with input:', input);
-    const jsonInput = JSON.stringify(input);
-    const output = JSON.parse(solc.compile(jsonInput, { 
-      import: async (path) => {
-        try {
-          const { content } = await virtualFS.resolveImport(path, sourcePath);
-          return { contents: content };
-        } catch (error) {
-          console.error('[Worker] Import resolution error:', error);
-          return { error: error.message };
-        }
-      }
-    }));
+    
+    // Clear the file cache
+    fileCache.clear();
+    
+    // Preload all local dependencies
+    await preloadDependencies(sourceCode, sourcePath || 'main.sol');
+    
+    // Log the contents of fileCache for debugging
+    console.log('[Worker] Files loaded:', Array.from(fileCache.entries()));
+    
+    // Compile the contract
+    console.log('[Worker] Starting compilation');
+    const output = await compiler.compile(sourceCode, importCallback);
     
     // Process compilation results
     const markers = [];
     
     if (output.errors) {
       output.errors.forEach(error => {
-        const lineMatch = error.formattedMessage.match(/:(\d+):/);
+        const lineMatch = error.formattedMessage?.match(/:(\d+):/);
         const lineNumber = lineMatch ? parseInt(lineMatch[1]) : 1;
         
         markers.push({

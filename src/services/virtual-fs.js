@@ -477,6 +477,39 @@ class VirtualFileSystem {
       this.db.close();
     }
   }
+
+  readFileSync(path) {
+    const normalizedPath = this.normalizePath(path);
+    const transaction = this.db.transaction([this.storeName], 'readonly');
+    const store = transaction.objectStore(this.storeName);
+    const request = store.get(normalizedPath);
+    
+    let content = null;
+    let error = null;
+    
+    request.onsuccess = (event) => {
+      if (event.target.result) {
+        content = event.target.result.content;
+      } else {
+        error = new Error(`File not found: ${path}`);
+      }
+    };
+    
+    request.onerror = (event) => {
+      error = event.target.error;
+    };
+    
+    // Wait for the request to complete
+    while (content === null && error === null) {
+      // Busy wait
+    }
+    
+    if (error) {
+      throw error;
+    }
+    
+    return content;
+  }
 }
 
 export const virtualFS = new VirtualFileSystem(); 

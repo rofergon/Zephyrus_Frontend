@@ -17,14 +17,32 @@ export default defineConfig({
     'global': 'globalThis',
     'process.env': process.env ?? {},
   },
+  worker: {
+    format: 'es',
+    plugins: [
+      NodeGlobalsPolyfillPlugin({
+        buffer: true,
+        process: true
+      }),
+      NodeModulesPolyfillPlugin()
+    ],
+    rollupOptions: {
+      output: {
+        format: 'es',
+        inlineDynamicImports: true
+      }
+    }
+  },
   build: {
+    target: 'esnext',
     commonjsOptions: {
       transformMixedEsModules: true
     },
     rollupOptions: {
       plugins: [rollupNodePolyFill()],
       output: {
-        manualChunks: undefined
+        manualChunks: undefined,
+        format: 'es'
       },
       external: [
         '@safe-global/safe-apps-sdk',
@@ -48,6 +66,7 @@ export default defineConfig({
   },
   optimizeDeps: {
     esbuildOptions: {
+      target: 'esnext',
       define: {
         global: 'globalThis'
       },
@@ -62,7 +81,8 @@ export default defineConfig({
     include: [
       'process/browser',
       '@safe-global/safe-apps-sdk',
-      '@safe-global/safe-apps-provider'
+      '@safe-global/safe-apps-provider',
+      'solc-browserify'
     ]
   },
   server: {

@@ -5,6 +5,13 @@ import { ResizableBox } from 'react-resizable';
 import FileExplorer from '../components/FileExplorer';
 import { virtualFS } from '../services/virtual-fs';
 import 'react-resizable/css/styles.css';
+import { SolidityCompiler } from '../workers/solidity.wrapper';
+
+// Asegurarse de que virtualFS está inicializado
+if (!virtualFS) {
+  console.error('[Chat] VirtualFileSystem not initialized');
+  throw new Error('VirtualFileSystem not initialized');
+}
 
 function Chat() {
   const location = useLocation();
@@ -22,14 +29,14 @@ function Chat() {
   const snippets = {
     'SPDX License': '// SPDX-License-Identifier: MIT\n',
     'Basic Contract': `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.19;
 
 contract MyContract {
     constructor() {
     }
 }`,
     'ERC20 Token': `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -45,6 +52,14 @@ contract MyToken is ERC20, Ownable {
   const chatContainerRef = useRef(null);
 
   const [fileExplorerWidth, setFileExplorerWidth] = useState(256); // 16rem = 256px default width
+
+  const [compiler] = useState(() => {
+    const instance = new SolidityCompiler();
+    instance.onReady(() => {
+      console.log('[Chat] Compiler is ready');
+    });
+    return instance;
+  });
 
   useEffect(() => {
     if (location.state?.templateCode) {
@@ -228,78 +243,96 @@ contract MyToken is ERC20, Ownable {
 
   const validateSolidity = async (codeContent) => {
     console.log('[Chat] Starting validation for code:', codeContent.substring(0, 100) + '...');
-    return new Promise((resolve) => {
+    return new Promise(async (resolve) => {
       try {
-        // Extraer la versión del pragma
-        const pragmaMatch = codeContent.match(/pragma solidity\s+(\^?\d+\.\d+\.\d+);/);
-        let version = '0.8.20'; // Fixed version
+        // Pre-load all imports
+        const importRegex = /import\s+(?:{[^}]+}\s+from\s+)?["']([^"']+)["']/g;
+        const imports = {};
+        let match;
         
-        // Verificar si la versión es mayor a 0.8.20 (última versión estable disponible)
-        const versionParts = version.split('.').map(Number);
-        if (versionParts[0] === 0 && versionParts[1] === 8 && versionParts[2] > 20) {
-          resolve([{
-            startLineNumber: 1,
-            startColumn: 1,
-            endLineNumber: 1,
-            endColumn: 1000,
-            message: `La versión ${version} no está disponible. La última versión estable es 0.8.20. Por favor, actualiza el pragma solidity a una versión disponible.`,
-            severity: 8
-          }]);
-          return;
+        // Set the current working directory based on the selected file
+        if (selectedFile) {
+          const workingDir = selectedFile.split('/').slice(0, -1).join('/');
+          console.log('[Chat] Setting working directory to:', workingDir);
+          try {
+            virtualFS.setWorkingDirectory(workingDir);
+            console.log('[Chat] Working directory set to:', virtualFS.getWorkingDirectory());
+          } catch (error) {
+            console.error('[Chat] Error setting working directory:', error);
+          }
         }
 
-        // Create and initialize the worker using Vite's syntax
-        const worker = new Worker(new URL('../workers/solc.worker.js', import.meta.url), {
-          type: 'module'
-        });
+        // Load all imports in parallel
+        const importPromises = [];
+        while ((match = importRegex.exec(codeContent)) !== null) {
+          const importPath = match[1];
+          console.log('[Chat] Pre-loading import:', importPath);
+          
+          importPromises.push(
+            virtualFS.resolveImport(importPath, selectedFile)
+              .then(({ content }) => {
+                console.log('[Chat] Successfully pre-loaded:', importPath);
+                imports[importPath] = content;
+              })
+              .catch(error => {
+                console.warn('[Chat] Could not pre-load import:', importPath, error);
+              })
+          );
+        }
 
-        worker.onmessage = (event) => {
-          const { markers, error, output } = event.data;
-          if (error) {
-            console.error('[Chat] Compilation error:', error);
-            resolve([{
-              startLineNumber: 1,
-              startColumn: 1,
-              endLineNumber: 1,
-              endColumn: 1000,
-              message: error,
-              severity: 8
-            }]);
-          } else {
-            console.log('[Chat] Compilation successful:', output);
-            resolve(markers || []);
+        // Wait for all imports to be resolved
+        await Promise.all(importPromises);
+
+        // Create a synchronous import callback that uses the pre-loaded imports
+        const importCallback = (path) => {
+          console.log('[Chat] Import requested:', path);
+          
+          if (imports[path]) {
+            console.log('[Chat] Import found:', path);
+            return { contents: imports[path] };
           }
-          worker.terminate();
+          
+          // Intentar resolver la importación en tiempo real si no se pre-cargó
+          try {
+            const { content } = virtualFS.resolveImport(path, selectedFile);
+            console.log('[Chat] Import resolved in real-time:', path);
+            imports[path] = content;
+            return { contents: content };
+          } catch (error) {
+            console.log('[Chat] Import not found:', path);
+            return { error: `Could not find source contract for ${path}` };
+          }
         };
 
-        worker.onerror = (error) => {
-          console.error('[Chat] Worker error:', error);
-          resolve([{
-            startLineNumber: 1,
-            startColumn: 1,
-            endLineNumber: 1,
-            endColumn: 1000,
-            message: `Error de compilación: ${error.message}`,
-            severity: 8
-          }]);
-          worker.terminate();
-        };
+        const result = await compiler.compile(codeContent, importCallback);
+        console.log('[Chat] Compilation result:', result);
 
-        // Send the code to the worker
-        console.log('[Chat] Sending code to worker');
-        worker.postMessage({
-          sourceCode: codeContent,
-          sourcePath: selectedFile || 'main.sol'
-        });
+        const markers = [];
+        if (result.errors) {
+          result.errors.forEach(error => {
+            const lineMatch = error.formattedMessage?.match(/:(\d+):/);
+            const lineNumber = lineMatch ? parseInt(lineMatch[1]) : 1;
+            
+            markers.push({
+              startLineNumber: lineNumber,
+              startColumn: 1,
+              endLineNumber: lineNumber,
+              endColumn: 1000,
+              message: error.formattedMessage || error.message,
+              severity: error.severity === 'error' ? 8 : 4
+            });
+          });
+        }
 
+        resolve(markers);
       } catch (error) {
-        console.error('[Chat] Error creating worker:', error);
+        console.error('[Chat] Compilation error:', error);
         resolve([{
           startLineNumber: 1,
           startColumn: 1,
           endLineNumber: 1,
           endColumn: 1000,
-          message: `Error inesperado: ${error.message}`,
+          message: `Error de compilación: ${error.message}`,
           severity: 8
         }]);
       }
