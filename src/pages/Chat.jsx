@@ -51,12 +51,36 @@ contract MyToken is ERC20, Ownable {
 
   useEffect(() => {
     if (location.state?.templateCode) {
-      setCode(location.state.templateCode);
-      setMessages([{
-        id: Date.now(),
-        text: "I've loaded the template for you. Feel free to ask any questions about the contract or request modifications!",
-        sender: 'ai',
-      }]);
+      const createTemplateFile = async () => {
+        try {
+          // Generate a default file name based on current timestamp to ensure uniqueness
+          const timestamp = new Date().getTime();
+          const fileName = `contracts/Template_${timestamp}.sol`;
+          
+          // Create the file in the virtual file system
+          await virtualFS.writeFile(fileName, location.state.templateCode);
+          
+          // Update the editor and selected file
+          setCode(location.state.templateCode);
+          setSelectedFile(fileName);
+          
+          // Add welcome message
+          setMessages([{
+            id: Date.now(),
+            text: `I've loaded the template and created it as ${fileName}. Feel free to ask any questions about the contract or request modifications!`,
+            sender: 'ai',
+          }]);
+        } catch (error) {
+          console.error('Error creating template file:', error);
+          setMessages([{
+            id: Date.now(),
+            text: "There was an error creating the template file. Please try again.",
+            sender: 'system',
+          }]);
+        }
+      };
+
+      createTemplateFile();
     }
   }, [location.state?.templateCode]);
 
@@ -454,166 +478,175 @@ contract MyToken is ERC20, Ownable {
   );
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex">
-      {/* File Explorer with resize handle */}
-      <div className="relative" style={{ width: `${fileExplorerWidth}px`, minWidth: '150px' }}>
-        <div className="h-full">
-          <FileExplorer onFileSelect={handleFileSelect} selectedFile={selectedFile} />
-        </div>
-        {/* Vertical resize handle */}
-        <div
-          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500/20 transition-colors"
-          onMouseDown={(e) => {
-            const startX = e.clientX;
-            const startWidth = fileExplorerWidth;
-            
-            const handleMouseMove = (moveEvent) => {
-              const delta = moveEvent.clientX - startX;
-              const newWidth = Math.max(150, Math.min(startWidth + delta, window.innerWidth * 0.8));
-              setFileExplorerWidth(newWidth);
-            };
-            
-            const handleMouseUp = () => {
-              document.removeEventListener('mousemove', handleMouseMove);
-              document.removeEventListener('mouseup', handleMouseUp);
-            };
-            
-            document.addEventListener('mousemove', handleMouseMove);
-            document.addEventListener('mouseup', handleMouseUp);
-          }}
-        >
-          <div className="w-1 h-full bg-gray-600 opacity-0 hover:opacity-100"></div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Editor Section */}
-        <div 
-          className="flex-1 bg-gray-900 min-h-0 relative"
-          style={{ height: `calc(100% - ${chatHeight}px)` }}
-        >
-          {renderEditorToolbar()}
-          <div className="h-[calc(100%-40px)]">
-            <Editor
-              height="100%"
-              defaultLanguage="solidity"
-              defaultValue={code}
-              theme="solidityDark"
-              value={code}
-              onChange={handleCodeChange}
-              onMount={handleEditorDidMount}
-              options={{
-                minimap: { enabled: true },
-                fontSize: 14,
-                padding: { top: 16 },
-                lineNumbers: 'on',
-                roundedSelection: true,
-                scrollBeyondLastLine: false,
-                automaticLayout: true,
-                tabSize: 2,
-                wordWrap: 'on',
-                folding: true,
-                bracketPairColorization: {
-                  enabled: true
-                },
-                guides: {
-                  bracketPairs: true,
-                  indentation: true
-                }
-              }}
-            />
-          </div>
-          
-          {/* Resize handle between editor and chat */}
-          <div
-            className="absolute bottom-0 left-0 w-full h-2 cursor-row-resize group bg-transparent hover:bg-blue-500/20 transition-colors z-10"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              const startY = e.clientY;
-              const startHeight = chatHeight;
-              const totalHeight = window.innerHeight - 64; // 4rem for top bar
-              
-              const handleMouseMove = (moveEvent) => {
-                const delta = startY - moveEvent.clientY;
-                const newChatHeight = Math.min(
-                  Math.max(150, startHeight + delta),
-                  totalHeight - 200 // Ensure minimum editor height of 200px
-                );
-                setChatHeight(newChatHeight);
-              };
-              
-              const handleMouseUp = () => {
-                document.removeEventListener('mousemove', handleMouseMove);
-                document.removeEventListener('mouseup', handleMouseUp);
-                document.body.style.cursor = 'default';
-              };
-              
-              document.addEventListener('mousemove', handleMouseMove);
-              document.addEventListener('mouseup', handleMouseUp);
-              document.body.style.cursor = 'row-resize';
-            }}
-          >
-            <div className="w-full h-0.5 bg-gray-400 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          </div>
-        </div>
-
-        {/* Chat Section */}
-        <div 
-          ref={chatContainerRef}
-          className="bg-gray-900 border-t border-gray-700"
-          style={{ height: `${chatHeight}px` }}
-        >
-          <div className="h-full flex flex-col">
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${
-                    message.sender === 'user' ? 'justify-end' : 'justify-start'
-                  }`}
-                >
-                  <div
-                    className={`max-w-[80%] p-4 rounded-lg ${
-                      message.sender === 'user'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-700 text-gray-100'
-                    }`}
-                  >
-                    {message.text}
-                  </div>
-                </div>
-              ))}
-              {isTyping && (
-                <div className="flex items-center space-x-2 text-gray-400">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
+    <>
+      {/* Main container with proper height calculation to account for navbar */}
+      <div className="flex flex-col h-screen">
+        {/* Navbar space */}
+        <div className="h-16 flex-shrink-0"></div>
+        
+        {/* Content area */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* File Explorer with resize handle */}
+          <div className="relative" style={{ width: `${fileExplorerWidth}px`, minWidth: '150px' }}>
+            <div className="h-full">
+              <FileExplorer onFileSelect={handleFileSelect} selectedFile={selectedFile} />
             </div>
-            <form onSubmit={handleSubmit} className="p-4 border-t border-gray-700">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  className="flex-1 p-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Ask about smart contracts..."
+            {/* Vertical resize handle */}
+            <div
+              className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500/20 transition-colors"
+              onMouseDown={(e) => {
+                const startX = e.clientX;
+                const startWidth = fileExplorerWidth;
+                
+                const handleMouseMove = (moveEvent) => {
+                  const delta = moveEvent.clientX - startX;
+                  const newWidth = Math.max(150, Math.min(startWidth + delta, window.innerWidth * 0.8));
+                  setFileExplorerWidth(newWidth);
+                };
+                
+                const handleMouseUp = () => {
+                  document.removeEventListener('mousemove', handleMouseMove);
+                  document.removeEventListener('mouseup', handleMouseUp);
+                };
+                
+                document.addEventListener('mousemove', handleMouseMove);
+                document.addEventListener('mouseup', handleMouseUp);
+              }}
+            >
+              <div className="w-1 h-full bg-gray-600 opacity-0 hover:opacity-100"></div>
+            </div>
+          </div>
+
+          {/* Main Content */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Editor Section */}
+            <div 
+              className="flex-1 bg-gray-900 min-h-0 relative"
+              style={{ height: `calc(100% - ${chatHeight}px)` }}
+            >
+              {renderEditorToolbar()}
+              <div className="h-[calc(100%-40px)]">
+                <Editor
+                  height="100%"
+                  defaultLanguage="solidity"
+                  defaultValue={code}
+                  theme="solidityDark"
+                  value={code}
+                  onChange={handleCodeChange}
+                  onMount={handleEditorDidMount}
+                  options={{
+                    minimap: { enabled: true },
+                    fontSize: 14,
+                    padding: { top: 16 },
+                    lineNumbers: 'on',
+                    roundedSelection: true,
+                    scrollBeyondLastLine: false,
+                    automaticLayout: true,
+                    tabSize: 2,
+                    wordWrap: 'on',
+                    folding: true,
+                    bracketPairColorization: {
+                      enabled: true
+                    },
+                    guides: {
+                      bracketPairs: true,
+                      indentation: true
+                    }
+                  }}
                 />
-                <button
-                  type="submit"
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
-                >
-                  Send
-                </button>
               </div>
-            </form>
+              
+              {/* Resize handle between editor and chat */}
+              <div
+                className="absolute bottom-0 left-0 w-full h-2 cursor-row-resize group bg-transparent hover:bg-blue-500/20 transition-colors z-10"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  const startY = e.clientY;
+                  const startHeight = chatHeight;
+                  const totalHeight = window.innerHeight - 64; // 4rem for top bar
+                  
+                  const handleMouseMove = (moveEvent) => {
+                    const delta = startY - moveEvent.clientY;
+                    const newChatHeight = Math.min(
+                      Math.max(150, startHeight + delta),
+                      totalHeight - 200 // Ensure minimum editor height of 200px
+                    );
+                    setChatHeight(newChatHeight);
+                  };
+                  
+                  const handleMouseUp = () => {
+                    document.removeEventListener('mousemove', handleMouseMove);
+                    document.removeEventListener('mouseup', handleMouseUp);
+                    document.body.style.cursor = 'default';
+                  };
+                  
+                  document.addEventListener('mousemove', handleMouseMove);
+                  document.addEventListener('mouseup', handleMouseUp);
+                  document.body.style.cursor = 'row-resize';
+                }}
+              >
+                <div className="w-full h-0.5 bg-gray-400 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+              </div>
+            </div>
+
+            {/* Chat Section */}
+            <div 
+              ref={chatContainerRef}
+              className="bg-gray-900 border-t border-gray-700"
+              style={{ height: `${chatHeight}px` }}
+            >
+              <div className="h-full flex flex-col">
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`flex ${
+                        message.sender === 'user' ? 'justify-end' : 'justify-start'
+                      }`}
+                    >
+                      <div
+                        className={`max-w-[80%] p-4 rounded-lg ${
+                          message.sender === 'user'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-700 text-gray-100'
+                        }`}
+                      >
+                        {message.text}
+                      </div>
+                    </div>
+                  ))}
+                  {isTyping && (
+                    <div className="flex items-center space-x-2 text-gray-400">
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
+                <form onSubmit={handleSubmit} className="p-4 border-t border-gray-700">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      className="flex-1 p-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Ask about smart contracts..."
+                    />
+                    <button
+                      type="submit"
+                      className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
+                    >
+                      Send
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
