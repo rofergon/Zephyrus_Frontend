@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import Editor from '@monaco-editor/react';
+import Editor, { Monaco } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor';
 import { ResizableBox } from 'react-resizable';
 import FileExplorer from '../components/FileExplorer';
 import { virtualFS } from '../services/virtual-fs';
 import 'react-resizable/css/styles.css';
-import { SolidityCompiler } from '../workers/solidity.wrapper';
 
 // Asegurarse de que virtualFS está inicializado
 if (!virtualFS) {
@@ -13,20 +13,50 @@ if (!virtualFS) {
   throw new Error('VirtualFileSystem not initialized');
 }
 
+interface Message {
+  id: number;
+  text: string;
+  sender: 'user' | 'ai' | 'system';
+}
+
+interface Marker {
+  startLineNumber: number;
+  startColumn: number;
+  endLineNumber: number;
+  endColumn: number;
+  message: string;
+  severity: number;
+}
+
+interface Snippets {
+  [key: string]: string;
+}
+
+interface WorkerMessage {
+  markers?: Marker[];
+  error?: string;
+  output?: any;
+}
+
 function Chat() {
   const location = useLocation();
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [code, setCode] = useState('// Your Solidity contract will appear here');
   const [isTyping, setIsTyping] = useState(false);
   const [chatHeight, setChatHeight] = useState(250);
   const [editorHeight, setEditorHeight] = useState('100%');
-  const [selectedFile, setSelectedFile] = useState(null);
-  const messagesEndRef = useRef(null);
-  const editorRef = useRef(null);
-  const monacoRef = useRef(null);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [containerHeight, setContainerHeight] = useState(0);
+  const [fileExplorerWidth, setFileExplorerWidth] = useState(256);
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  const snippets = {
+  const snippets: Snippets = {
     'SPDX License': '// SPDX-License-Identifier: MIT\n',
     'Basic Contract': `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
@@ -47,36 +77,18 @@ contract MyToken is ERC20, Ownable {
 }`
   };
 
-  const [containerHeight, setContainerHeight] = useState(0);
-  const containerRef = useRef(null);
-  const chatContainerRef = useRef(null);
-
-  const [fileExplorerWidth, setFileExplorerWidth] = useState(256); // 16rem = 256px default width
-
-  const [compiler] = useState(() => {
-    const instance = new SolidityCompiler();
-    instance.onReady(() => {
-      console.log('[Chat] Compiler is ready');
-    });
-    return instance;
-  });
-
   useEffect(() => {
     if (location.state?.templateCode) {
       const createTemplateFile = async () => {
         try {
-          // Generate a default file name based on current timestamp to ensure uniqueness
           const timestamp = new Date().getTime();
           const fileName = `contracts/Template_${timestamp}.sol`;
           
-          // Create the file in the virtual file system
           await virtualFS.writeFile(fileName, location.state.templateCode);
           
-          // Update the editor and selected file
           setCode(location.state.templateCode);
           setSelectedFile(fileName);
           
-          // Add welcome message
           setMessages([{
             id: Date.now(),
             text: `I've loaded the template and created it as ${fileName}. Feel free to ask any questions about the contract or request modifications!`,
@@ -125,13 +137,25 @@ contract MyToken is ERC20, Ownable {
     return () => window.removeEventListener('resize', calculateHeights);
   }, [chatHeight]);
 
-  const handleEditorDidMount = (editor, monaco) => {
+  const handleEditorDidMount = (editor: monaco.editor.IStandaloneCodeEditor, monacoInstance: Monaco) => {
     editorRef.current = editor;
-    monacoRef.current = monaco;
+    monacoRef.current = monacoInstance;
 
-    monaco.languages.register({ id: 'solidity' });
+    // Registrar el lenguaje Solidity
+    monacoInstance.languages.register({ id: 'solidity' });
     
-    monaco.languages.setMonarchTokensProvider('solidity', {
+    // Configurar el resaltado de sintaxis para Solidity
+    monacoInstance.languages.setMonarchTokensProvider('solidity', {
+      defaultToken: '',
+      tokenPostfix: '.sol',
+
+      brackets: [
+        { token: 'delimiter.curly', open: '{', close: '}' },
+        { token: 'delimiter.parenthesis', open: '(', close: ')' },
+        { token: 'delimiter.square', open: '[', close: ']' },
+        { token: 'delimiter.angle', open: '<', close: '>' }
+      ],
+
       keywords: [
         'pragma', 'solidity', 'contract', 'interface', 'library', 'is', 'public',
         'private', 'internal', 'external', 'pure', 'view', 'payable', 'storage',
@@ -166,9 +190,20 @@ contract MyToken is ERC20, Ownable {
 
       tokenizer: {
         root: [
-          [/[a-zA-Z_]\w*/, { cases: { '@keywords': 'keyword', '@typeKeywords': 'type', '@default': 'identifier' } }],
+          [/[a-zA-Z_]\w*/, { 
+            cases: { 
+              '@keywords': 'keyword',
+              '@typeKeywords': 'type',
+              '@default': 'identifier' 
+            } 
+          }],
           [/[{}()\[\]]/, '@brackets'],
-          [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } }],
+          [/@symbols/, { 
+            cases: { 
+              '@operators': 'operator',
+              '@default': '' 
+            } 
+          }],
           [/\d*\.\d+([eE][\-+]?\d+)?/, 'number.float'],
           [/\d+/, 'number'],
           [/[;,.]/, 'delimiter'],
@@ -180,18 +215,20 @@ contract MyToken is ERC20, Ownable {
         
         string: [
           [/[^\\"]+/, 'string'],
-          [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }]
+          [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
+          [/\\.[^"]*$/, 'string.invalid']
         ],
         
         comment: [
           [/[^\/*]+/, 'comment'],
           [/\*\//, 'comment', '@pop'],
-          [/[/\*]/, 'comment']
+          [/[\/*]/, 'comment']
         ]
       }
     });
 
-    monaco.editor.defineTheme('solidityDark', {
+    // Definir el tema oscuro personalizado
+    monacoInstance.editor.defineTheme('solidityDark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
@@ -206,7 +243,7 @@ contract MyToken is ERC20, Ownable {
         { token: 'brackets', foreground: 'FFD700' }
       ],
       colors: {
-        'editor.background': '#1A1A1A',
+        'editor.background': '#1E1E1E',
         'editor.foreground': '#D4D4D4',
         'editor.lineHighlightBackground': '#2A2A2A',
         'editor.selectionBackground': '#264F78',
@@ -221,17 +258,18 @@ contract MyToken is ERC20, Ownable {
         'editorIndentGuide.activeBackground': '#707070',
         'editor.findMatchBackground': '#515C6A',
         'editor.findMatchHighlightBackground': '#314365',
-        'minimap.background': '#1A1A1A',
+        'minimap.background': '#1E1E1E',
         'scrollbarSlider.background': '#404040',
         'scrollbarSlider.hoverBackground': '#505050',
         'scrollbarSlider.activeBackground': '#606060'
       }
     });
 
-    monaco.editor.setTheme('solidityDark');
+    // Aplicar el tema oscuro
+    monacoInstance.editor.setTheme('solidityDark');
   };
 
-  const handleFileSelect = async (path) => {
+  const handleFileSelect = async (path: string): Promise<void> => {
     try {
       const content = await virtualFS.readFile(path);
       setCode(content);
@@ -241,98 +279,79 @@ contract MyToken is ERC20, Ownable {
     }
   };
 
-  const validateSolidity = async (codeContent) => {
+  const validateSolidity = async (codeContent: string): Promise<Marker[]> => {
     console.log('[Chat] Starting validation for code:', codeContent.substring(0, 100) + '...');
-    return new Promise(async (resolve) => {
+    return new Promise((resolve) => {
       try {
-        // Pre-load all imports
-        const importRegex = /import\s+(?:{[^}]+}\s+from\s+)?["']([^"']+)["']/g;
-        const imports = {};
-        let match;
+        // Extraer la versión del pragma
+        const pragmaMatch = codeContent.match(/pragma solidity\s+(\^?\d+\.\d+\.\d+);/);
+        let version = '0.8.20'; // Fixed version
         
-        // Set the current working directory based on the selected file
-        if (selectedFile) {
-          const workingDir = selectedFile.split('/').slice(0, -1).join('/');
-          console.log('[Chat] Setting working directory to:', workingDir);
-          try {
-            virtualFS.setWorkingDirectory(workingDir);
-            console.log('[Chat] Working directory set to:', virtualFS.getWorkingDirectory());
-          } catch (error) {
-            console.error('[Chat] Error setting working directory:', error);
-          }
+        // Verificar si la versión es mayor a 0.8.20 (última versión estable disponible)
+        const versionParts = version.split('.').map(Number);
+        if (versionParts[0] === 0 && versionParts[1] === 8 && versionParts[2] > 20) {
+          resolve([{
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: 1,
+            endColumn: 1000,
+            message: `La versión ${version} no está disponible. La última versión estable es 0.8.20. Por favor, actualiza el pragma solidity a una versión disponible.`,
+            severity: 8
+          }]);
+          return;
         }
 
-        // Load all imports in parallel
-        const importPromises = [];
-        while ((match = importRegex.exec(codeContent)) !== null) {
-          const importPath = match[1];
-          console.log('[Chat] Pre-loading import:', importPath);
-          
-          importPromises.push(
-            virtualFS.resolveImport(importPath, selectedFile)
-              .then(({ content }) => {
-                console.log('[Chat] Successfully pre-loaded:', importPath);
-                imports[importPath] = content;
-              })
-              .catch(error => {
-                console.warn('[Chat] Could not pre-load import:', importPath, error);
-              })
-          );
-        }
+        // Create and initialize the worker
+        const workerUrl = new URL('../workers/solc.worker.js', import.meta.url);
+        const worker = new Worker(workerUrl, { type: 'module' });
 
-        // Wait for all imports to be resolved
-        await Promise.all(importPromises);
-
-        // Create a synchronous import callback that uses the pre-loaded imports
-        const importCallback = (path) => {
-          console.log('[Chat] Import requested:', path);
-          
-          if (imports[path]) {
-            console.log('[Chat] Import found:', path);
-            return { contents: imports[path] };
+        worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
+          const { markers, error, output } = event.data;
+          if (error) {
+            console.error('[Chat] Compilation error:', error);
+            resolve([{
+              startLineNumber: 1,
+              startColumn: 1,
+              endLineNumber: 1,
+              endColumn: 1000,
+              message: error,
+              severity: 8
+            }]);
+          } else {
+            console.log('[Chat] Compilation successful:', output);
+            resolve(markers || []);
           }
-          
-          // Intentar resolver la importación en tiempo real si no se pre-cargó
-          try {
-            const { content } = virtualFS.resolveImport(path, selectedFile);
-            console.log('[Chat] Import resolved in real-time:', path);
-            imports[path] = content;
-            return { contents: content };
-          } catch (error) {
-            console.log('[Chat] Import not found:', path);
-            return { error: `Could not find source contract for ${path}` };
-          }
+          worker.terminate();
         };
 
-        const result = await compiler.compile(codeContent, importCallback);
-        console.log('[Chat] Compilation result:', result);
+        worker.onerror = (error: ErrorEvent) => {
+          console.error('[Chat] Worker error:', error);
+          resolve([{
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: 1,
+            endColumn: 1000,
+            message: `Error de compilación: ${error.message}`,
+            severity: 8
+          }]);
+          worker.terminate();
+        };
 
-        const markers = [];
-        if (result.errors) {
-          result.errors.forEach(error => {
-            const lineMatch = error.formattedMessage?.match(/:(\d+):/);
-            const lineNumber = lineMatch ? parseInt(lineMatch[1]) : 1;
-            
-            markers.push({
-              startLineNumber: lineNumber,
-              startColumn: 1,
-              endLineNumber: lineNumber,
-              endColumn: 1000,
-              message: error.formattedMessage || error.message,
-              severity: error.severity === 'error' ? 8 : 4
-            });
-          });
-        }
+        // Send the code to the worker
+        console.log('[Chat] Sending code to worker');
+        worker.postMessage({
+          sourceCode: codeContent,
+          sourcePath: selectedFile || 'main.sol'
+        });
 
-        resolve(markers);
       } catch (error) {
-        console.error('[Chat] Compilation error:', error);
+        console.error('[Chat] Error creating worker:', error);
         resolve([{
           startLineNumber: 1,
           startColumn: 1,
           endLineNumber: 1,
           endColumn: 1000,
-          message: `Error de compilación: ${error.message}`,
+          message: `Error inesperado: ${error instanceof Error ? error.message : String(error)}`,
           severity: 8
         }]);
       }
@@ -345,9 +364,11 @@ contract MyToken is ERC20, Ownable {
       if (editorRef.current && monacoRef.current) {
         console.log('[Chat] Updating markers for code change');
         const model = editorRef.current.getModel();
-        const markers = await validateSolidity(code);
-        console.log('[Chat] Setting markers in editor:', markers);
-        monacoRef.current.editor.setModelMarkers(model, 'solidity', markers);
+        if (model) {
+          const markers = await validateSolidity(code);
+          console.log('[Chat] Setting markers in editor:', markers);
+          monacoRef.current.editor.setModelMarkers(model, 'solidity', markers);
+        }
       }
     };
 
@@ -358,7 +379,9 @@ contract MyToken is ERC20, Ownable {
     return () => clearTimeout(debounceTimer);
   }, [code]);
 
-  const handleCodeChange = async (newCode) => {
+  const handleCodeChange = async (newCode: string | undefined): Promise<void> => {
+    if (newCode === undefined) return;
+    
     setCode(newCode);
     if (selectedFile) {
       try {
@@ -373,7 +396,7 @@ contract MyToken is ERC20, Ownable {
     e.preventDefault();
     if (!input.trim()) return;
 
-    const newMessage = {
+    const newMessage: Message = {
       id: Date.now(),
       text: input,
       sender: 'user',
@@ -384,7 +407,7 @@ contract MyToken is ERC20, Ownable {
     setIsTyping(true);
 
     setTimeout(() => {
-      const aiResponse = {
+      const aiResponse: Message = {
         id: Date.now() + 1,
         text: "I understand you want to create a smart contract. Could you provide more details about the functionality you're looking for?",
         sender: 'ai',
@@ -394,30 +417,19 @@ contract MyToken is ERC20, Ownable {
     }, 2000);
   };
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const handleImportOpenZeppelin = async () => {
+  const handleImportOpenZeppelin = async (): Promise<void> => {
     try {
-      // Mostrar mensaje de importación en el chat
-      const newMessage = {
+      const newMessage: Message = {
         id: Date.now(),
         text: `Importing OpenZeppelin contracts and dependencies...\nThis may take a moment.`,
         sender: 'system',
       };
       setMessages(prev => [...prev, newMessage]);
 
-      // Extraer las importaciones del código actual
       const importRegex = /import\s+(?:{[^}]+}\s+from\s+)?["'](@openzeppelin\/contracts\/.*?)["']/g;
       const matches = [...code.matchAll(importRegex)];
       const importPaths = matches.map(match => match[1]);
 
-      // Importar cada dependencia
       for (const importPath of importPaths) {
         try {
           await virtualFS.resolveImport(importPath);
@@ -426,7 +438,7 @@ contract MyToken is ERC20, Ownable {
         }
       }
 
-      const successMessage = {
+      const successMessage: Message = {
         id: Date.now(),
         text: 'All OpenZeppelin contracts and dependencies have been imported successfully.',
         sender: 'system',
@@ -435,7 +447,7 @@ contract MyToken is ERC20, Ownable {
 
     } catch (error) {
       console.error('Error importing OpenZeppelin contracts:', error);
-      const errorMessage = {
+      const errorMessage: Message = {
         id: Date.now(),
         text: `Error importing contracts: ${error.message}`,
         sender: 'system',
@@ -444,8 +456,7 @@ contract MyToken is ERC20, Ownable {
     }
   };
 
-  // Modificar la barra de herramientas del editor para incluir el botón de importación
-  const renderEditorToolbar = () => (
+  const renderEditorToolbar = (): JSX.Element => (
     <div className="border-b border-gray-700 p-2 flex items-center justify-between">
       <div className="text-sm text-gray-300">
         {selectedFile || 'No file selected'}
@@ -458,7 +469,10 @@ contract MyToken is ERC20, Ownable {
           Import Dependencies
         </button>
         <button
-          onClick={() => editorRef.current?.getAction('editor.action.formatDocument').run()}
+          onClick={() => {
+            const action = editorRef.current?.getAction('editor.action.formatDocument');
+            action?.run();
+          }}
           className="px-2 py-1 bg-gray-800 text-gray-300 rounded border border-gray-700 hover:bg-gray-700"
         >
           Format
@@ -466,6 +480,14 @@ contract MyToken is ERC20, Ownable {
       </div>
     </div>
   );
+
+  const scrollToBottom = (): void => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
   return (
     <>
@@ -542,6 +564,45 @@ contract MyToken is ERC20, Ownable {
                       bracketPairs: true,
                       indentation: true
                     }
+                  }}
+                  beforeMount={(monaco) => {
+                    monaco.editor.defineTheme('solidityDark', {
+                      base: 'vs-dark',
+                      inherit: true,
+                      rules: [
+                        { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
+                        { token: 'type', foreground: '4EC9B0', fontStyle: 'bold' },
+                        { token: 'identifier', foreground: 'DCDCAA' },
+                        { token: 'number', foreground: 'B5CEA8' },
+                        { token: 'string', foreground: 'CE9178' },
+                        { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
+                        { token: 'operator', foreground: 'D4D4D4' },
+                        { token: 'delimiter', foreground: 'D4D4D4' },
+                        { token: 'brackets', foreground: 'FFD700' }
+                      ],
+                      colors: {
+                        'editor.background': '#1E1E1E',
+                        'editor.foreground': '#D4D4D4',
+                        'editor.lineHighlightBackground': '#2A2A2A',
+                        'editor.selectionBackground': '#264F78',
+                        'editor.inactiveSelectionBackground': '#3A3D41',
+                        'editorLineNumber.foreground': '#858585',
+                        'editorLineNumber.activeForeground': '#C6C6C6',
+                        'editor.selectionHighlightBackground': '#2D2D30',
+                        'editor.wordHighlightBackground': '#575757',
+                        'editorCursor.foreground': '#A6A6A6',
+                        'editorWhitespace.foreground': '#3B3B3B',
+                        'editorIndentGuide.background': '#404040',
+                        'editorIndentGuide.activeBackground': '#707070',
+                        'editor.findMatchBackground': '#515C6A',
+                        'editor.findMatchHighlightBackground': '#314365',
+                        'minimap.background': '#1E1E1E',
+                        'scrollbarSlider.background': '#404040',
+                        'scrollbarSlider.hoverBackground': '#505050',
+                        'scrollbarSlider.activeBackground': '#606060'
+                      }
+                    });
+                    monaco.editor.setTheme('solidityDark');
                   }}
                 />
               </div>
