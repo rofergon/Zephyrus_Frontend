@@ -5,18 +5,26 @@ import * as monaco from 'monaco-editor';
 import { ResizableBox } from 'react-resizable';
 import FileExplorer from '../components/FileExplorer';
 import { virtualFS } from '../services/virtual-fs';
+import { ChatService, type SessionInfo } from '../services/chatService';
 import 'react-resizable/css/styles.css';
+import { XMarkIcon, Bars3Icon } from '@heroicons/react/24/outline';
+import SessionList from '../components/SessionList';
+import { sessionService } from '../services/sessionService';
+import { useAccount } from 'wagmi';
 
 // Asegurarse de que virtualFS está inicializado
 if (!virtualFS) {
-  console.error('[Chat] VirtualFileSystem not initialized');
-  throw new Error('VirtualFileSystem not initialized');
+  console.error('[Chat] VirtualFileSystem instance not found');
+  throw new Error('VirtualFileSystem instance not found');
 }
 
+console.log('[Chat] VirtualFileSystem instance found');
+
 interface Message {
-  id: number;
+  id: string;
   text: string;
   sender: 'user' | 'ai' | 'system';
+  timestamp?: number;
 }
 
 interface Marker {
@@ -38,7 +46,27 @@ interface WorkerMessage {
   output?: any;
 }
 
+interface AgentResponse {
+  type: 'message' | 'code_edit' | 'file_create' | 'file_delete';
+  content: string;
+  metadata?: {
+    fileName?: string;
+    path?: string;
+    language?: string;
+  };
+}
+
+// Generador de IDs únicos usando UUID v4
+const generateUniqueId = (): string => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
 function Chat() {
+  const { address } = useAccount();
   const location = useLocation();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -49,12 +77,27 @@ function Chat() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [containerHeight, setContainerHeight] = useState(0);
   const [fileExplorerWidth, setFileExplorerWidth] = useState(256);
+  const [chatWidth, setChatWidth] = useState(400);
+  const [debugConsoleHeight, setDebugConsoleHeight] = useState(200);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [debugMessages, setDebugMessages] = useState<string[]>([]);
+  const [compilationErrors, setCompilationErrors] = useState<Marker[]>([]);
+  const [isMobileFileExplorerOpen, setIsMobileFileExplorerOpen] = useState(false);
+  const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
+  const [currentClientId, setCurrentClientId] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [showSessionList, setShowSessionList] = useState(false);
+  const [showFileExplorer, setShowFileExplorer] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const chatService = useRef<ChatService>(new ChatService());
+  const debugConsoleRef = useRef<HTMLDivElement>(null);
 
   const snippets: Snippets = {
     'SPDX License': '// SPDX-License-Identifier: MIT\n',
@@ -66,7 +109,7 @@ contract MyContract {
     }
 }`,
     'ERC20 Token': `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -75,6 +118,16 @@ contract MyToken is ERC20, Ownable {
     constructor() ERC20("MyToken", "MTK") {
     }
 }`
+  };
+
+  // Función para añadir mensajes a la consola de debug
+  const addDebugMessage = (message: string) => {
+    setDebugMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
+    setTimeout(() => {
+      if (debugConsoleRef.current) {
+        debugConsoleRef.current.scrollTop = debugConsoleRef.current.scrollHeight;
+      }
+    }, 100);
   };
 
   useEffect(() => {
@@ -89,18 +142,10 @@ contract MyToken is ERC20, Ownable {
           setCode(location.state.templateCode);
           setSelectedFile(fileName);
           
-          setMessages([{
-            id: Date.now(),
-            text: `I've loaded the template and created it as ${fileName}. Feel free to ask any questions about the contract or request modifications!`,
-            sender: 'ai',
-          }]);
+          addDebugMessage(`Created new template file: ${fileName}`);
         } catch (error) {
           console.error('Error creating template file:', error);
-          setMessages([{
-            id: Date.now(),
-            text: "There was an error creating the template file. Please try again.",
-            sender: 'system',
-          }]);
+          addDebugMessage(`Error creating template file: ${error.message}`);
         }
       };
 
@@ -274,8 +319,10 @@ contract MyToken is ERC20, Ownable {
       const content = await virtualFS.readFile(path);
       setCode(content);
       setSelectedFile(path);
+      addDebugMessage(`Opened file: ${path}`);
     } catch (error) {
       console.error('Error loading file:', error);
+      addDebugMessage(`Error loading file: ${error.message}`);
     }
   };
 
@@ -392,35 +439,75 @@ contract MyToken is ERC20, Ownable {
     }
   };
 
-  const handleSubmit = async (e) => {
+  // Efecto para inicializar el virtualFS
+  useEffect(() => {
+    const initializeFS = async () => {
+      try {
+        console.log('[Chat] Checking VirtualFileSystem initialization');
+        const isInit = await virtualFS.isInitialized();
+        console.log('[Chat] VirtualFileSystem initialization status:', isInit);
+        if (!isInit) {
+          console.error('[Chat] VirtualFileSystem failed to initialize');
+          setMessages(prev => [...prev, {
+            id: generateUniqueId(),
+            text: 'Error: File system initialization failed. Some features may not work correctly.',
+            sender: 'system'
+          }]);
+        }
+      } catch (error) {
+        console.error('[Chat] Error checking VirtualFileSystem initialization:', error);
+      }
+    };
+
+    initializeFS();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
 
     const newMessage: Message = {
-      id: Date.now(),
+      id: generateUniqueId(),
       text: input,
       sender: 'user',
+      timestamp: Date.now()
     };
 
-    setMessages([...messages, newMessage]);
+    setMessages(prev => [...prev, newMessage]);
     setInput('');
     setIsTyping(true);
+    addDebugMessage('Sending message to Zephyrus agent...');
 
-    setTimeout(() => {
-      const aiResponse: Message = {
-        id: Date.now() + 1,
-        text: "I understand you want to create a smart contract. Could you provide more details about the functionality you're looking for?",
-        sender: 'ai',
-      };
-      setMessages(prev => [...prev, aiResponse]);
+    try {
+      console.log('[Chat] Checking file system before sending message');
+      const isInit = await virtualFS.isInitialized();
+      console.log('[Chat] File system initialization status:', isInit);
+      
+      if (!isInit) {
+        throw new Error('Virtual file system not initialized');
+      }
+
+      console.log('[Chat] Getting files from virtual file system');
+      const files = await virtualFS.getFiles();
+      console.log('[Chat] Retrieved files:', Object.keys(files));
+      
+      console.log('[Chat] Sending message to agent with context');
+      chatService.current.sendMessage(input, {
+        currentFile: selectedFile,
+        currentCode: code,
+        fileSystem: files
+      });
+    } catch (error) {
+      console.error('[Chat] Error in handleSubmit:', error);
+      addDebugMessage(`Error sending message: ${error instanceof Error ? error.message : 'Could not send message'}`);
       setIsTyping(false);
-    }, 2000);
+    }
   };
 
   const handleImportOpenZeppelin = async (): Promise<void> => {
     try {
       const newMessage: Message = {
-        id: Date.now(),
+        id: generateUniqueId(),
         text: `Importing OpenZeppelin contracts and dependencies...\nThis may take a moment.`,
         sender: 'system',
       };
@@ -439,7 +526,7 @@ contract MyToken is ERC20, Ownable {
       }
 
       const successMessage: Message = {
-        id: Date.now(),
+        id: generateUniqueId(),
         text: 'All OpenZeppelin contracts and dependencies have been imported successfully.',
         sender: 'system',
       };
@@ -448,7 +535,7 @@ contract MyToken is ERC20, Ownable {
     } catch (error) {
       console.error('Error importing OpenZeppelin contracts:', error);
       const errorMessage: Message = {
-        id: Date.now(),
+        id: generateUniqueId(),
         text: `Error importing contracts: ${error.message}`,
         sender: 'system',
       };
@@ -489,30 +576,244 @@ contract MyToken is ERC20, Ownable {
     scrollToBottom();
   }, [messages]);
 
-  return (
-    <>
-      {/* Main container with proper height calculation to account for navbar */}
-      <div className="flex flex-col h-screen">
-        {/* Navbar space */}
-        <div className="h-16 flex-shrink-0"></div>
-        
-        {/* Content area */}
-        <div className="flex-1 flex overflow-hidden">
-          {/* File Explorer with resize handle */}
-          <div className="relative" style={{ width: `${fileExplorerWidth}px`, minWidth: '150px' }}>
-            <div className="h-full">
-              <FileExplorer onFileSelect={handleFileSelect} selectedFile={selectedFile} />
+  // Efecto para manejar la conexión y sesiones
+  useEffect(() => {
+    const service = chatService.current;
+
+    service.onConnectionChange((connected: boolean) => {
+      setWsConnected(connected);
+      addDebugMessage(`WebSocket ${connected ? 'connected' : 'disconnected'}`);
+    });
+
+    service.onMessage((response: AgentResponse) => {
+      console.log('[Chat] Received agent response:', response);
+      
+      // Manejar el mensaje según su tipo
+      if (response.type === 'message') {
+        setMessages(prev => [...prev, {
+          id: generateUniqueId(),
+          text: response.content,
+          sender: 'ai',
+          timestamp: Date.now()
+        }]);
+      } else if (response.type === 'code_edit' || response.type === 'file_create') {
+        // Actualizar el código en el editor
+        if (response.metadata?.path) {
+          setSelectedFile(response.metadata.path);
+          setCode(response.content);
+          virtualFS.writeFile(response.metadata.path, response.content)
+            .then(() => {
+              addDebugMessage(`File ${response.metadata?.path} updated/created successfully`);
+            })
+            .catch(error => {
+              addDebugMessage(`Error updating/creating file: ${error.message}`);
+            });
+        }
+      } else if (response.type === 'file_delete') {
+        if (response.metadata?.path) {
+          virtualFS.deleteFile(response.metadata.path)
+            .then(() => {
+              addDebugMessage(`File ${response.metadata?.path} deleted successfully`);
+              if (selectedFile === response.metadata.path) {
+                setSelectedFile(null);
+                setCode('// Your Solidity contract will appear here');
+              }
+            })
+            .catch(error => {
+              addDebugMessage(`Error deleting file: ${error.message}`);
+            });
+        }
+      }
+      setIsTyping(false);
+    });
+
+    service.onSessionEstablished((sessionInfo: SessionInfo) => {
+      setCurrentClientId(sessionInfo.clientId);
+      setCurrentSessionId(sessionInfo.sessionId);
+      addDebugMessage(`Session established: ${sessionInfo.sessionName}`);
+      setMessages(prev => [...prev, {
+        id: generateUniqueId(),
+        text: `Connected to session: ${sessionInfo.sessionName}`,
+        sender: 'system',
+        timestamp: Date.now()
+      }]);
+    });
+
+    // Iniciar conexión sin sessionId (creará una nueva)
+    service.connect(undefined, address || undefined);
+
+    return () => {
+      service.disconnect();
+    };
+  }, [address]);
+
+  const handleSessionSelect = async (sessionId: string) => {
+    try {
+      // Limpiar el estado actual
+      setMessages([]);
+      setCode('// Your Solidity contract will appear here');
+      setSelectedFile(null);
+      
+      // Desconectar la sesión actual
+      chatService.current.disconnect();
+      
+      // Esperar un momento para asegurar la desconexión
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Conectar a la nueva sesión
+      chatService.current.connect(sessionId, address || undefined);
+      
+      setShowSessionList(false);
+      
+      // Agregar mensaje de sistema
+      setMessages([{
+        id: generateUniqueId(),
+        text: 'Switching to selected session...',
+        sender: 'system'
+      }]);
+    } catch (error) {
+      console.error('Error switching session:', error);
+      addDebugMessage('Error switching session');
+    }
+  };
+
+  const handleCreateSession = async () => {
+    try {
+      if (!currentClientId) return;
+      
+      const sessionName = prompt('Enter session name:');
+      if (!sessionName) return;
+
+      const newSession = await sessionService.createSession(
+        currentClientId,
+        sessionName,
+        address || undefined
+      );
+      
+      // Esperar un momento antes de cambiar de sesión
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Cambiar a la nueva sesión
+      await handleSessionSelect(newSession.session_id);
+      
+      // Recargar la lista de sesiones
+      setShowSessionList(true);
+    } catch (error) {
+      console.error('Error creating session:', error);
+      addDebugMessage('Error creating session');
+      alert('Failed to create session');
+    }
+  };
+
+  // Modificar el header del chat para incluir el botón de sesiones
+  const renderChatHeader = () => (
+    <div className="flex-none border-b border-gray-700 bg-gray-800/80 backdrop-blur-sm">
+      <div className="p-4 flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center">
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-gray-200">Zephyrus Agent</h2>
+            <div className="flex items-center space-x-2">
+              <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'} animate-pulse`}></div>
+              <span className={`text-sm ${wsConnected ? 'text-green-500' : 'text-red-500'}`}>
+                {wsConnected ? 'Connected' : 'Disconnected'}
+              </span>
             </div>
-            {/* Vertical resize handle */}
+          </div>
+        </div>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => setShowSessionList(!showSessionList)}
+            className="px-3 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors duration-200"
+          >
+            Sessions
+          </button>
+          {isSmallScreen && (
+            <button
+              onClick={() => setIsMobileChatOpen(false)}
+              className="p-2 hover:bg-gray-700 rounded-full transition-colors duration-200"
+            >
+              <XMarkIcon className="w-6 h-6 text-gray-400" />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // Efecto para detectar tamaño de pantalla
+  useEffect(() => {
+    const checkScreenSize = () => {
+      setIsSmallScreen(window.innerWidth < 768);
+      if (window.innerWidth >= 768) {
+        setIsMobileFileExplorerOpen(false);
+        setIsMobileChatOpen(false);
+      }
+    };
+
+    checkScreenSize();
+    window.addEventListener('resize', checkScreenSize);
+    return () => window.removeEventListener('resize', checkScreenSize);
+  }, []);
+
+  return (
+    <div className="fixed inset-0 flex flex-col bg-gray-900">
+      {/* Mobile Header - Fixed at top */}
+      {isSmallScreen && (
+        <div className="h-12 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-4 flex-shrink-0">
+          <button
+            onClick={() => setShowFileExplorer(!showFileExplorer)}
+            className="text-gray-400 hover:text-white"
+          >
+            <span className="sr-only">Toggle File Explorer</span>
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* File Explorer */}
+        <div 
+          className={`${
+            isSmallScreen 
+              ? 'fixed inset-y-0 left-0 z-40 transform transition-transform duration-300 ease-in-out'
+              : 'w-64 border-r border-gray-700'
+          } ${
+            isMobileFileExplorerOpen || !isSmallScreen ? 'translate-x-0' : '-translate-x-full'
+          } ${
+            isSmallScreen ? 'mt-12' : ''
+          } bg-gray-900 border-r border-gray-700`}
+          style={{ 
+            width: isSmallScreen ? '80%' : `${fileExplorerWidth}px`, 
+            minWidth: isSmallScreen ? 'auto' : '200px',
+            maxWidth: isSmallScreen ? '300px' : 'none'
+          }}
+        >
+          <div className="h-full overflow-hidden flex flex-col">
+            <FileExplorer 
+              onFileSelect={(path) => {
+                handleFileSelect(path);
+                if (isSmallScreen) setIsMobileFileExplorerOpen(false);
+              }}
+              selectedFile={selectedFile} 
+            />
+          </div>
+          {!isSmallScreen && (
             <div
-              className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500/20 transition-colors"
+              className="absolute top-0 right-0 w-1 h-full cursor-col-resize bg-gray-700 hover:bg-blue-500"
               onMouseDown={(e) => {
                 const startX = e.clientX;
                 const startWidth = fileExplorerWidth;
                 
-                const handleMouseMove = (moveEvent) => {
-                  const delta = moveEvent.clientX - startX;
-                  const newWidth = Math.max(150, Math.min(startWidth + delta, window.innerWidth * 0.8));
+                const handleMouseMove = (moveEvent: MouseEvent) => {
+                  const newWidth = Math.max(200, Math.min(startWidth + moveEvent.clientX - startX, window.innerWidth * 0.4));
                   setFileExplorerWidth(newWidth);
                 };
                 
@@ -524,180 +825,144 @@ contract MyToken is ERC20, Ownable {
                 document.addEventListener('mousemove', handleMouseMove);
                 document.addEventListener('mouseup', handleMouseUp);
               }}
-            >
-              <div className="w-1 h-full bg-gray-600 opacity-0 hover:opacity-100"></div>
+            />
+          )}
+        </div>
+
+        {/* Editor and Debug Console Container */}
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          {/* Editor Container */}
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            {renderEditorToolbar()}
+            <div className="flex-1 relative">
+              <Editor
+                height="100%"
+                defaultLanguage="solidity"
+                value={code}
+                theme="vs-dark"
+                onChange={handleCodeChange}
+                onMount={handleEditorDidMount}
+                options={{
+                  minimap: { enabled: !isSmallScreen },
+                  fontSize: 14,
+                  lineNumbers: 'on',
+                  roundedSelection: false,
+                  scrollBeyondLastLine: false,
+                  automaticLayout: true
+                }}
+              />
             </div>
           </div>
 
-          {/* Main Content */}
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Editor Section */}
+          {/* Debug Console */}
+          <div
+            className="flex-none border-t border-gray-700"
+            style={{ height: `${debugConsoleHeight}px` }}
+          >
+            <div
+              className="absolute left-0 right-0 h-1 cursor-row-resize bg-gray-700 hover:bg-blue-500"
+              onMouseDown={(e) => {
+                const startY = e.clientY;
+                const startHeight = debugConsoleHeight;
+                
+                const handleMouseMove = (moveEvent: MouseEvent) => {
+                  const newHeight = Math.max(100, Math.min(startHeight + startY - moveEvent.clientY, window.innerHeight * 0.4));
+                  setDebugConsoleHeight(newHeight);
+                };
+                
+                const handleMouseUp = () => {
+                  document.removeEventListener('mousemove', handleMouseMove);
+                  document.removeEventListener('mouseup', handleMouseUp);
+                };
+                
+                document.addEventListener('mousemove', handleMouseMove);
+                document.addEventListener('mouseup', handleMouseUp);
+              }}
+            />
             <div 
-              className="flex-1 bg-gray-900 min-h-0 relative"
-              style={{ height: `calc(100% - ${chatHeight}px)` }}
+              ref={debugConsoleRef}
+              className="h-full overflow-y-auto bg-gray-900 text-gray-300 font-mono text-sm p-4"
             >
-              {renderEditorToolbar()}
-              <div className="h-[calc(100%-40px)]">
-                <Editor
-                  height="100%"
-                  defaultLanguage="solidity"
-                  defaultValue={code}
-                  theme="solidityDark"
-                  value={code}
-                  onChange={handleCodeChange}
-                  onMount={handleEditorDidMount}
-                  options={{
-                    minimap: { enabled: true },
-                    fontSize: 14,
-                    padding: { top: 16 },
-                    lineNumbers: 'on',
-                    roundedSelection: true,
-                    scrollBeyondLastLine: false,
-                    automaticLayout: true,
-                    tabSize: 2,
-                    wordWrap: 'on',
-                    folding: true,
-                    bracketPairColorization: {
-                      enabled: true
-                    },
-                    guides: {
-                      bracketPairs: true,
-                      indentation: true
-                    }
-                  }}
-                  beforeMount={(monaco) => {
-                    monaco.editor.defineTheme('solidityDark', {
-                      base: 'vs-dark',
-                      inherit: true,
-                      rules: [
-                        { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
-                        { token: 'type', foreground: '4EC9B0', fontStyle: 'bold' },
-                        { token: 'identifier', foreground: 'DCDCAA' },
-                        { token: 'number', foreground: 'B5CEA8' },
-                        { token: 'string', foreground: 'CE9178' },
-                        { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
-                        { token: 'operator', foreground: 'D4D4D4' },
-                        { token: 'delimiter', foreground: 'D4D4D4' },
-                        { token: 'brackets', foreground: 'FFD700' }
-                      ],
-                      colors: {
-                        'editor.background': '#1E1E1E',
-                        'editor.foreground': '#D4D4D4',
-                        'editor.lineHighlightBackground': '#2A2A2A',
-                        'editor.selectionBackground': '#264F78',
-                        'editor.inactiveSelectionBackground': '#3A3D41',
-                        'editorLineNumber.foreground': '#858585',
-                        'editorLineNumber.activeForeground': '#C6C6C6',
-                        'editor.selectionHighlightBackground': '#2D2D30',
-                        'editor.wordHighlightBackground': '#575757',
-                        'editorCursor.foreground': '#A6A6A6',
-                        'editorWhitespace.foreground': '#3B3B3B',
-                        'editorIndentGuide.background': '#404040',
-                        'editorIndentGuide.activeBackground': '#707070',
-                        'editor.findMatchBackground': '#515C6A',
-                        'editor.findMatchHighlightBackground': '#314365',
-                        'minimap.background': '#1E1E1E',
-                        'scrollbarSlider.background': '#404040',
-                        'scrollbarSlider.hoverBackground': '#505050',
-                        'scrollbarSlider.activeBackground': '#606060'
-                      }
-                    });
-                    monaco.editor.setTheme('solidityDark');
-                  }}
+              {debugMessages.map((msg, index) => (
+                <div key={index} className="mb-1">{msg}</div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Chat Panel */}
+        <div 
+          className={`${
+            isSmallScreen 
+              ? 'fixed inset-y-0 right-0 z-40 transform transition-transform duration-300 ease-in-out'
+              : 'relative flex-none'
+          } ${
+            isMobileChatOpen || !isSmallScreen ? 'translate-x-0' : 'translate-x-full'
+          } ${isSmallScreen ? 'mt-12' : ''} bg-gray-800`}
+          style={{ 
+            width: isSmallScreen ? '80%' : `${chatWidth}px`,
+            minWidth: isSmallScreen ? 'auto' : '300px',
+            maxWidth: isSmallScreen ? '300px' : 'none'
+          }}
+        >
+          <div className="h-full flex flex-col">
+            {renderChatHeader()}
+            
+            {/* Session List Overlay */}
+            {showSessionList && (
+              <div className="absolute inset-0 z-10 bg-gray-900/95 backdrop-blur-sm">
+                <SessionList
+                  clientId={currentClientId}
+                  currentSessionId={currentSessionId}
+                  walletAddress={address || undefined}
+                  onSessionSelect={handleSessionSelect}
+                  onSessionCreate={handleCreateSession}
                 />
               </div>
-              
-              {/* Resize handle between editor and chat */}
-              <div
-                className="absolute bottom-0 left-0 w-full h-2 cursor-row-resize group bg-transparent hover:bg-blue-500/20 transition-colors z-10"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  const startY = e.clientY;
-                  const startHeight = chatHeight;
-                  const totalHeight = window.innerHeight - 64; // 4rem for top bar
-                  
-                  const handleMouseMove = (moveEvent) => {
-                    const delta = startY - moveEvent.clientY;
-                    const newChatHeight = Math.min(
-                      Math.max(150, startHeight + delta),
-                      totalHeight - 200 // Ensure minimum editor height of 200px
-                    );
-                    setChatHeight(newChatHeight);
-                  };
-                  
-                  const handleMouseUp = () => {
-                    document.removeEventListener('mousemove', handleMouseMove);
-                    document.removeEventListener('mouseup', handleMouseUp);
-                    document.body.style.cursor = 'default';
-                  };
-                  
-                  document.addEventListener('mousemove', handleMouseMove);
-                  document.addEventListener('mouseup', handleMouseUp);
-                  document.body.style.cursor = 'row-resize';
-                }}
-              >
-                <div className="w-full h-0.5 bg-gray-400 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-              </div>
+            )}
+
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gradient-to-b from-gray-800 to-gray-900">
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}
+                >
+                  <div className={`max-w-[80%] rounded-lg p-3 ${
+                    message.sender === 'user' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-700 text-gray-200'
+                  }`}>
+                    {message.text}
+                  </div>
+                </div>
+              ))}
             </div>
 
-            {/* Chat Section */}
-            <div 
-              ref={chatContainerRef}
-              className="bg-gray-900 border-t border-gray-700"
-              style={{ height: `${chatHeight}px` }}
-            >
-              <div className="h-full flex flex-col">
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex ${
-                        message.sender === 'user' ? 'justify-end' : 'justify-start'
-                      }`}
-                    >
-                      <div
-                        className={`max-w-[80%] p-4 rounded-lg ${
-                          message.sender === 'user'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-700 text-gray-100'
-                        }`}
-                      >
-                        {message.text}
-                      </div>
-                    </div>
-                  ))}
-                  {isTyping && (
-                    <div className="flex items-center space-x-2 text-gray-400">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
-                    </div>
-                  )}
-                  <div ref={messagesEndRef} />
-                </div>
-                <form onSubmit={handleSubmit} className="p-4 border-t border-gray-700">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
-                      className="flex-1 p-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Ask about smart contracts..."
-                    />
-                    <button
-                      type="submit"
-                      className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
-                    >
-                      Send
-                    </button>
-                  </div>
+            {/* Input Area */}
+            <div className="flex-none border-t border-gray-700">
+              <div className="p-4">
+                <form onSubmit={handleSubmit} className="flex space-x-4">
+                  <input
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    className="flex-1 bg-gray-700 text-white rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Type your message..."
+                  />
+                  <button
+                    type="submit"
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    Send
+                  </button>
                 </form>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
