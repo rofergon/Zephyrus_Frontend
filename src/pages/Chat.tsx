@@ -11,6 +11,7 @@ import { XMarkIcon, Bars3Icon } from '@heroicons/react/24/outline';
 import SessionList from '../components/SessionList';
 import { sessionService } from '../services/sessionService';
 import { useAccount } from 'wagmi';
+import AssistedChat from './AssistedChat';
 
 // Asegurarse de que virtualFS está inicializado
 if (!virtualFS) {
@@ -65,6 +66,47 @@ const generateUniqueId = (): string => {
   });
 };
 
+// Add new ModeSelection component
+const ModeSelection = ({ onModeSelect }: { onModeSelect: (mode: 'advanced' | 'assisted') => void }) => {
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-gray-900 bg-opacity-95 z-50">
+      <div className="max-w-2xl w-full mx-4">
+        <div className="glass-morphism rounded-lg p-8 space-y-6">
+          <h2 className="text-3xl font-bold text-center text-white mb-8">
+            Choose Your Development Mode
+          </h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Advanced Mode */}
+            <button
+              onClick={() => onModeSelect('advanced')}
+              className="group relative p-6 rounded-lg border border-gray-700 hover:border-blue-500 transition-all duration-300"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-600/10 to-blue-800/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <h3 className="text-xl font-semibold text-blue-400 mb-2">Advanced Mode</h3>
+              <p className="text-gray-300 text-sm">
+                Full code editor with direct contract manipulation. Perfect for experienced developers who want complete control.
+              </p>
+            </button>
+
+            {/* Assisted Mode */}
+            <button
+              onClick={() => onModeSelect('assisted')}
+              className="group relative p-6 rounded-lg border border-gray-700 hover:border-emerald-500 transition-all duration-300"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-emerald-600/10 to-emerald-800/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <h3 className="text-xl font-semibold text-emerald-400 mb-2">Assisted Mode</h3>
+              <p className="text-gray-300 text-sm">
+                Guided development with AI assistance. Perfect for beginners or those who prefer a more intuitive approach.
+              </p>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function Chat() {
   const { address } = useAccount();
   const location = useLocation();
@@ -90,6 +132,7 @@ function Chat() {
   const [showSessionList, setShowSessionList] = useState(false);
   const [showFileExplorer, setShowFileExplorer] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [mode, setMode] = useState<'advanced' | 'assisted' | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -760,6 +803,17 @@ contract MyToken is ERC20, Ownable {
     return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
 
+  // If no mode is selected, show mode selection
+  if (!mode) {
+    return <ModeSelection onModeSelect={setMode} />;
+  }
+
+  // Render appropriate interface based on mode
+  if (mode === 'assisted') {
+    return <AssistedChat />;
+  }
+
+  // Rest of the existing Chat component (Advanced Mode)
   return (
     <div className="fixed inset-0 flex flex-col bg-gray-900">
       {/* Mobile Header - Fixed at top */}

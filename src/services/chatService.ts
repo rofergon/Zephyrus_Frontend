@@ -8,16 +8,15 @@ const generateUniqueId = (): string => {
 };
 
 export interface SessionInfo {
-  clientId: string;
-  sessionId: string;
-  sessionName: string;
+  client_id: string;
+  session_id: string;
+  session_name: string;
 }
 
 export interface AgentResponse {
-  type: 'message' | 'code_edit' | 'file_create' | 'file_delete';
+  type: string;
   content: string;
   metadata?: {
-    fileName?: string;
     path?: string;
     language?: string;
     session_id?: string;
@@ -28,6 +27,17 @@ export interface AgentResponse {
 interface BackendResponse {
   session_id: string;
   response: string;
+}
+
+export interface WebSocketResponse {
+  type: 'message' | 'contexts_loaded' | 'context_created' | 'context_switched' | 'error';
+  content: any;
+  metadata?: {
+    path?: string;
+    language?: string;
+    session_id?: string;
+    id?: string;
+  };
 }
 
 export class ChatService {
@@ -125,6 +135,12 @@ export class ChatService {
   }
 
   public connect(sessionId?: string, walletAddress?: string): void {
+    // Prevent multiple connections
+    if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+        console.log('[ChatService] WebSocket connection already exists');
+        return;
+    }
+    
     try {
       console.log('[ChatService] Attempting to connect to WebSocket');
       
@@ -170,44 +186,26 @@ export class ChatService {
             return;
           }
 
+          // Manejar la carga de contextos
+          if (data.type === 'contexts_loaded') {
+            this.handleContextsLoaded(data.content);
+            return;
+          }
+
+          // Manejar la creación de nuevo contexto
+          if (data.type === 'context_created') {
+            this.handleContextCreated(data.content);
+            return;
+          }
+
+          // Manejar el cambio de contexto
+          if (data.type === 'context_switched') {
+            this.handleContextSwitched(data.content);
+            return;
+          }
+
           if (this.messageHandler) {
-            if (typeof data === 'string') {
-              const responses = this.processCodeBlocks(data);
-              responses.forEach(response => {
-                this.messageHandler!({
-                  ...response,
-                  metadata: {
-                    ...response.metadata,
-                    session_id: this.sessionId,
-                    id: generateUniqueId()
-                  }
-                });
-              });
-            } else if ('session_id' in data && 'response' in data) {
-              const backendResponse = data as BackendResponse;
-              const responses = this.processCodeBlocks(backendResponse.response);
-              responses.forEach(response => {
-                this.messageHandler!({
-                  ...response,
-                  metadata: {
-                    ...response.metadata,
-                    session_id: backendResponse.session_id,
-                    id: generateUniqueId()
-                  }
-                });
-              });
-            } else if ('type' in data && 'content' in data) {
-              this.messageHandler({
-                ...data,
-                metadata: {
-                  ...data.metadata,
-                  session_id: this.sessionId,
-                  id: generateUniqueId()
-                }
-              } as AgentResponse);
-            } else {
-              console.warn('[ChatService] Unknown message format:', data);
-            }
+            this.messageHandler(data as AgentResponse);
           }
         } catch (error) {
           console.error('[ChatService] Error processing message:', error);
@@ -243,9 +241,9 @@ export class ChatService {
       
       if (this.sessionEstablishedHandler) {
         this.sessionEstablishedHandler({
-          clientId: this.clientId,
-          sessionId: data.session_id,
-          sessionName: data.session_name
+          client_id: this.clientId,
+          session_id: data.session_id,
+          session_name: data.session_name
         });
       }
     }
@@ -282,14 +280,16 @@ export class ChatService {
     // No limpiar el clientId ni el walletAddress al desconectar
   }
 
-  public sendMessage(content: string, context: any = {}): void {
+  public sendMessage(content: string, context: any = {}, contextId?: string, type: string = 'message'): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.error('[ChatService] WebSocket is not connected');
       return;
     }
 
     const message = {
+      type,
       content,
+      contextId,
       context: {
         ...context,
         clientId: this.clientId,
@@ -337,6 +337,39 @@ export class ChatService {
   private handleSessionEstablished(sessionInfo: SessionInfo) {
     if (this.sessionEstablishedHandler) {
       this.sessionEstablishedHandler(sessionInfo);
+    }
+  }
+
+  private handleContextsLoaded(contexts: any[]): void {
+    console.log('[ChatService] Contexts loaded:', contexts);
+    if (this.messageHandler) {
+      this.messageHandler({
+        type: 'contexts_loaded',
+        content: contexts,
+        metadata: {}
+      } as WebSocketResponse);
+    }
+  }
+
+  private handleContextCreated(context: any): void {
+    console.log('[ChatService] Context created:', context);
+    if (this.messageHandler) {
+      this.messageHandler({
+        type: 'context_created',
+        content: context,
+        metadata: {}
+      } as WebSocketResponse);
+    }
+  }
+
+  private handleContextSwitched(context: any): void {
+    console.log('[ChatService] Context switched:', context);
+    if (this.messageHandler) {
+      this.messageHandler({
+        type: 'context_switched',
+        content: context,
+        metadata: {}
+      } as WebSocketResponse);
     }
   }
 } 
