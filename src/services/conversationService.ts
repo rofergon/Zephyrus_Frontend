@@ -11,20 +11,80 @@ export interface Message {
 export interface ConversationContext {
   id: string;
   name: string;
-  type: 'chat' | 'contract';
-  timestamp: number;
-  content: string;
-  active: boolean;
+  type: string;
+  wallet_address: string;
+  created_at: string;
+  last_accessed: string;
   messages: Message[];
+  active?: boolean;
+  virtualFiles?: {
+    [path: string]: {
+      content: string;
+      language: string;
+      timestamp: number;
+    }
+  };
 }
 
 export class ConversationService {
   private contexts: ConversationContext[] = [];
-  private subscribers: ((contexts: ConversationContext[]) => void)[] = [];
+  private activeContextId: string | null = null;
+
+  public async initializeSession(chatId: string): Promise<void> {
+    this.activeContextId = chatId;
+    console.log('[ConversationService] Session initialized with chatId:', chatId);
+  }
 
   public setContexts(contexts: ConversationContext[]): void {
-    this.contexts = contexts;
-    this.notifySubscribers();
+    // Asegurarse de que todos los campos necesarios estén presentes
+    this.contexts = contexts.map(ctx => ({
+      ...ctx,
+      messages: ctx.messages || [],
+      type: ctx.type || 'chat',
+      active: ctx.active || false
+    }));
+
+    // Si hay contextos y no hay un contexto activo, establecer el último como activo
+    if (this.contexts.length > 0 && !this.activeContextId) {
+      const activeContext = this.contexts.find(ctx => ctx.active) || this.contexts[this.contexts.length - 1];
+      this.activeContextId = activeContext.id;
+      
+      // Asegurarse de que solo un contexto esté activo
+      this.contexts = this.contexts.map(ctx => ({
+        ...ctx,
+        active: ctx.id === this.activeContextId
+      }));
+    }
+
+    console.log('[ConversationService] Contexts set:', this.contexts);
+    console.log('[ConversationService] Active context ID:', this.activeContextId);
+  }
+
+  public getContexts(): ConversationContext[] {
+    return this.contexts.map(ctx => ({
+      ...ctx,
+      active: ctx.id === this.activeContextId
+    }));
+  }
+
+  public getActiveContext(): ConversationContext | undefined {
+    const context = this.contexts.find(ctx => ctx.id === this.activeContextId);
+    if (context) {
+      return {
+        ...context,
+        active: true
+      };
+    }
+    return undefined;
+  }
+
+  public setActiveContext(contextId: string): void {
+    this.activeContextId = contextId;
+    this.contexts = this.contexts.map(ctx => ({
+      ...ctx,
+      active: ctx.id === contextId
+    }));
+    console.log('[ConversationService] Active context set:', contextId);
   }
 
   public addContext(context: ConversationContext): void {
@@ -34,49 +94,49 @@ export class ConversationService {
       active: false
     }));
     
-    // Añadir el nuevo contexto
-    this.contexts.push(context);
-    this.notifySubscribers();
+    // Asegurarse de que el nuevo contexto tenga todos los campos necesarios
+    const newContext = {
+      ...context,
+      messages: context.messages || [],
+      type: context.type || 'chat',
+      active: true
+    };
+    
+    this.contexts.push(newContext);
+    this.activeContextId = newContext.id;
+    
+    console.log('[ConversationService] Context added:', newContext);
   }
 
-  public setActiveContext(contextId: string): void {
-    const contextExists = this.contexts.some(ctx => ctx.id === contextId);
-    if (!contextExists) {
-      console.error(`Context ${contextId} not found`);
-      return;
-    }
-    
+  public switchContext(contextId: string): void {
     this.contexts = this.contexts.map(ctx => ({
       ...ctx,
       active: ctx.id === contextId
     }));
-    this.notifySubscribers();
-  }
-
-  public getActiveContext(): ConversationContext | null {
-    return this.contexts.find(ctx => ctx.active) || null;
+    this.activeContextId = contextId;
+    console.log('[ConversationService] Switched to context:', contextId);
   }
 
   public addMessage(contextId: string, message: Message): void {
-    const context = this.contexts.find(ctx => ctx.id === contextId);
-    if (!context) {
-      console.error(`Context ${contextId} not found`);
-      return;
+    const contextIndex = this.contexts.findIndex(ctx => ctx.id === contextId);
+    if (contextIndex !== -1) {
+      this.contexts[contextIndex] = {
+        ...this.contexts[contextIndex],
+        messages: [...(this.contexts[contextIndex].messages || []), message]
+      };
+      console.log('[ConversationService] Message added to context:', contextId);
     }
-
-    // Crear una nueva referencia del contexto con el mensaje añadido
-    const updatedContext = {
-      ...context,
-      messages: [...(context.messages || []), message]
-    };
-
-    // Actualizar el array de contextos con el contexto modificado
-    this.contexts = this.contexts.map(ctx => 
-      ctx.id === contextId ? updatedContext : ctx
-    );
-
-    this.notifySubscribers();
   }
+
+  public updateContext(context: ConversationContext): void {
+    const index = this.contexts.findIndex(ctx => ctx.id === context.id);
+    if (index !== -1) {
+      this.contexts[index] = context;
+      console.log('[ConversationService] Context updated:', context.id);
+    }
+  }
+
+  private subscribers: ((contexts: ConversationContext[]) => void)[] = [];
 
   private notifySubscribers(): void {
     this.subscribers.forEach(subscriber => subscriber([...this.contexts]));
@@ -87,40 +147,6 @@ export class ConversationService {
     return () => {
       this.subscribers = this.subscribers.filter(sub => sub !== callback);
     };
-  }
-
-  async initializeSession(sessionId: string): Promise<void> {
-    try {
-      // Mantener los contextos existentes si ya existen
-      if (this.contexts.length === 0) {
-        // Crear contexto inicial solo si no hay contextos
-        const initialContext: ConversationContext = {
-          id: sessionId,
-          name: 'Main Chat',
-          type: 'chat',
-          timestamp: Date.now(),
-          content: '',
-          active: true,
-          messages: []
-        };
-        this.contexts = [initialContext];
-      }
-      
-      // Asegurar que al menos un contexto esté activo
-      const hasActiveContext = this.contexts.some(ctx => ctx.active);
-      if (!hasActiveContext && this.contexts.length > 0) {
-        this.contexts[0].active = true;
-      }
-      
-      this.notifySubscribers();
-    } catch (error) {
-      console.error('Error initializing session:', error);
-      throw error;
-    }
-  }
-
-  getContexts(): ConversationContext[] {
-    return [...this.contexts];
   }
 
   createNewContext(name?: string): ConversationContext {
@@ -135,10 +161,11 @@ export class ConversationService {
       id: this.generateUniqueId(),
       name: name || `Chat ${this.contexts.length + 1}`,
       type: 'chat',
-      timestamp: Date.now(),
-      content: '',
-      active: true,
-      messages: []
+      wallet_address: '',
+      created_at: '',
+      last_accessed: '',
+      messages: [],
+      active: true
     };
 
     // Añadir nuevo contexto a la lista
@@ -146,22 +173,6 @@ export class ConversationService {
     this.notifySubscribers();
 
     return newContext;
-  }
-
-  switchContext(contextId: string): ConversationContext {
-    // Actualizar el estado de activo para todos los contextos
-    this.contexts = this.contexts.map(ctx => ({
-      ...ctx,
-      active: ctx.id === contextId
-    }));
-
-    this.notifySubscribers();
-    const activeContext = this.contexts.find(ctx => ctx.active);
-    if (!activeContext) {
-      throw new Error('Context not found');
-    }
-
-    return activeContext;
   }
 
   private generateUniqueId(): string {

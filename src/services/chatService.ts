@@ -1,3 +1,5 @@
+import { virtualFS } from './virtual-fs';
+
 // Generador de IDs únicos usando UUID v4
 const generateUniqueId = (): string => {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -7,10 +9,26 @@ const generateUniqueId = (): string => {
   });
 };
 
-export interface SessionInfo {
-  client_id: string;
-  session_id: string;
-  session_name: string;
+export interface ChatInfo {
+  id: string;
+  name: string;
+  wallet_address: string;
+  created_at: string;
+  last_accessed: string;
+  messages: any[];
+  type: string;
+  generatedCode?: {
+    content: string;
+    path?: string;
+    language?: string;
+  };
+  virtualFiles?: {
+    [path: string]: {
+      content: string;
+      language: string;
+      timestamp: number;
+    }
+  };
 }
 
 export interface AgentResponse {
@@ -19,23 +37,18 @@ export interface AgentResponse {
   metadata?: {
     path?: string;
     language?: string;
-    session_id?: string;
+    chat_id?: string;
     id?: string;
   };
 }
 
-interface BackendResponse {
-  session_id: string;
-  response: string;
-}
-
 export interface WebSocketResponse {
-  type: 'message' | 'contexts_loaded' | 'context_created' | 'context_switched' | 'error';
+  type: 'message' | 'contexts_loaded' | 'context_created' | 'context_switched' | 'error' | 'file_create';
   content: any;
   metadata?: {
     path?: string;
     language?: string;
-    session_id?: string;
+    chat_id?: string;
     id?: string;
   };
 }
@@ -47,125 +60,41 @@ export class ChatService {
   private readonly maxReconnectAttempts = 5;
   private reconnectTimeout: NodeJS.Timeout | null = null;
   private pingInterval: NodeJS.Timeout | null = null;
-  private clientId: string | null = null;
-  private sessionId: string | null = null;
   private walletAddress: string | null = null;
+  private currentChatId: string | null = null;
   private messageHandler: ((message: AgentResponse) => void) | null = null;
   private connectionChangeHandler: ((connected: boolean) => void) | null = null;
-  private sessionEstablishedHandler: ((sessionInfo: SessionInfo) => void) | null = null;
+  private chatsLoadedHandler: ((chats: ChatInfo[]) => void) | null = null;
 
   constructor() {
     this.messageHandler = null;
     this.connectionChangeHandler = null;
-    this.sessionEstablishedHandler = null;
-    // Intentar recuperar el clientId del localStorage si hay una wallet
-    const storedData = localStorage.getItem('chatService');
-    if (storedData) {
-      const data = JSON.parse(storedData);
-      if (data.walletAddress) {
-        this.clientId = data.clientId;
-        this.walletAddress = data.walletAddress;
-      }
-    }
+    this.chatsLoadedHandler = null;
   }
 
-  private saveState() {
-    if (this.walletAddress && this.clientId) {
-      localStorage.setItem('chatService', JSON.stringify({
-        clientId: this.clientId,
-        walletAddress: this.walletAddress
-      }));
-    }
-  }
-
-  private processCodeBlocks(text: string): AgentResponse[] {
-    const responses: AgentResponse[] = [];
-    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
-    let lastIndex = 0;
-    let match;
-
-    while ((match = codeBlockRegex.exec(text)) !== null) {
-      // Añadir el texto antes del bloque de código como mensaje
-      if (match.index > lastIndex) {
-        const messageText = text.slice(lastIndex, match.index).trim();
-        if (messageText) {
-          responses.push({
-            type: 'message',
-            content: messageText
-          });
-        }
-      }
-
-      // Procesar el bloque de código
-      const [, language, code] = match;
-      if (language?.toLowerCase() === 'solidity') {
-        const timestamp = new Date().getTime();
-        const fileName = `contracts/Contract_${timestamp}.sol`;
-        responses.push({
-          type: 'file_create',
-          content: code.trim(),
-          metadata: {
-            path: fileName,
-            language: 'solidity'
-          }
-        });
-      } else {
-        // Si no es Solidity, lo tratamos como parte del mensaje
-        responses.push({
-          type: 'message',
-          content: match[0]
-        });
-      }
-
-      lastIndex = match.index + match[0].length;
+  public connect(walletAddress?: string, p0?: string): void {
+    if (!walletAddress || !walletAddress.startsWith('0x')) {
+      console.log('[ChatService] No valid wallet address provided, connection aborted');
+      return;
     }
 
-    // Añadir el texto restante como mensaje
-    if (lastIndex < text.length) {
-      const remainingText = text.slice(lastIndex).trim();
-      if (remainingText) {
-        responses.push({
-          type: 'message',
-          content: remainingText
-        });
-      }
-    }
-
-    return responses;
-  }
-
-  public connect(sessionId?: string, walletAddress?: string): void {
-    // Prevent multiple connections
     if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
-        console.log('[ChatService] WebSocket connection already exists');
-        return;
+      console.log('[ChatService] WebSocket connection already exists');
+      return;
     }
     
     try {
       console.log('[ChatService] Attempting to connect to WebSocket');
       
-      // Si hay una nueva wallet address y es diferente a la actual, limpiar el estado
-      if (walletAddress && walletAddress !== this.walletAddress) {
-        this.clientId = null;
-        localStorage.removeItem('chatService');
-      }
-      
-      this.walletAddress = walletAddress || null;
+      this.walletAddress = walletAddress;
       
       // Construir la URL del WebSocket
       let url = 'ws://localhost:8000/ws/agent';
       
-      // Si tenemos un sessionId y clientId, usarlos para la conexión
-      if (sessionId && this.clientId) {
-        url = `ws://localhost:8000/ws/agent/${this.clientId}/${sessionId}`;
-      }
-      
-      // Añadir la dirección de la billetera como parámetro de consulta si está disponible
-      if (this.walletAddress) {
-        const wsUrl = new URL(url.replace('ws://', 'http://'));
-        wsUrl.searchParams.append('wallet_address', this.walletAddress);
-        url = wsUrl.toString().replace('http://', 'ws://');
-      }
+      // Añadir la dirección de la billetera como parámetro de consulta
+      const wsUrl = new URL(url.replace('ws://', 'http://'));
+      wsUrl.searchParams.append('wallet_address', this.walletAddress);
+      url = wsUrl.toString().replace('http://', 'ws://');
         
       this.ws = new WebSocket(url);
 
@@ -179,28 +108,22 @@ export class ChatService {
         console.log('[ChatService] Received message:', event.data);
         try {
           const data = JSON.parse(event.data);
-          
-          // Manejar el establecimiento de conexión
-          if (data.type === 'connection_established') {
-            this.handleConnectionEstablished(data);
-            return;
-          }
 
-          // Manejar la carga de contextos
+          // Manejar la carga de chats
           if (data.type === 'contexts_loaded') {
-            this.handleContextsLoaded(data.content);
+            this.handleChatsLoaded(data.content);
             return;
           }
 
-          // Manejar la creación de nuevo contexto
+          // Manejar la creación de nuevo chat
           if (data.type === 'context_created') {
-            this.handleContextCreated(data.content);
+            this.handleChatCreated(data.content);
             return;
           }
 
-          // Manejar el cambio de contexto
+          // Manejar el cambio de chat
           if (data.type === 'context_switched') {
-            this.handleContextSwitched(data.content);
+            this.handleChatSwitched(data.content);
             return;
           }
 
@@ -227,28 +150,6 @@ export class ChatService {
     }
   }
 
-  private handleConnectionEstablished(data: any) {
-    if (data.type === 'connection_established') {
-      // Solo actualizar el clientId si no teníamos uno o si no hay wallet address
-      if (!this.clientId || !this.walletAddress) {
-        this.clientId = data.client_id;
-      }
-      this.sessionId = data.session_id;
-      console.log('[ChatService] Connection established with ID:', this.clientId);
-      
-      // Guardar el estado si hay wallet address
-      this.saveState();
-      
-      if (this.sessionEstablishedHandler) {
-        this.sessionEstablishedHandler({
-          client_id: this.clientId,
-          session_id: data.session_id,
-          session_name: data.session_name
-        });
-      }
-    }
-  }
-
   private tryReconnect(): void {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
@@ -261,7 +162,7 @@ export class ChatService {
       }
       
       this.reconnectTimeout = setTimeout(() => {
-        this.connect();
+        this.connect(this.walletAddress || undefined);
       }, delay);
     } else {
       console.log('[ChatService] Max reconnection attempts reached');
@@ -277,28 +178,76 @@ export class ChatService {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
-    // No limpiar el clientId ni el walletAddress al desconectar
   }
 
-  public sendMessage(content: string, context: any = {}, contextId?: string, type: string = 'message'): void {
+  public sendMessage(content: string, context: any = {}, chatId?: string, p0?: string): void {
+    if (!this.walletAddress || !this.walletAddress.startsWith('0x')) {
+      console.error('[ChatService] Cannot send message without a valid wallet address');
+      return;
+    }
+
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.error('[ChatService] WebSocket is not connected');
       return;
     }
 
     const message = {
-      type,
+      type: context.type || 'message',
       content,
-      contextId,
+      chat_id: chatId || this.currentChatId,
       context: {
         ...context,
-        clientId: this.clientId,
-        sessionId: this.sessionId,
-        walletAddress: this.walletAddress
+        wallet_address: this.walletAddress
       }
     };
 
     console.log('[ChatService] Sending message:', message);
+    this.ws.send(JSON.stringify(message));
+  }
+
+  public createNewChat(name?: string): void {
+    if (!this.walletAddress || !this.walletAddress.startsWith('0x')) {
+      console.error('[ChatService] Cannot create chat without a valid wallet address');
+      return;
+    }
+
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.error('[ChatService] WebSocket is not connected');
+      return;
+    }
+
+    const message = {
+      type: 'create_context',
+      content: name || '',
+      context: {
+        wallet_address: this.walletAddress
+      }
+    };
+
+    console.log('[ChatService] Creating new chat:', message);
+    this.ws.send(JSON.stringify(message));
+  }
+
+  public switchChat(chatId: string): void {
+    if (!this.walletAddress || !this.walletAddress.startsWith('0x')) {
+      console.error('[ChatService] Cannot switch chat without a valid wallet address');
+      return;
+    }
+
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.error('[ChatService] WebSocket is not connected');
+      return;
+    }
+
+    const message = {
+      type: 'switch_context',
+      chat_id: chatId,
+      context: {
+        wallet_address: this.walletAddress
+      }
+    };
+
+    console.log('[ChatService] Switching chat:', message);
     this.ws.send(JSON.stringify(message));
   }
 
@@ -310,16 +259,16 @@ export class ChatService {
     this.connectionChangeHandler = handler;
   }
 
-  public onSessionEstablished(handler: (sessionInfo: SessionInfo) => void): void {
-    this.sessionEstablishedHandler = handler;
+  public onChatsLoaded(handler: (chats: ChatInfo[]) => void): void {
+    this.chatsLoadedHandler = handler;
   }
 
-  public getClientId(): string | null {
-    return this.clientId;
+  public getCurrentChatId(): string | null {
+    return this.currentChatId;
   }
 
-  public getSessionId(): string | null {
-    return this.sessionId;
+  public setCurrentChatId(chatId: string): void {
+    this.currentChatId = chatId;
   }
 
   private handleMessage(message: AgentResponse) {
@@ -334,42 +283,110 @@ export class ChatService {
     }
   }
 
-  private handleSessionEstablished(sessionInfo: SessionInfo) {
-    if (this.sessionEstablishedHandler) {
-      this.sessionEstablishedHandler(sessionInfo);
+  private async handleChatsLoaded(chats: ChatInfo[]) {
+    console.log('[ChatService] Chats loaded:', chats);
+    
+    // Asegurarse de que los chats tengan la estructura correcta
+    const processedChats = chats.map((chat, index) => ({
+        ...chat,
+        messages: Array.isArray(chat.messages) ? chat.messages : [],
+        active: index === chats.length - 1,
+        generatedCode: chat.generatedCode || null,
+        virtualFiles: chat.virtualFiles || {}
+    }));
+    
+    // Actualizar el chat ID actual
+    if (processedChats.length > 0) {
+        this.currentChatId = processedChats[processedChats.length - 1].id;
+        
+        // Restaurar archivos virtuales del chat activo
+        const activeChat = processedChats[processedChats.length - 1];
+        console.log('[ChatService] Active chat virtual files:', activeChat.virtualFiles);
+        
+        try {
+            // Limpiar el sistema de archivos virtual antes de cargar los nuevos archivos
+            console.log('[ChatService] Clearing virtual file system...');
+            await virtualFS.clear();
+            console.log('[ChatService] Virtual file system cleared');
+            
+            if (activeChat.virtualFiles) {
+                // Los archivos ya vienen normalizados del backend (solo versiones activas)
+                console.log('[ChatService] Restoring active files');
+                await Promise.all(
+                    Object.entries(activeChat.virtualFiles).map(async ([path, file]) => {
+                        console.log(`[ChatService] Writing file: ${path}`);
+                        try {
+                            await virtualFS.writeFile(path, file.content);
+                            console.log(`[ChatService] Successfully wrote file: ${path}`);
+                        } catch (error) {
+                            console.error(`[ChatService] Error writing file: ${path}`, error);
+                        }
+                    })
+                );
+            }
+        } catch (error) {
+            console.error('[ChatService] Error handling virtual files:', error);
+        }
     }
-  }
-
-  private handleContextsLoaded(contexts: any[]): void {
-    console.log('[ChatService] Contexts loaded:', contexts);
+    
+    // Notificar a los handlers
+    if (this.chatsLoadedHandler) {
+        this.chatsLoadedHandler(processedChats);
+    }
     if (this.messageHandler) {
-      this.messageHandler({
-        type: 'contexts_loaded',
-        content: contexts,
-        metadata: {}
-      } as WebSocketResponse);
+        this.messageHandler({
+            type: 'contexts_loaded',
+            content: JSON.stringify(processedChats)
+        });
     }
+    
+    console.log('[ChatService] Processed chats:', processedChats);
   }
 
-  private handleContextCreated(context: any): void {
-    console.log('[ChatService] Context created:', context);
+  private handleChatCreated(chat: ChatInfo) {
+    console.log('[ChatService] Chat created:', chat);
+    this.currentChatId = chat.id;
     if (this.messageHandler) {
       this.messageHandler({
         type: 'context_created',
-        content: context,
-        metadata: {}
-      } as WebSocketResponse);
+        content: JSON.stringify(chat)
+      });
     }
   }
 
-  private handleContextSwitched(context: any): void {
-    console.log('[ChatService] Context switched:', context);
+  private async handleChatSwitched(chat: ChatInfo) {
+    console.log('[ChatService] Switching to chat:', chat);
+    this.currentChatId = chat.id;
+    
+    try {
+      // Limpiar el sistema de archivos virtual antes de cargar los nuevos archivos
+      console.log('[ChatService] Clearing virtual file system...');
+      await virtualFS.clear();
+      console.log('[ChatService] Virtual file system cleared');
+      
+      // Restaurar los archivos virtuales del chat
+      if (chat.virtualFiles) {
+        console.log('[ChatService] Restoring virtual files for chat:', chat.id);
+        await Promise.all(
+          Object.entries(chat.virtualFiles).map(async ([path, file]) => {
+            try {
+              await virtualFS.writeFile(path, file.content);
+              console.log('[ChatService] Restored file:', path);
+            } catch (error) {
+              console.error('[ChatService] Error restoring file:', path, error);
+            }
+          })
+        );
+      }
+    } catch (error) {
+      console.error('[ChatService] Error handling virtual files:', error);
+    }
+    
     if (this.messageHandler) {
       this.messageHandler({
         type: 'context_switched',
-        content: context,
-        metadata: {}
-      } as WebSocketResponse);
+        content: JSON.stringify(chat)
+      });
     }
   }
 } 

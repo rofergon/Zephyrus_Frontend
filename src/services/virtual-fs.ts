@@ -5,16 +5,18 @@ interface FileSystemItem {
   children?: FileSystemItem[];
 }
 
-interface VirtualFSInstance {
-  writeFile(path: string, content: string): Promise<void>;
-  readFile(path: string): Promise<string>;
-  getFiles(): Promise<{ [key: string]: string }>;
-  deleteFile(path: string): Promise<void>;
-  resolveImport(importPath: string): Promise<{ content: string }>;
-  isInitialized(): Promise<boolean>;
-  listFiles(): Promise<FileSystemItem[]>;
-  moveFile(sourcePath: string, targetPath: string, options?: { autoRename?: boolean }): Promise<{ newPath: string; renamed: boolean }>;
-  moveDirectory(sourcePath: string, targetPath: string, options?: { autoRename?: boolean }): Promise<{ newPath: string; renamed: boolean }>;
+export interface VirtualFSInstance {
+  writeFile: (path: string, content: string) => Promise<void>;
+  readFile: (path: string) => Promise<string>;
+  getFiles: () => Promise<{ [key: string]: string }>;
+  deleteFile: (path: string) => Promise<void>;
+  resolveImport: (importPath: string) => Promise<{ content: string }>;
+  isInitialized: () => Promise<boolean>;
+  listFiles: () => Promise<FileSystemItem[]>;
+  moveFile: (sourcePath: string, targetPath: string, options?: { autoRename?: boolean }) => Promise<{ newPath: string; renamed: boolean }>;
+  moveDirectory: (sourcePath: string, targetPath: string, options?: { autoRename?: boolean }) => Promise<{ newPath: string; renamed: boolean }>;
+  exists: (path: string) => Promise<boolean>;
+  clear: () => Promise<void>;
 }
 
 class VirtualFileSystem implements VirtualFSInstance {
@@ -397,6 +399,33 @@ class VirtualFileSystem implements VirtualFSInstance {
     } catch (error) {
       throw new Error(`Error moving directory: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  public async exists(path: string): Promise<boolean> {
+    await this.ensureInitialized();
+    return await this.fileExists(path);
+  }
+
+  public async clear(): Promise<void> {
+    await this.ensureInitialized();
+    return new Promise((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('Database not initialized'));
+        return;
+      }
+
+      const transaction = this.db.transaction(['files'], 'readwrite');
+      const store = transaction.objectStore('files');
+      const request = store.clear();
+
+      request.onerror = () => {
+        reject(new Error('Error clearing virtual file system'));
+      };
+
+      request.onsuccess = () => {
+        resolve();
+      };
+    });
   }
 }
 

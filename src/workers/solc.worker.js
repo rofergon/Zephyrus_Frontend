@@ -120,17 +120,44 @@ self.onmessage = async (event) => {
     
     if (output.errors) {
       output.errors.forEach(error => {
-        const lineMatch = error.formattedMessage?.match(/:(\d+):/);
-        const lineNumber = lineMatch ? parseInt(lineMatch[1]) : 1;
-        
-        markers.push({
-          startLineNumber: lineNumber,
-          startColumn: 1,
-          endLineNumber: lineNumber,
-          endColumn: 1000,
-          message: error.formattedMessage || error.message,
-          severity: error.severity === 'error' ? 8 : 4
-        });
+        // Extraer información de línea y columna del mensaje formateado
+        const locationMatch = error.formattedMessage.match(/Compiled_Contracts:(\d+):(\d+):/);
+        if (locationMatch) {
+          const [_, line, column] = locationMatch;
+          
+          // Extraer el rango del error del mensaje formateado
+          const errorLines = error.formattedMessage.split('\n');
+          let errorLength = 1;
+          
+          // Buscar la línea que contiene el código con el error
+          const codeLine = errorLines.find(line => line.includes('^'));
+          if (codeLine) {
+            const caretIndex = codeLine.indexOf('^');
+            const caretLength = codeLine.split('').filter(char => char === '^').length;
+            errorLength = caretLength;
+          }
+          
+          markers.push({
+            startLineNumber: parseInt(line),
+            endLineNumber: parseInt(line),
+            startColumn: parseInt(column),
+            endColumn: parseInt(column) + errorLength,
+            message: error.formattedMessage,
+            severity: error.type === 'ParserError' || error.type === 'DeclarationError' || error.severity === 'error' ? 8 : 4,
+            source: 'solidity'
+          });
+        } else {
+          // Si no se puede extraer la ubicación exacta, usar un marcador genérico
+          markers.push({
+            startLineNumber: 1,
+            endLineNumber: 1,
+            startColumn: 1,
+            endColumn: 1000,
+            message: error.formattedMessage || error.message,
+            severity: error.type === 'ParserError' || error.type === 'DeclarationError' || error.severity === 'error' ? 8 : 4,
+            source: 'solidity'
+          });
+        }
       });
     }
 

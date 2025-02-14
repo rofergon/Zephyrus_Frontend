@@ -6,6 +6,8 @@ declare global {
     solc: any;
     wrapper: any;
   }
+  
+  function importScripts(...urls: string[]): void;
 }
 
 export type FnString = {

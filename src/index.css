@@ -57,6 +57,9 @@
   -webkit-mask: 
     linear-gradient(#fff 0 0) content-box, 
     linear-gradient(#fff 0 0);
+  mask: 
+    linear-gradient(#fff 0 0) content-box, 
+    linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
 }
@@ -145,4 +148,14 @@ appkit-button::part(button):hover {
   50% {
     border-color: rgba(59, 130, 246, 0.2);
   }
+}
+
+/* Estilos para líneas modificadas en el editor */
+.modified-line {
+  background-color: rgba(40, 167, 69, 0.2) !important;
+  transition: background-color 0.3s ease;
+}
+
+.modified-line-gutter {
+  border-left: 3px solid #28a745 !important;
 }

@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+anthropic
+python-dotenv
+websockets
+aiofiles
+watchdog
+python-multipart
+typing-extensions
+pydantic 

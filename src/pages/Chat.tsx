@@ -5,13 +5,14 @@ import * as monaco from 'monaco-editor';
 import { ResizableBox } from 'react-resizable';
 import FileExplorer from '../components/FileExplorer';
 import { virtualFS } from '../services/virtual-fs';
-import { ChatService, type SessionInfo } from '../services/chatService';
+import { ChatService } from '../services/chatService';
 import 'react-resizable/css/styles.css';
 import { XMarkIcon, Bars3Icon } from '@heroicons/react/24/outline';
 import SessionList from '../components/SessionList';
 import { sessionService } from '../services/sessionService';
 import { useAccount } from 'wagmi';
 import AssistedChat from './AssistedChat';
+import { conversationService } from '../services/conversationService';
 
 // Asegurarse de que virtualFS está inicializado
 if (!virtualFS) {
@@ -25,7 +26,7 @@ interface Message {
   id: string;
   text: string;
   sender: 'user' | 'ai' | 'system';
-  timestamp?: number;
+  timestamp: number;
 }
 
 interface Marker {
@@ -48,6 +49,16 @@ interface WorkerMessage {
 }
 
 interface AgentResponse {
+  type: 'message' | 'code_edit' | 'file_create' | 'file_delete';
+  content: string;
+  metadata?: {
+    fileName?: string;
+    path?: string;
+    language?: string;
+  };
+}
+
+interface WebSocketResponse {
   type: 'message' | 'code_edit' | 'file_create' | 'file_delete';
   content: string;
   metadata?: {
@@ -133,6 +144,10 @@ function Chat() {
   const [showFileExplorer, setShowFileExplorer] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [mode, setMode] = useState<'advanced' | 'assisted' | null>(null);
+  const [activeContext, setActiveContext] = useState<any>(null);
+  const [conversationContexts, setConversationContexts] = useState<any[]>([]);
+  const [previousCode, setPreviousCode] = useState<string>('');
+  const [decorations, setDecorations] = useState<string[]>([]);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -225,141 +240,150 @@ contract MyToken is ERC20, Ownable {
     return () => window.removeEventListener('resize', calculateHeights);
   }, [chatHeight]);
 
-  const handleEditorDidMount = (editor: monaco.editor.IStandaloneCodeEditor, monacoInstance: Monaco) => {
+  const handleEditorDidMount = (editor: monaco.editor.IStandaloneCodeEditor, monaco: Monaco) => {
     editorRef.current = editor;
-    monacoRef.current = monacoInstance;
+    monacoRef.current = monaco;
 
-    // Registrar el lenguaje Solidity
-    monacoInstance.languages.register({ id: 'solidity' });
-    
-    // Configurar el resaltado de sintaxis para Solidity
-    monacoInstance.languages.setMonarchTokensProvider('solidity', {
-      defaultToken: '',
-      tokenPostfix: '.sol',
+    // Configurar el editor
+    setupMonacoEditor(monaco);
 
-      brackets: [
-        { token: 'delimiter.curly', open: '{', close: '}' },
-        { token: 'delimiter.parenthesis', open: '(', close: ')' },
-        { token: 'delimiter.square', open: '[', close: ']' },
-        { token: 'delimiter.angle', open: '<', close: '>' }
-      ],
-
-      keywords: [
-        'pragma', 'solidity', 'contract', 'interface', 'library', 'is', 'public',
-        'private', 'internal', 'external', 'pure', 'view', 'payable', 'storage',
-        'memory', 'calldata', 'constant', 'immutable', 'constructor', 'function',
-        'modifier', 'event', 'emit', 'anonymous', 'indexed', 'returns', 'return',
-        'mapping', 'struct', 'enum', 'address', 'bool', 'string', 'bytes', 'uint',
-        'int', 'fixed', 'ufixed', 'require', 'revert', 'assert', 'if', 'else',
-        'for', 'while', 'do', 'break', 'continue', 'throw', 'import', 'using',
-        'abstract', 'virtual', 'override'
-      ],
-      
-      typeKeywords: [
-        'uint', 'uint8', 'uint16', 'uint32', 'uint64', 'uint128', 'uint256',
-        'int', 'int8', 'int16', 'int32', 'int64', 'int128', 'int256',
-        'bytes', 'bytes1', 'bytes2', 'bytes3', 'bytes4', 'bytes5', 'bytes6', 'bytes7',
-        'bytes8', 'bytes9', 'bytes10', 'bytes11', 'bytes12', 'bytes13',
-        'bytes14', 'bytes15', 'bytes16', 'bytes17', 'bytes18', 'bytes19', 'bytes20',
-        'bytes21', 'bytes22', 'bytes23', 'bytes24', 'bytes25', 'bytes26', 'bytes27',
-        'bytes28', 'bytes29', 'bytes30', 'bytes31', 'bytes32', 'bool', 'address',
-        'string'
-      ],
-
-      operators: [
-        '=', '>', '<', '!', '~', '?', ':',
-        '==', '<=', '>=', '!=', '&&', '||', '++', '--',
-        '+', '-', '*', '/', '&', '|', '^', '%', '<<',
-        '>>', '>>>', '+=', '-=', '*=', '/=', '&=', '|=',
-        '^=', '%=', '<<=', '>>=', '>>>='
-      ],
-
-      symbols: /[=><!~?:&|+\-*\/\^%]+/,
-
-      tokenizer: {
-        root: [
-          [/[a-zA-Z_]\w*/, { 
-            cases: { 
-              '@keywords': 'keyword',
-              '@typeKeywords': 'type',
-              '@default': 'identifier' 
-            } 
-          }],
-          [/[{}()\[\]]/, '@brackets'],
-          [/@symbols/, { 
-            cases: { 
-              '@operators': 'operator',
-              '@default': '' 
-            } 
-          }],
-          [/\d*\.\d+([eE][\-+]?\d+)?/, 'number.float'],
-          [/\d+/, 'number'],
-          [/[;,.]/, 'delimiter'],
-          [/"([^"\\]|\\.)*$/, 'string.invalid'],
-          [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
-          [/\/\/.*$/, 'comment'],
-          [/\/\*/, 'comment', '@comment'],
-        ],
-        
-        string: [
-          [/[^\\"]+/, 'string'],
-          [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
-          [/\\.[^"]*$/, 'string.invalid']
-        ],
-        
-        comment: [
-          [/[^\/*]+/, 'comment'],
-          [/\*\//, 'comment', '@pop'],
-          [/[\/*]/, 'comment']
-        ]
-      }
-    });
-
-    // Definir el tema oscuro personalizado
-    monacoInstance.editor.defineTheme('solidityDark', {
-      base: 'vs-dark',
-      inherit: true,
-      rules: [
-        { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
-        { token: 'type', foreground: '4EC9B0', fontStyle: 'bold' },
-        { token: 'identifier', foreground: 'DCDCAA' },
-        { token: 'number', foreground: 'B5CEA8' },
-        { token: 'string', foreground: 'CE9178' },
-        { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
-        { token: 'operator', foreground: 'D4D4D4' },
-        { token: 'delimiter', foreground: 'D4D4D4' },
-        { token: 'brackets', foreground: 'FFD700' }
-      ],
-      colors: {
-        'editor.background': '#1E1E1E',
-        'editor.foreground': '#D4D4D4',
-        'editor.lineHighlightBackground': '#2A2A2A',
-        'editor.selectionBackground': '#264F78',
-        'editor.inactiveSelectionBackground': '#3A3D41',
-        'editorLineNumber.foreground': '#858585',
-        'editorLineNumber.activeForeground': '#C6C6C6',
-        'editor.selectionHighlightBackground': '#2D2D30',
-        'editor.wordHighlightBackground': '#575757',
-        'editorCursor.foreground': '#A6A6A6',
-        'editorWhitespace.foreground': '#3B3B3B',
-        'editorIndentGuide.background': '#404040',
-        'editorIndentGuide.activeBackground': '#707070',
-        'editor.findMatchBackground': '#515C6A',
-        'editor.findMatchHighlightBackground': '#314365',
-        'minimap.background': '#1E1E1E',
-        'scrollbarSlider.background': '#404040',
-        'scrollbarSlider.hoverBackground': '#505050',
-        'scrollbarSlider.activeBackground': '#606060'
+    // Registrar el manejador de cambios
+    editor.onDidChangeModelContent(() => {
+      const newCode = editor.getValue();
+      if (newCode !== previousCode) {
+        highlightChanges(previousCode, newCode);
+        if (selectedFile) {
+          saveChangesToVirtualFS(selectedFile, newCode);
+        }
       }
     });
 
     // Aplicar el tema oscuro
-    monacoInstance.editor.setTheme('solidityDark');
+    monaco.editor.setTheme('solidityDark');
+  };
+
+  // Función para guardar los cambios en el sistema de archivos virtual
+  const saveChangesToVirtualFS = async (path: string, content: string) => {
+    try {
+      await virtualFS.writeFile(path, content);
+      addDebugMessage(`Successfully saved changes to ${path}`);
+      
+      // Si hay un chat activo, actualizar el contexto
+      if (activeContext) {
+        const updatedContext = {
+          ...activeContext,
+          virtualFiles: {
+            ...activeContext.virtualFiles,
+            [path]: {
+              content: content,
+              language: 'solidity',
+              timestamp: Date.now()
+            }
+          }
+        };
+        setActiveContext(updatedContext);
+        
+        // Notificar al backend sobre los cambios
+        chatService.current?.sendMessage(JSON.stringify({
+          type: 'save_file',
+          content: content,
+          path: path,
+          chat_id: activeContext.id
+        }));
+      }
+    } catch (error) {
+      console.error('[Chat] Error saving changes:', error);
+      addDebugMessage(`Error saving changes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const highlightChanges = (oldCode: string, newCode: string) => {
+    if (!editorRef.current || !monacoRef.current) return;
+
+    // Limpiar decoraciones anteriores
+    editorRef.current.deltaDecorations(decorations, []);
+
+    // Dividir el código en líneas
+    const oldLines = oldCode.split('\n');
+    const newLines = newCode.split('\n');
+
+    // Encontrar líneas modificadas
+    const changedLines: number[] = [];
+    let contractNameChanged = false;
+    let contractName = '';
+    let oldContractName = '';
+
+    // Buscar el nombre del contrato en ambas versiones
+    const contractRegex = /contract\s+(\w+)\s*{/;
+    newLines.forEach((line, index) => {
+      const match = line.match(contractRegex);
+      if (match) {
+        contractName = match[1];
+      }
+    });
+    oldLines.forEach(line => {
+      const match = line.match(contractRegex);
+      if (match) {
+        oldContractName = match[1];
+      }
+    });
+
+    // Verificar si el nombre del contrato cambió
+    if (contractName && oldContractName && contractName !== oldContractName) {
+      contractNameChanged = true;
+    }
+
+    // Si el nombre del contrato cambió, mantener el resto del contenido
+    if (contractNameChanged) {
+      const updatedCode = newLines.map((line, index) => {
+        if (line.includes(contractName)) {
+          changedLines.push(index + 1);
+          return line;
+        }
+        return oldLines[index] || line;
+      }).join('\n');
+
+      if (editorRef.current) {
+        const model = editorRef.current.getModel();
+        if (model) {
+          model.setValue(updatedCode);
+        }
+      }
+    } else {
+      // Para otros cambios, marcar las líneas modificadas
+      newLines.forEach((line, index) => {
+        if (line !== oldLines[index]) {
+          changedLines.push(index + 1);
+        }
+      });
+    }
+
+    // Crear nuevas decoraciones para las líneas modificadas
+    const newDecorations = changedLines.map(lineNumber => ({
+      range: new monacoRef.current!.Range(lineNumber, 1, lineNumber, 1),
+      options: {
+        isWholeLine: true,
+        className: 'modified-line',
+        linesDecorationsClassName: 'modified-line-gutter',
+        minimap: {
+          color: { id: 'minimap.modifiedLine' },
+          position: 2
+        }
+      }
+    }));
+
+    // Aplicar las nuevas decoraciones y guardar sus IDs
+    const newDecorationIds = editorRef.current.deltaDecorations([], newDecorations);
+    setDecorations(newDecorationIds);
+
+    // Guardar el código actualizado
+    setPreviousCode(newCode);
   };
 
   const handleFileSelect = async (path: string): Promise<void> => {
     try {
       const content = await virtualFS.readFile(path);
+      setPreviousCode(code); // Guardar el código anterior
       setCode(content);
       setSelectedFile(path);
       addDebugMessage(`Opened file: ${path}`);
@@ -472,7 +496,12 @@ contract MyToken is ERC20, Ownable {
   const handleCodeChange = async (newCode: string | undefined): Promise<void> => {
     if (newCode === undefined) return;
     
-    setCode(newCode);
+    if (code !== newCode) {
+      setPreviousCode(code);
+      setCode(newCode);
+      highlightChanges(code, newCode);
+    }
+
     if (selectedFile) {
       try {
         await virtualFS.writeFile(selectedFile, newCode);
@@ -494,7 +523,8 @@ contract MyToken is ERC20, Ownable {
           setMessages(prev => [...prev, {
             id: generateUniqueId(),
             text: 'Error: File system initialization failed. Some features may not work correctly.',
-            sender: 'system'
+            sender: 'system',
+            timestamp: Date.now()
           }]);
         }
       } catch (error) {
@@ -553,6 +583,7 @@ contract MyToken is ERC20, Ownable {
         id: generateUniqueId(),
         text: `Importing OpenZeppelin contracts and dependencies...\nThis may take a moment.`,
         sender: 'system',
+        timestamp: Date.now()
       };
       setMessages(prev => [...prev, newMessage]);
 
@@ -572,6 +603,7 @@ contract MyToken is ERC20, Ownable {
         id: generateUniqueId(),
         text: 'All OpenZeppelin contracts and dependencies have been imported successfully.',
         sender: 'system',
+        timestamp: Date.now()
       };
       setMessages(prev => [...prev, successMessage]);
 
@@ -581,6 +613,7 @@ contract MyToken is ERC20, Ownable {
         id: generateUniqueId(),
         text: `Error importing contracts: ${error.message}`,
         sender: 'system',
+        timestamp: Date.now()
       };
       setMessages(prev => [...prev, errorMessage]);
     }
@@ -628,62 +661,26 @@ contract MyToken is ERC20, Ownable {
       addDebugMessage(`WebSocket ${connected ? 'connected' : 'disconnected'}`);
     });
 
-    service.onMessage((response: AgentResponse) => {
-      console.log('[Chat] Received agent response:', response);
-      
-      // Manejar el mensaje según su tipo
+    service.onMessage((response: WebSocketResponse) => {
       if (response.type === 'message') {
-        setMessages(prev => [...prev, {
-          id: generateUniqueId(),
-          text: response.content,
-          sender: 'ai',
-          timestamp: Date.now()
-        }]);
-      } else if (response.type === 'code_edit' || response.type === 'file_create') {
-        // Actualizar el código en el editor
-        if (response.metadata?.path) {
-          setSelectedFile(response.metadata.path);
-          setCode(response.content);
-          virtualFS.writeFile(response.metadata.path, response.content)
-            .then(() => {
-              addDebugMessage(`File ${response.metadata?.path} updated/created successfully`);
-            })
-            .catch(error => {
-              addDebugMessage(`Error updating/creating file: ${error.message}`);
-            });
-        }
-      } else if (response.type === 'file_delete') {
-        if (response.metadata?.path) {
-          virtualFS.deleteFile(response.metadata.path)
-            .then(() => {
-              addDebugMessage(`File ${response.metadata?.path} deleted successfully`);
-              if (selectedFile === response.metadata.path) {
-                setSelectedFile(null);
-                setCode('// Your Solidity contract will appear here');
-              }
-            })
-            .catch(error => {
-              addDebugMessage(`Error deleting file: ${error.message}`);
-            });
+        const currentContext = conversationService.getActiveContext();
+        if (currentContext) {
+          const newMessage: Message = {
+            id: generateUniqueId(),
+            text: response.content,
+            sender: 'ai',
+            timestamp: Date.now()
+          };
+          conversationService.addMessage(currentContext.id, newMessage);
+          setActiveContext({...currentContext, messages: [...currentContext.messages, newMessage]});
+          setConversationContexts([...conversationService.getContexts()]);
         }
       }
       setIsTyping(false);
     });
 
-    service.onSessionEstablished((sessionInfo: SessionInfo) => {
-      setCurrentClientId(sessionInfo.clientId);
-      setCurrentSessionId(sessionInfo.sessionId);
-      addDebugMessage(`Session established: ${sessionInfo.sessionName}`);
-      setMessages(prev => [...prev, {
-        id: generateUniqueId(),
-        text: `Connected to session: ${sessionInfo.sessionName}`,
-        sender: 'system',
-        timestamp: Date.now()
-      }]);
-    });
-
-    // Iniciar conexión sin sessionId (creará una nueva)
-    service.connect(undefined, address || undefined);
+    // Connect with wallet address
+    service.connect(address || undefined);
 
     return () => {
       service.disconnect();
@@ -712,7 +709,8 @@ contract MyToken is ERC20, Ownable {
       setMessages([{
         id: generateUniqueId(),
         text: 'Switching to selected session...',
-        sender: 'system'
+        sender: 'system',
+        timestamp: Date.now()
       }]);
     } catch (error) {
       console.error('Error switching session:', error);
@@ -802,6 +800,132 @@ contract MyToken is ERC20, Ownable {
     window.addEventListener('resize', checkScreenSize);
     return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
+
+  const setupMonacoEditor = (monaco: Monaco) => {
+    // Registrar el lenguaje Solidity
+    monaco.languages.register({ id: 'solidity' });
+
+    // Configurar el resaltado de sintaxis para Solidity
+    monaco.languages.setMonarchTokensProvider('solidity', {
+      defaultToken: '',
+      tokenPostfix: '.sol',
+
+      brackets: [
+        { token: 'delimiter.curly', open: '{', close: '}' },
+        { token: 'delimiter.parenthesis', open: '(', close: ')' },
+        { token: 'delimiter.square', open: '[', close: ']' },
+        { token: 'delimiter.angle', open: '<', close: '>' }
+      ],
+
+      keywords: [
+        'pragma', 'solidity', 'contract', 'interface', 'library', 'is', 'public',
+        'private', 'internal', 'external', 'pure', 'view', 'payable', 'storage',
+        'memory', 'calldata', 'constant', 'immutable', 'constructor', 'function',
+        'modifier', 'event', 'emit', 'anonymous', 'indexed', 'returns', 'return',
+        'mapping', 'struct', 'enum', 'address', 'bool', 'string', 'bytes', 'uint',
+        'int', 'fixed', 'ufixed', 'require', 'revert', 'assert', 'if', 'else',
+        'for', 'while', 'do', 'break', 'continue', 'throw', 'import', 'using',
+        'abstract', 'virtual', 'override'
+      ],
+      
+      typeKeywords: [
+        'uint', 'uint8', 'uint16', 'uint32', 'uint64', 'uint128', 'uint256',
+        'int', 'int8', 'int16', 'int32', 'int64', 'int128', 'int256',
+        'bytes', 'bytes1', 'bytes2', 'bytes3', 'bytes4', 'bytes5', 'bytes6', 'bytes7',
+        'bytes8', 'bytes9', 'bytes10', 'bytes11', 'bytes12', 'bytes13',
+        'bytes14', 'bytes15', 'bytes16', 'bytes17', 'bytes18', 'bytes19', 'bytes20',
+        'bytes21', 'bytes22', 'bytes23', 'bytes24', 'bytes25', 'bytes26', 'bytes27',
+        'bytes28', 'bytes29', 'bytes30', 'bytes31', 'bytes32', 'bool', 'address',
+        'string'
+      ],
+
+      operators: [
+        '=', '>', '<', '!', '~', '?', ':',
+        '==', '<=', '>=', '!=', '&&', '||', '++', '--',
+        '+', '-', '*', '/', '&', '|', '^', '%', '<<',
+        '>>', '>>>', '+=', '-=', '*=', '/=', '&=', '|=',
+        '^=', '%=', '<<=', '>>=', '>>>='
+      ],
+
+      symbols: /[=><!~?:&|+\-*\/\^%]+/,
+
+      tokenizer: {
+        root: [
+          [/[a-zA-Z_]\w*/, { 
+            cases: { 
+              '@keywords': 'keyword',
+              '@typeKeywords': 'type',
+              '@default': 'identifier' 
+            } 
+          }],
+          [/[{}()\[\]]/, '@brackets'],
+          [/@symbols/, { 
+            cases: { 
+              '@operators': 'operator',
+              '@default': '' 
+            } 
+          }],
+          [/\d*\.\d+([eE][\-+]?\d+)?/, 'number.float'],
+          [/\d+/, 'number'],
+          [/[;,.]/, 'delimiter'],
+          [/"([^"\\]|\\.)*$/, 'string.invalid'],
+          [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
+          [/\/\/.*$/, 'comment'],
+          [/\/\*/, 'comment', '@comment'],
+        ],
+        
+        string: [
+          [/[^\\"]+/, 'string'],
+          [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
+          [/\\.[^"]*$/, 'string.invalid']
+        ],
+        
+        comment: [
+          [/[^\/*]+/, 'comment'],
+          [/\*\//, 'comment', '@pop'],
+          [/[\/*]/, 'comment']
+        ]
+      }
+    });
+
+    // Definir el tema oscuro personalizado
+    monaco.editor.defineTheme('solidityDark', {
+      base: 'vs-dark',
+      inherit: true,
+      rules: [
+        { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
+        { token: 'type', foreground: '4EC9B0', fontStyle: 'bold' },
+        { token: 'identifier', foreground: 'DCDCAA' },
+        { token: 'number', foreground: 'B5CEA8' },
+        { token: 'string', foreground: 'CE9178' },
+        { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
+        { token: 'operator', foreground: 'D4D4D4' },
+        { token: 'delimiter', foreground: 'D4D4D4' },
+        { token: 'brackets', foreground: 'FFD700' }
+      ],
+      colors: {
+        'editor.background': '#1E1E1E',
+        'editor.foreground': '#D4D4D4',
+        'editor.lineHighlightBackground': '#2A2A2A',
+        'editor.selectionBackground': '#264F78',
+        'editor.inactiveSelectionBackground': '#3A3D41',
+        'editorLineNumber.foreground': '#858585',
+        'editorLineNumber.activeForeground': '#C6C6C6',
+        'editor.selectionHighlightBackground': '#2D2D30',
+        'editor.wordHighlightBackground': '#575757',
+        'editorCursor.foreground': '#A6A6A6',
+        'editorWhitespace.foreground': '#3B3B3B',
+        'editorIndentGuide.background': '#404040',
+        'editorIndentGuide.activeBackground': '#707070',
+        'editor.findMatchBackground': '#515C6A',
+        'editor.findMatchHighlightBackground': '#314365',
+        'minimap.background': '#1E1E1E',
+        'scrollbarSlider.background': '#404040',
+        'scrollbarSlider.hoverBackground': '#505050',
+        'scrollbarSlider.activeBackground': '#606060'
+      }
+    });
+  };
 
   // If no mode is selected, show mode selection
   if (!mode) {
