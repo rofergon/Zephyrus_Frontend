@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { NodeGlobalsPolyfillPlugin } from '@esbuild-plugins/node-globals-polyfill'
 import { NodeModulesPolyfillPlugin } from '@esbuild-plugins/node-modules-polyfill'
-import rollupNodePolyFill from 'rollup-plugin-node-polyfills'
+import nodePolyfills from 'rollup-plugin-polyfill-node'
 
 export default defineConfig({
   plugins: [
@@ -14,7 +14,6 @@ export default defineConfig({
     NodeModulesPolyfillPlugin()
   ],
   define: {
-    
     'process.env': process.env ?? {},
   },
   worker: {
@@ -38,11 +37,36 @@ export default defineConfig({
     commonjsOptions: {
       transformMixedEsModules: true
     },
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
-      plugins: [rollupNodePolyFill()],
+      plugins: [nodePolyfills()],
       output: {
-        manualChunks: undefined,
-        format: 'es'
+        manualChunks: {
+          'vendor': [
+            'react',
+            'react-dom',
+            'react-router-dom',
+          ],
+          'monaco': [
+            'monaco-editor',
+          ],
+          'web3': [
+            'web3'
+          ],
+          'solc': [
+            'solc',
+            'browserify-fs'
+          ]
+        },
+        format: 'es',
+        assetFileNames: (assetInfo) => {
+          if (assetInfo.name.endsWith('.css')) {
+            return 'assets/css/[name]-[hash][extname]';
+          }
+          return 'assets/[name]-[hash][extname]';
+        },
+        chunkFileNames: 'assets/js/[name]-[hash].js',
+        entryFileNames: 'assets/js/[name]-[hash].js',
       },
       external: [
         '@safe-global/safe-apps-sdk',
@@ -53,15 +77,17 @@ export default defineConfig({
   resolve: {
     alias: {
       stream: 'stream-browserify',
-      events: 'rollup-plugin-node-polyfills/polyfills/events',
-      util: 'rollup-plugin-node-polyfills/polyfills/util',
+      events: 'events',
+      util: 'util',
       url: 'url',
       assert: 'assert',
       process: 'process/browser',
-      buffer: 'rollup-plugin-node-polyfills/polyfills/buffer-es6',
+      buffer: 'buffer',
       '@openzeppelin/contracts': './node_modules/@openzeppelin/contracts',
       '@safe-global/safe-apps-sdk': '@safe-global/safe-apps-sdk',
-      '@safe-global/safe-apps-provider': '@safe-global/safe-apps-provider'
+      '@safe-global/safe-apps-provider': '@safe-global/safe-apps-provider',
+      'solc-browserify': './src/services/solc-browserify',
+      'fs': 'browserify-fs'
     }
   },
   optimizeDeps: {
@@ -82,7 +108,8 @@ export default defineConfig({
       'process/browser',
       '@safe-global/safe-apps-sdk',
       '@safe-global/safe-apps-provider',
-      'solc-browserify'
+      'solc',
+      'browserify-fs'
     ]
   },
   server: {
