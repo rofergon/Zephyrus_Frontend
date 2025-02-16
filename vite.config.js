@@ -30,7 +30,8 @@ export default defineConfig({
       output: {
         format: 'es',
         inlineDynamicImports: false,
-        entryFileNames: 'assets/workers/[name].[hash].js'
+        entryFileNames: 'assets/workers/[name].[hash].js',
+        chunkFileNames: 'assets/workers/[name].[hash].js'
       }
     }
   },
