@@ -60,8 +60,8 @@ export default defineConfig({
       process: 'process/browser',
       buffer: 'rollup-plugin-node-polyfills/polyfills/buffer-es6',
       '@openzeppelin/contracts': './node_modules/@openzeppelin/contracts',
-      '@safe-globalThis/safe-apps-sdk': '@safe-global/safe-apps-sdk',
-      '@safe-globalThis/safe-apps-provider': '@safe-global/safe-apps-provider'
+      '@safe-global/safe-apps-sdk': '@safe-global/safe-apps-sdk',
+      '@safe-global/safe-apps-provider': '@safe-global/safe-apps-provider'
     }
   },
   optimizeDeps: {
