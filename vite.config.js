@@ -27,6 +27,7 @@ export default defineConfig({
       NodeModulesPolyfillPlugin()
     ],
     rollupOptions: {
+      external: ['solc'],
       output: {
         format: 'es',
         inlineDynamicImports: false,
@@ -79,11 +80,7 @@ export default defineConfig({
           }
           return 'assets/js/[name]-[hash].js';
         }
-      },
-      external: [
-        '@safe-global/safe-apps-sdk',
-        '@safe-global/safe-apps-provider'
-      ]
+      }
     }
   },
   resolve: {
