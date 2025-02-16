@@ -17,6 +17,14 @@ class MessageActions:
     async def process_message(self, message: str, context: Dict, context_id: str | None = None) -> AsyncGenerator[Dict, None]:
         """Procesa un mensaje del usuario y genera respuestas."""
         try:
+            # Validar que el mensaje no esté vacío
+            if not message or not message.strip():
+                yield {
+                    "type": "message",
+                    "content": "Ready to help you with your smart contract development."
+                }
+                return
+
             # Inicializar el historial del contexto si no existe
             if context_id and context_id not in self.conversation_histories:
                 self.conversation_histories[context_id] = []
@@ -80,28 +88,7 @@ IMPORTANT RULES FOR CONTRACT EDITING:
 6. Code Suggestions:
    - When making suggestions, prefix with "Suggestion:" or "Idea:"
    - For suggestions, you can show partial code examples
-   - But for actual edits, always show the complete contract
-
-Example of a good edit response:
-"I'll add the new function `checkBalance` to the contract. Here's the complete updated contract with the new function integrated:
-
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-
-contract ExistingContract {
-    // Existing code...
-    
-    // New function added
-    function checkBalance() public view returns (uint256) {
-        return balance;
-    }
-    
-    // Rest of existing code...
-}
-```"
-
-Remember: NEVER show just the new code alone - always show the complete updated contract with new code integrated into the appropriate location."""
+   - But for actual edits, always show the complete contract"""
 
             try:
                 # Obtener la respuesta de Claude

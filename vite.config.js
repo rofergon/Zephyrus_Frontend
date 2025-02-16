@@ -14,7 +14,7 @@ export default defineConfig({
     NodeModulesPolyfillPlugin()
   ],
   define: {
-    'global': 'globalThis',
+    
     'process.env': process.env ?? {},
   },
   worker: {
