@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { NodeGlobalsPolyfillPlugin } from '@esbuild-plugins/node-globals-polyfill'
 import { NodeModulesPolyfillPlugin } from '@esbuild-plugins/node-modules-polyfill'
 import nodePolyfills from 'rollup-plugin-polyfill-node'
+import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [
@@ -15,6 +16,7 @@ export default defineConfig({
   ],
   define: {
     'process.env': process.env ?? {},
+    'process.env.VITE_WORKER_URL': JSON.stringify('/src/workers/solc.worker.js')
   },
   worker: {
     format: 'es',
@@ -28,7 +30,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         format: 'es',
-        inlineDynamicImports: true
+        inlineDynamicImports: true,
+        chunkFileNames: 'assets/workers/[name]-[hash].js',
       }
     }
   },
@@ -39,6 +42,10 @@ export default defineConfig({
     },
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        worker: resolve(__dirname, 'src/workers/solc.worker.js')
+      },
       plugins: [nodePolyfills()],
       output: {
         manualChunks: {

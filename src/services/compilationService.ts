@@ -6,7 +6,10 @@ export class CompilationService {
   private workerUrl: string;
 
   private constructor() {
-    this.workerUrl = new URL('../workers/solc.worker.js', import.meta.url).toString();
+    // En producción, usar la ruta relativa al dominio
+    this.workerUrl = import.meta.env.PROD 
+      ? '/assets/workers/solc.worker.js'
+      : new URL('../workers/solc.worker.js', import.meta.url).toString();
   }
 
   public static getInstance(): CompilationService {
