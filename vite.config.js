@@ -16,7 +16,6 @@ export default defineConfig({
   ],
   define: {
     'process.env': process.env ?? {},
-    'process.env.VITE_WORKER_URL': JSON.stringify('/src/workers/solc.worker.js')
   },
   worker: {
     format: 'es',
@@ -30,8 +29,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         format: 'es',
-        inlineDynamicImports: true,
-        chunkFileNames: 'assets/workers/[name]-[hash].js',
+        inlineDynamicImports: false,
+        entryFileNames: 'assets/workers/[name].[hash].js'
       }
     }
   },
@@ -44,7 +43,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        worker: resolve(__dirname, 'src/workers/solc.worker.js')
+        'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js')
       },
       plugins: [nodePolyfills()],
       output: {
@@ -73,7 +72,12 @@ export default defineConfig({
           return 'assets/[name]-[hash][extname]';
         },
         chunkFileNames: 'assets/js/[name]-[hash].js',
-        entryFileNames: 'assets/js/[name]-[hash].js',
+        entryFileNames: (chunkInfo) => {
+          if (chunkInfo.name === 'solc.worker') {
+            return 'assets/workers/[name].[hash].js';
+          }
+          return 'assets/js/[name]-[hash].js';
+        }
       },
       external: [
         '@safe-global/safe-apps-sdk',
