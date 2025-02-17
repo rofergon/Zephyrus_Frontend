@@ -1,8 +1,5 @@
 // Explicitly mark as module worker
-self.window = self; // Some libraries expect window to be defined
-
-import { Solc } from '../services/solc-browserify';
-import { virtualFS } from '../services/virtual-fs';
+self.window = self;
 
 let compiler = null;
 const fileCache = new Map();
@@ -83,18 +80,27 @@ function importCallback(path) {
 // Initialize compiler
 async function initCompiler() {
   try {
+    console.log('[Solc Worker] Fetching compiler...');
     const response = await fetch('https://binaries.soliditylang.org/bin/soljson-v0.8.19+commit.7dd6d404.js');
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch compiler: ${response.statusText}`);
+    }
+
+    console.log('[Solc Worker] Compiler fetched, creating blob...');
     const solcJs = await response.text();
     const blob = new Blob([solcJs], { type: 'application/javascript' });
     const url = URL.createObjectURL(blob);
     
-    // Load solc
+    console.log('[Solc Worker] Loading compiler...');
     importScripts(url);
     
-    // Initialize the compiler
+    if (!self.Module) {
+      throw new Error('Compiler module not loaded correctly');
+    }
+
     compiler = self.Module;
-    
-    // Send success message back
+    console.log('[Solc Worker] Compiler initialized successfully');
     self.postMessage({ type: 'init', success: true });
   } catch (error) {
     console.error('[Solc Worker] Initialization error:', error);
@@ -106,85 +112,48 @@ async function initCompiler() {
   }
 }
 
-// Handle messages
-self.onmessage = async function(e) {
+async function compile(input) {
   try {
-    const { type, sourceCode, sourcePath } = e.data;
-
-    if (type === 'init') {
-      await initCompiler();
-      return;
+    if (!compiler) {
+      throw new Error('Compiler not initialized');
     }
 
-    if (type === 'compile') {
-      if (!compiler) {
-        throw new Error('Compiler not initialized. Please wait for initialization to complete.');
-      }
-
-      const input = {
-        language: 'Solidity',
-        sources: {
-          [sourcePath]: {
-            content: sourceCode
-          }
-        },
-        settings: {
-          outputSelection: {
-            '*': {
-              '*': ['*']
-            }
-          },
-          optimizer: {
-            enabled: true,
-            runs: 200
-          }
-        }
-      };
-
-      try {
-        const output = JSON.parse(compiler.compile(JSON.stringify(input)));
-        
-        if (output.errors) {
-          const errors = output.errors.map(error => ({
-            severity: error.severity === 'error' ? 8 : 4,
-            message: error.message,
-            startLineNumber: 1,
-            startColumn: 1,
-            endLineNumber: 1,
-            endColumn: 1
-          }));
-          
-          self.postMessage({ markers: errors });
-        } else {
-          self.postMessage({ output });
-        }
-      } catch (error) {
-        console.error('[Solc Worker] Compilation error:', error);
-        self.postMessage({ 
-          error: error.message || 'Compilation failed',
-          markers: [{
-            severity: 8,
-            message: error.message || 'Compilation failed',
-            startLineNumber: 1,
-            startColumn: 1,
-            endLineNumber: 1,
-            endColumn: 1
-          }]
-        });
+    console.log('[Solc Worker] Starting compilation...');
+    const result = JSON.parse(compiler.compile(JSON.stringify(input)));
+    
+    if (result.errors) {
+      const errors = result.errors.filter(error => error.severity === 'error');
+      if (errors.length > 0) {
+        throw new Error(errors[0].formattedMessage || 'Compilation failed');
       }
     }
+
+    console.log('[Solc Worker] Compilation successful');
+    self.postMessage({ type: 'compilation', result });
   } catch (error) {
-    console.error('[Solc Worker] Worker error:', error);
+    console.error('[Solc Worker] Compilation error:', error);
     self.postMessage({ 
-      error: error.message || 'Worker error',
-      markers: [{
-        severity: 8,
-        message: error.message || 'Worker error',
-        startLineNumber: 1,
-        startColumn: 1,
-        endLineNumber: 1,
-        endColumn: 1
-      }]
+      type: 'compilation', 
+      error: error.message || 'Compilation failed' 
     });
+  }
+}
+
+self.onmessage = async (event) => {
+  const { type, input } = event.data;
+  
+  switch (type) {
+    case 'init':
+      await initCompiler();
+      break;
+    case 'compile':
+      await compile(input);
+      break;
+    default:
+      console.error('[Solc Worker] Unknown message type:', type);
+      self.postMessage({ 
+        type: 'error', 
+        error: `Unknown message type: ${type}` 
+      });
   }
 };

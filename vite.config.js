@@ -29,13 +29,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         format: 'es',
-        inlineDynamicImports: true,
-        assetFileNames: (assetInfo) => {
-          if (assetInfo.name.includes('solc.worker')) {
-            return 'assets/workers/[name][extname]';
-          }
-          return 'assets/[name]-[hash][extname]';
-        }
+        inlineDynamicImports: false
       }
     }
   },
@@ -46,13 +40,9 @@ export default defineConfig({
     },
     chunkSizeWarningLimit: 5000,
     rollupOptions: {
-      plugins: [nodePolyfills()],
       input: {
         main: resolve(__dirname, 'index.html'),
-        'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js'),
-        'editor.worker': resolve(__dirname, 'node_modules/monaco-editor/esm/vs/editor/editor.worker.js'),
-        'json.worker': resolve(__dirname, 'node_modules/monaco-editor/esm/vs/language/json/json.worker.js'),
-        'ts.worker': resolve(__dirname, 'node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js')
+        'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js')
       },
       output: {
         manualChunks: {
