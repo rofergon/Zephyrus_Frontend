@@ -1,15 +1,12 @@
-// Polyfills must be imported first
-import { Buffer } from 'buffer';
+import { Buffer as BufferPolyfill } from 'rollup-plugin-node-polyfills/polyfills/buffer-es6';
 import process from 'process';
 
-// Set up global objects before any other imports
 if (typeof window !== 'undefined') {
   window.global = window;
-  window.Buffer = Buffer;
+  window.Buffer = BufferPolyfill;
   window.process = process;
 }
 
-// Now we can safely import the rest of our dependencies
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { WagmiProvider } from 'wagmi'
@@ -17,12 +14,10 @@ import { http } from 'viem'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createAppKit } from '@reown/appkit/react'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
-import { safe } from '@wagmi/connectors'
-import { configureMonaco } from './config/monaco'
+import { safe } from 'wagmi/connectors'
 
 import App from './App'
 import './index.css'
-import './styles/global.css'
 
 // Create react-query client
 const queryClient = new QueryClient()
@@ -106,9 +101,6 @@ function AppKitProvider({ children }) {
     </WagmiProvider>
   )
 }
-
-// Configure Monaco Editor
-configureMonaco();
 
 // Prevent multiple root creation
 let root

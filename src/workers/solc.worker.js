@@ -1,5 +1,8 @@
 // Explicitly mark as module worker
-self.window = self;
+self.window = self; // Some libraries expect window to be defined
+
+import { Solc } from '../services/solc-browserify';
+import { virtualFS } from '../services/virtual-fs';
 
 let compiler = null;
 const fileCache = new Map();
@@ -77,83 +80,100 @@ function importCallback(path) {
   }
 }
 
-// Initialize compiler
-async function initCompiler() {
+// Main message handler
+self.onmessage = async (event) => {
   try {
-    console.log('[Solc Worker] Fetching compiler...');
-    const response = await fetch('https://binaries.soliditylang.org/bin/soljson-v0.8.19+commit.7dd6d404.js');
+    const { sourceCode, sourcePath } = event.data;
     
-    if (!response.ok) {
-      throw new Error(`Failed to fetch compiler: ${response.statusText}`);
-    }
-
-    console.log('[Solc Worker] Compiler fetched, creating blob...');
-    const solcJs = await response.text();
-    const blob = new Blob([solcJs], { type: 'application/javascript' });
-    const url = URL.createObjectURL(blob);
-    
-    console.log('[Solc Worker] Loading compiler...');
-    importScripts(url);
-    
-    if (!self.Module) {
-      throw new Error('Compiler module not loaded correctly');
-    }
-
-    compiler = self.Module;
-    console.log('[Solc Worker] Compiler initialized successfully');
-    self.postMessage({ type: 'init', success: true });
-  } catch (error) {
-    console.error('[Solc Worker] Initialization error:', error);
-    self.postMessage({ 
-      type: 'init', 
-      success: false, 
-      error: error.message || 'Failed to initialize Solidity compiler' 
-    });
-  }
-}
-
-async function compile(input) {
-  try {
+    // Initialize the compiler if not already initialized
     if (!compiler) {
-      throw new Error('Compiler not initialized');
+      compiler = new Solc((solc) => {
+        console.log('[Worker] Compiler initialized successfully');
+      });
     }
-
-    console.log('[Solc Worker] Starting compilation...');
-    const result = JSON.parse(compiler.compile(JSON.stringify(input)));
     
-    if (result.errors) {
-      const errors = result.errors.filter(error => error.severity === 'error');
-      if (errors.length > 0) {
-        throw new Error(errors[0].formattedMessage || 'Compilation failed');
+    // Verify solidity version in pragma
+    const pragmaMatch = sourceCode.match(/pragma solidity\s+(\^?\d+\.\d+\.\d+);/);
+    if (pragmaMatch) {
+      const version = pragmaMatch[1].replace('^', '');
+      const versionParts = version.split('.').map(Number);
+      if (versionParts[0] === 0 && versionParts[1] === 8 && versionParts[2] > 20) {
+        throw new Error(`La versión ${version} no está disponible. La última versión estable es 0.8.20. Por favor, actualiza el pragma solidity a una versión disponible.`);
       }
     }
-
-    console.log('[Solc Worker] Compilation successful');
-    self.postMessage({ type: 'compilation', result });
-  } catch (error) {
-    console.error('[Solc Worker] Compilation error:', error);
-    self.postMessage({ 
-      type: 'compilation', 
-      error: error.message || 'Compilation failed' 
-    });
-  }
-}
-
-self.onmessage = async (event) => {
-  const { type, input } = event.data;
-  
-  switch (type) {
-    case 'init':
-      await initCompiler();
-      break;
-    case 'compile':
-      await compile(input);
-      break;
-    default:
-      console.error('[Solc Worker] Unknown message type:', type);
-      self.postMessage({ 
-        type: 'error', 
-        error: `Unknown message type: ${type}` 
+    
+    // Clear the file cache
+    fileCache.clear();
+    
+    // Preload all local dependencies
+    await preloadDependencies(sourceCode, sourcePath || 'main.sol');
+    
+    // Log the contents of fileCache for debugging
+    console.log('[Worker] Files loaded:', Array.from(fileCache.entries()));
+    
+    // Compile the contract
+    console.log('[Worker] Starting compilation');
+    const output = await compiler.compile(sourceCode, importCallback);
+    
+    // Process compilation results
+    const markers = [];
+    
+    if (output.errors) {
+      output.errors.forEach(error => {
+        // Extraer información de línea y columna del mensaje formateado
+        const locationMatch = error.formattedMessage.match(/Compiled_Contracts:(\d+):(\d+):/);
+        if (locationMatch) {
+          const [_, line, column] = locationMatch;
+          
+          // Extraer el rango del error del mensaje formateado
+          const errorLines = error.formattedMessage.split('\n');
+          let errorLength = 1;
+          
+          // Buscar la línea que contiene el código con el error
+          const codeLine = errorLines.find(line => line.includes('^'));
+          if (codeLine) {
+            const caretIndex = codeLine.indexOf('^');
+            const caretLength = codeLine.split('').filter(char => char === '^').length;
+            errorLength = caretLength;
+          }
+          
+          markers.push({
+            startLineNumber: parseInt(line),
+            endLineNumber: parseInt(line),
+            startColumn: parseInt(column),
+            endColumn: parseInt(column) + errorLength,
+            message: error.formattedMessage,
+            severity: error.type === 'ParserError' || error.type === 'DeclarationError' || error.severity === 'error' ? 8 : 4,
+            source: 'solidity'
+          });
+        } else {
+          // Si no se puede extraer la ubicación exacta, usar un marcador genérico
+          markers.push({
+            startLineNumber: 1,
+            endLineNumber: 1,
+            startColumn: 1,
+            endColumn: 1000,
+            message: error.formattedMessage || error.message,
+            severity: error.type === 'ParserError' || error.type === 'DeclarationError' || error.severity === 'error' ? 8 : 4,
+            source: 'solidity'
+          });
+        }
       });
+    }
+
+    self.postMessage({ markers, output });
+  } catch (error) {
+    console.error('[Worker] Error:', error);
+    self.postMessage({
+      error: error.message,
+      markers: [{
+        startLineNumber: 1,
+        startColumn: 1,
+        endLineNumber: 1,
+        endColumn: 1,
+        message: `Compilation error: ${error.message}`,
+        severity: 8
+      }]
+    });
   }
 };

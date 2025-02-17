@@ -1,70 +1,72 @@
-import { CompilationResult, CompilerInput } from '../types/compilation';
+import { CompilationResult } from '../types/contracts';
 import * as monaco from 'monaco-editor';
 
 export class CompilationService {
   private static instance: CompilationService;
+  private workerUrl: string;
   private worker: Worker | null = null;
-  private workerReady: boolean = false;
-  private initializationPromise: Promise<void> | null = null;
 
   private constructor() {
-    this.initWorker();
+    // Use environment-aware path for worker
+    const isDevelopment = import.meta.env.DEV;
+    const baseUrl = isDevelopment 
+      ? new URL('../workers/solc.worker.js', import.meta.url).toString()
+      : '/assets/workers/solc.worker.js';
+
+    // Ensure the URL is absolute
+    this.workerUrl = new URL(baseUrl, window.location.origin).toString();
+    
+    console.log('[CompilationService] Worker URL:', this.workerUrl, 'Environment:', isDevelopment ? 'development' : 'production');
   }
 
-  private async initWorker(): Promise<void> {
-    if (this.initializationPromise) {
-      return this.initializationPromise;
+  private async initWorker(): Promise<Worker> {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
     }
 
-    this.initializationPromise = new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       try {
-        if (this.worker) {
-          this.worker.terminate();
-          this.worker = null;
-          this.workerReady = false;
-        }
-
-        console.log('[CompilationService] Creating new worker...');
-        this.worker = new Worker(new URL('../workers/solc.worker.js', import.meta.url), {
-          type: 'module'
+        console.log('[CompilationService] Initializing worker...');
+        const worker = new Worker(this.workerUrl, { 
+          type: 'module',
+          name: 'solidity-compiler-worker'
         });
 
-        this.worker.onerror = (error) => {
+        worker.onerror = (error) => {
           const errorDetails = {
             message: error.message,
             filename: error.filename,
             lineno: error.lineno,
             colno: error.colno
           };
-          console.error('[CompilationService] Worker error:', errorDetails);
-          this.workerReady = false;
-          reject(new Error(`Worker error: ${error.message}`));
+          console.error('[CompilationService] Worker initialization error:', errorDetails);
+          reject(new Error(error.message || 'Worker initialization failed'));
         };
 
-        this.worker.onmessage = (event) => {
+        worker.onmessage = (event) => {
           const { type, success, error } = event.data;
           
           if (type === 'init') {
             if (success) {
               console.log('[CompilationService] Worker initialized successfully');
-              this.workerReady = true;
-              resolve();
+              resolve(worker);
             } else {
               console.error('[CompilationService] Worker initialization failed:', error);
-              this.workerReady = false;
               reject(new Error(error || 'Worker initialization failed'));
             }
           }
         };
 
+        // Send init message to worker
+        worker.postMessage({ type: 'init' });
+        this.worker = worker;
+
       } catch (error) {
-        console.error('[CompilationService] Error creating worker:', error);
-        this.workerReady = false;
+        console.error('[CompilationService] Failed to create worker:', error);
         reject(error);
       }
     });
-
-    return this.initializationPromise;
   }
 
   public static getInstance(): CompilationService {
@@ -72,58 +74,6 @@ export class CompilationService {
       CompilationService.instance = new CompilationService();
     }
     return CompilationService.instance;
-  }
-
-  public async compile(input: CompilerInput): Promise<CompilationResult> {
-    if (!this.worker || !this.workerReady) {
-      await this.initWorker();
-    }
-
-    if (!this.worker) {
-      throw new Error('Worker not initialized');
-    }
-
-    return new Promise((resolve, reject) => {
-      if (!this.worker) {
-        reject(new Error('Worker not initialized'));
-        return;
-      }
-
-      const messageHandler = (event: MessageEvent) => {
-        const { type, result, error } = event.data;
-        
-        if (type === 'compilation') {
-          this.worker?.removeEventListener('message', messageHandler);
-          
-          if (error) {
-            reject(new Error(error));
-          } else {
-            resolve(result);
-          }
-        }
-      };
-
-      this.worker.addEventListener('message', messageHandler);
-
-      try {
-        this.worker.postMessage({
-          type: 'compile',
-          input
-        });
-      } catch (error) {
-        this.worker.removeEventListener('message', messageHandler);
-        reject(error);
-      }
-    });
-  }
-
-  public dispose(): void {
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-      this.workerReady = false;
-      this.initializationPromise = null;
-    }
   }
 
   public async compileCode(
@@ -141,12 +91,12 @@ export class CompilationService {
 
     try {
       console.log('[CompilationService] Attempting to create worker...');
-      await this.initWorker();
+      const worker = await this.initWorker();
       console.log('[CompilationService] Worker created successfully');
 
       return new Promise((resolve, reject) => {
-        if (!this.worker) {
-          reject(new Error('Worker not initialized'));
+        if (!worker) {
+          reject(new Error('Worker initialization failed'));
           return;
         }
 
@@ -167,8 +117,8 @@ export class CompilationService {
               addConsoleMessage,
               setCurrentArtifact
             );
-            this.worker?.removeEventListener('message', messageHandler);
-            this.worker = null;
+            worker.removeEventListener('message', messageHandler);
+            worker.terminate();
             resolve();
           }
         };
@@ -191,17 +141,17 @@ export class CompilationService {
             addConsoleMessage,
             setCurrentArtifact
           );
-          this.worker?.removeEventListener('message', messageHandler);
-          this.worker?.removeEventListener('error', errorHandler);
-          this.worker = null;
+          worker.removeEventListener('message', messageHandler);
+          worker.removeEventListener('error', errorHandler);
+          worker.terminate();
           reject(error);
         };
 
-        this.worker?.addEventListener('message', messageHandler);
-        this.worker?.addEventListener('error', errorHandler);
+        worker.addEventListener('message', messageHandler);
+        worker.addEventListener('error', errorHandler);
 
         console.log('[CompilationService] Posting message to worker...');
-        this.worker?.postMessage({
+        worker.postMessage({
           type: 'compile',
           sourceCode: code,
           sourcePath: 'main.sol'

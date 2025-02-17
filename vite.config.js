@@ -3,7 +3,6 @@ import react from '@vitejs/plugin-react'
 import { NodeGlobalsPolyfillPlugin } from '@esbuild-plugins/node-globals-polyfill'
 import { NodeModulesPolyfillPlugin } from '@esbuild-plugins/node-modules-polyfill'
 import nodePolyfills from 'rollup-plugin-polyfill-node'
-import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [
@@ -16,7 +15,6 @@ export default defineConfig({
   ],
   define: {
     'process.env': process.env ?? {},
-    global: 'globalThis',
   },
   worker: {
     format: 'es',
@@ -30,7 +28,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         format: 'es',
-        inlineDynamicImports: false
+        inlineDynamicImports: true
       }
     }
   },
@@ -39,28 +37,25 @@ export default defineConfig({
     commonjsOptions: {
       transformMixedEsModules: true
     },
-    chunkSizeWarningLimit: 5000,
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       plugins: [nodePolyfills()],
-      input: {
-        main: resolve(__dirname, 'index.html'),
-        'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js')
-      },
       output: {
         manualChunks: {
-          'monaco': ['monaco-editor'],
           'vendor': [
             'react',
             'react-dom',
             'react-router-dom',
           ],
-          'web3': ['web3'],
-          'solc': ['solc', 'memfs'],
-          'wagmi': [
-            'wagmi',
-            'viem',
-            '@wagmi/core',
-            '@wagmi/connectors'
+          'monaco': [
+            'monaco-editor',
+          ],
+          'web3': [
+            'web3'
+          ],
+          'solc': [
+            'solc',
+            'memfs'
           ]
         },
         format: 'es',
@@ -68,19 +63,15 @@ export default defineConfig({
           if (assetInfo.name.endsWith('.css')) {
             return 'assets/css/[name]-[hash][extname]';
           }
-          if (assetInfo.name.includes('worker')) {
-            return 'assets/workers/[name][extname]';
-          }
           return 'assets/[name]-[hash][extname]';
         },
         chunkFileNames: 'assets/js/[name]-[hash].js',
-        entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name.includes('worker')) {
-            return 'assets/workers/[name].js';
-          }
-          return 'assets/js/[name]-[hash].js';
-        }
-      }
+        entryFileNames: 'assets/js/[name]-[hash].js',
+      },
+      external: [
+        '@safe-global/safe-apps-sdk',
+        '@safe-global/safe-apps-provider'
+      ]
     }
   },
   resolve: {
@@ -118,14 +109,7 @@ export default defineConfig({
       '@safe-global/safe-apps-sdk',
       '@safe-global/safe-apps-provider',
       'solc',
-      'memfs',
-      'buffer',
-      'process',
-      'wagmi',
-      'viem',
-      '@wagmi/core',
-      '@wagmi/connectors',
-      'monaco-editor'
+      'memfs'
     ]
   },
   server: {
