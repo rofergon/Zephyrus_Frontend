@@ -5,10 +5,10 @@ export class CompilerHelpers {
     contractBody: string,
     options: any = {}
   ): string => {
-    const CompileInput = {
+    const input = {
       language: 'Solidity',
       sources: {
-        Compiled_Contracts: {
+        'Compiled_Contracts': {
           content: contractBody,
         },
       },
@@ -21,18 +21,15 @@ export class CompilerHelpers {
         },
       },
     };
-    return JSON.stringify(CompileInput);
+    return JSON.stringify(input);
   };
 }
 
 export class FnTransform {
   public static stringify(fn: any): FnString {
     const name = fn.name;
-
     const _fn = fn.toString();
-
     const args = _fn.substring(_fn.indexOf('(') + 1, _fn.indexOf(')'));
-
     const body = _fn.substring(_fn.indexOf('{') + 1, _fn.lastIndexOf('}'));
     return {
       name,

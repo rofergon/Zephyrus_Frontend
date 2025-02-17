@@ -1,6 +1,6 @@
 import { CompilerEvent, ImportCallbackFn } from "./browser.solidity.worker";
 import { _version } from "./constant";
-import { CompilerHelpers, FnTransform } from "./helpers";
+import { CompilerHelpers } from "./helpers";
 import { _Worker } from "./worker";
 
 export type CallbackFn = (Solc: Solc) => any;
@@ -89,31 +89,56 @@ export class Solc {
    * ```
    */
   public async compile(
-    contract: string,
+    input: string | any,
     importCallback?: ImportCallbackFn
-  ): Promise<CompilerOutput> {
+  ): Promise<any> {
     return new Promise((resolve, reject) => {
-      const message = this.createCompilerInput(contract, importCallback);
+      try {
+        console.log('[Solc] Creating compile input...');
+        const inputString = typeof input === 'string' ? input : JSON.stringify(input);
+        console.log('[Solc] Compile input:', inputString);
 
-      this.worker.postMessage(message);
+        // Create a message handler for compilation result
+        const messageHandler = (event: MessageEvent) => {
+          const response = event.data;
+          console.log('[Solc] Received compilation response:', response);
 
-      this.worker.onmessage = (event: MessageEvent<CompilerEvent>) => {
-        if (event.data.type === "out") {
-          resolve(JSON.parse(event.data.output));
-        }
-
-        // in case of the compile method is invoked before the callback is executed.
-        // usually the compile method is invoked when the compiler isn't yet initialized.
-        if (event.data.type === "ready") {
-          if (this.callback !== undefined) {
-            this.callback(this);
+          if (response.type === 'out') {
+            try {
+              const parsedOutput = typeof response.output === 'string' ? JSON.parse(response.output) : response.output;
+              console.log('[Solc] Parsed compilation output:', parsedOutput);
+              
+              if (parsedOutput.errors) {
+                console.log('[Solc] Compilation errors:', JSON.stringify(parsedOutput.errors, null, 2));
+              }
+              
+              this.worker.removeEventListener('message', messageHandler);
+              resolve(parsedOutput);
+            } catch (error) {
+              console.error('[Solc] Error parsing compilation output:', error);
+              this.worker.removeEventListener('message', messageHandler);
+              reject(error);
+            }
+          } else if (response.type === 'error') {
+            console.error('[Solc] Compilation error:', response.error);
+            this.worker.removeEventListener('message', messageHandler);
+            reject(new Error(response.error));
           }
-        }
-      };
+        };
 
-      this.worker.onerror = (err) => {
-        reject(err);
-      };
+        this.worker.addEventListener('message', messageHandler);
+
+        // Send compilation request with the correct format
+        console.log('[Solc] Sending compilation request...');
+        this.worker.postMessage({
+          type: 'compile',
+          compilerInput: inputString,
+          importCallback: importCallback ? importCallback.toString() : undefined
+        });
+      } catch (error) {
+        console.error('[Solc] Compilation error:', error);
+        reject(error);
+      }
     });
   }
 
@@ -121,24 +146,5 @@ export class Solc {
     return new Worker(
       URL.createObjectURL(new Blob([`(new ${_Worker})`], { type: "module" }))
     );
-  }
-
-  private createCompilerInput(
-    contract: string,
-    importCallback?: ImportCallbackFn
-  ) {
-    const compilerInput = CompilerHelpers.createCompileInput(contract);
-    const fnStr =
-      importCallback !== undefined
-        ? FnTransform.stringify(importCallback)
-        : undefined;
-
-    const event: CompilerEvent = {
-      type: "compile",
-      importCallback: fnStr,
-      compilerInput,
-    };
-
-    return event;
   }
 } 

@@ -94,14 +94,36 @@ export class CompilationService {
         const messageHandler = (event: MessageEvent) => {
           const { type, markers, error, output } = event.data;
           
-          if (type === 'result') {
-            console.log('[CompilationService] Received compilation result');
+          if (type === 'out') {
+            console.log('[CompilationService] Received compilation result:', event.data);
+            try {
+              const parsedOutput = typeof output === 'string' ? JSON.parse(output) : output;
+              this.handleCompilationResult(
+                {
+                  success: !parsedOutput.errors || parsedOutput.errors.length === 0,
+                  markers: markers || [],
+                  error: parsedOutput.errors ? parsedOutput.errors[0]?.formattedMessage : undefined,
+                  output: parsedOutput
+                },
+                monaco,
+                model,
+                addConsoleMessage,
+                setCurrentArtifact
+              );
+              worker.removeEventListener('message', messageHandler);
+              worker.terminate();
+              resolve();
+            } catch (error) {
+              console.error('[CompilationService] Error parsing compilation output:', error);
+              reject(error);
+            }
+          } else if (type === 'error') {
+            console.error('[CompilationService] Compilation error:', error);
             this.handleCompilationResult(
               {
-                success: !error,
-                markers,
-                error,
-                output
+                success: false,
+                error: error,
+                markers: markers || []
               },
               monaco,
               model,
@@ -110,7 +132,7 @@ export class CompilationService {
             );
             worker.removeEventListener('message', messageHandler);
             worker.terminate();
-            resolve();
+            reject(new Error(error));
           }
         };
 
