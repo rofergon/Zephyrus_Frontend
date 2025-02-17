@@ -7,16 +7,8 @@ export class CompilationService {
   private worker: Worker | null = null;
 
   private constructor() {
-    // Use environment-aware path for worker
-    const isDevelopment = import.meta.env.DEV;
-    const baseUrl = isDevelopment 
-      ? new URL('../workers/solc.worker.js', import.meta.url).toString()
-      : '/assets/workers/solc.worker.js';
-
-    // Ensure the URL is absolute
-    this.workerUrl = new URL(baseUrl, window.location.origin).toString();
-    
-    console.log('[CompilationService] Worker URL:', this.workerUrl, 'Environment:', isDevelopment ? 'development' : 'production');
+    this.workerUrl = new URL('../workers/solc.worker.js', import.meta.url).toString();
+    console.log('[CompilationService] Worker URL:', this.workerUrl);
   }
 
   private async initWorker(): Promise<Worker> {
@@ -58,8 +50,9 @@ export class CompilationService {
           }
         };
 
-        // Send init message to worker
-        worker.postMessage({ type: 'init' });
+        const version = { default: import.meta.env.SOLC_VERSION || '0.8.17' };
+        // Send init message to worker with version information
+        worker.postMessage({ type: 'init', version });
         this.worker = worker;
 
       } catch (error) {
