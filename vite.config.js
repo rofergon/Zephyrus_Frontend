@@ -44,7 +44,7 @@ export default defineConfig({
     commonjsOptions: {
       transformMixedEsModules: true
     },
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 5000,
     rollupOptions: {
       plugins: [nodePolyfills()],
       input: {
@@ -54,8 +54,13 @@ export default defineConfig({
       output: {
         manualChunks: (id) => {
           if (id.includes('node_modules')) {
+            if (id.includes('monaco-editor')) {
+              if (id.includes('editor.worker')) return 'monaco.editor.worker';
+              if (id.includes('json.worker')) return 'monaco.json.worker';
+              if (id.includes('typescript.worker')) return 'monaco.ts.worker';
+              return 'monaco.editor';
+            }
             if (id.includes('react')) return 'vendor';
-            if (id.includes('monaco-editor')) return 'monaco';
             if (id.includes('web3')) return 'web3';
             if (id.includes('solc') || id.includes('memfs')) return 'solc';
             if (id.includes('wagmi') || id.includes('viem') || id.includes('@wagmi')) return 'wagmi';
@@ -67,14 +72,14 @@ export default defineConfig({
           if (assetInfo.name.endsWith('.css')) {
             return 'assets/css/[name]-[hash][extname]';
           }
-          if (assetInfo.name.includes('solc.worker') || assetInfo.name.includes('editor.worker') || assetInfo.name.includes('json.worker') || assetInfo.name.includes('typescript.worker')) {
+          if (assetInfo.name.includes('worker')) {
             return 'assets/workers/[name][extname]';
           }
           return 'assets/[name]-[hash][extname]';
         },
         chunkFileNames: 'assets/js/[name]-[hash].js',
         entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name.includes('solc.worker') || chunkInfo.name.includes('editor.worker') || chunkInfo.name.includes('json.worker') || chunkInfo.name.includes('typescript.worker')) {
+          if (chunkInfo.name.includes('worker')) {
             return 'assets/workers/[name].js';
           }
           return 'assets/js/[name]-[hash].js';
@@ -123,7 +128,11 @@ export default defineConfig({
       'wagmi',
       'viem',
       '@wagmi/core',
-      '@wagmi/connectors'
+      '@wagmi/connectors',
+      'monaco-editor',
+      'monaco-editor/esm/vs/editor/editor.worker',
+      'monaco-editor/esm/vs/language/json/json.worker',
+      'monaco-editor/esm/vs/language/typescript/ts.worker'
     ]
   },
   server: {
