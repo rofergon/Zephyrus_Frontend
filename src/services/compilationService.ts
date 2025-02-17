@@ -6,22 +6,7 @@ export class CompilationService {
   private workerUrl: string;
 
   private constructor() {
-    try {
-      // En producción, buscar el worker en la carpeta assets/workers
-      const workerPath = import.meta.env.PROD 
-        ? '/assets/workers/solc.worker.js'
-        : new URL('../workers/solc.worker.js', import.meta.url).toString();
-
-      // Asegurarse de que la URL sea absoluta y loggear para debug
-      this.workerUrl = workerPath.startsWith('http') 
-        ? workerPath 
-        : new URL(workerPath, window.location.origin).toString();
-      
-      console.log('[CompilationService] Worker URL:', this.workerUrl);
-    } catch (error) {
-      console.error('[CompilationService] Error initializing worker URL:', error);
-      throw error;
-    }
+    this.workerUrl = new URL('../workers/solc.worker.js', import.meta.url).toString();
   }
 
   public static getInstance(): CompilationService {
@@ -43,18 +28,11 @@ export class CompilationService {
     // Limpiar marcadores anteriores
     monaco.editor.setModelMarkers(model, 'solidity', []);
     addConsoleMessage("Starting compilation...", "info");
-    console.log('[CompilationService] Starting compilation with worker URL:', this.workerUrl);
 
     try {
-      const worker = new Worker(this.workerUrl, { 
-        type: 'module',
-        name: 'solc-worker'
-      });
-
-      console.log('[CompilationService] Worker created successfully');
+      const worker = new Worker(this.workerUrl, { type: 'module' });
 
       worker.onmessage = (event) => {
-        console.log('[CompilationService] Worker message received:', event.data);
         const { markers, error, output } = event.data;
         this.handleCompilationResult(
           {
@@ -72,17 +50,11 @@ export class CompilationService {
       };
 
       worker.onerror = (error) => {
-        console.error('[CompilationService] Worker error details:', {
-          message: error.message,
-          filename: error.filename,
-          lineno: error.lineno,
-          colno: error.colno
-        });
-        
+        console.error('[CompilationService] Worker error:', error);
         this.handleCompilationResult(
           {
             success: false,
-            error: `Worker error: ${error.message} (${error.filename}:${error.lineno})`
+            error: `Worker error: ${error.message}`
           },
           monaco,
           model,
@@ -92,14 +64,13 @@ export class CompilationService {
         worker.terminate();
       };
 
-      console.log('[CompilationService] Posting message to worker');
       worker.postMessage({
         sourceCode: code,
         sourcePath: 'main.sol'
       });
 
     } catch (error) {
-      console.error('[CompilationService] Error creating/using worker:', error);
+      console.error('[CompilationService] Compilation error:', error);
       addConsoleMessage(
         `Compilation error: ${error instanceof Error ? error.message : String(error)}`,
         "error"

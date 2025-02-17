@@ -3,7 +3,6 @@ import react from '@vitejs/plugin-react'
 import { NodeGlobalsPolyfillPlugin } from '@esbuild-plugins/node-globals-polyfill'
 import { NodeModulesPolyfillPlugin } from '@esbuild-plugins/node-modules-polyfill'
 import nodePolyfills from 'rollup-plugin-polyfill-node'
-import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [
@@ -27,12 +26,9 @@ export default defineConfig({
       NodeModulesPolyfillPlugin()
     ],
     rollupOptions: {
-      external: ['solc'],
       output: {
         format: 'es',
-        inlineDynamicImports: false,
-        entryFileNames: 'assets/workers/[name].[hash].js',
-        chunkFileNames: 'assets/workers/[name].[hash].js'
+        inlineDynamicImports: true
       }
     }
   },
@@ -43,10 +39,6 @@ export default defineConfig({
     },
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
-      input: {
-        main: resolve(__dirname, 'index.html'),
-        'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js')
-      },
       plugins: [nodePolyfills()],
       output: {
         manualChunks: {
@@ -74,13 +66,12 @@ export default defineConfig({
           return 'assets/[name]-[hash][extname]';
         },
         chunkFileNames: 'assets/js/[name]-[hash].js',
-        entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name === 'solc.worker') {
-            return 'assets/workers/[name].[hash].js';
-          }
-          return 'assets/js/[name]-[hash].js';
-        }
-      }
+        entryFileNames: 'assets/js/[name]-[hash].js',
+      },
+      external: [
+        '@safe-global/safe-apps-sdk',
+        '@safe-global/safe-apps-provider'
+      ]
     }
   },
   resolve: {
