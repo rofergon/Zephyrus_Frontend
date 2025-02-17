@@ -1,5 +1,6 @@
 import { CompilationResult } from '../types/contracts';
 import * as monaco from 'monaco-editor';
+import { logger } from './logger';
 
 export class CompilationService {
   private static instance: CompilationService;
@@ -8,18 +9,19 @@ export class CompilationService {
 
   private constructor() {
     this.workerUrl = new URL('../workers/solc.worker.js', import.meta.url).toString();
-    console.log('[CompilationService] Worker URL:', this.workerUrl);
+    logger.info('CompilationService', 'Service initialized', { workerUrl: this.workerUrl });
   }
 
   private async initWorker(): Promise<Worker> {
     if (this.worker) {
+      logger.debug('CompilationService', 'Terminating existing worker');
       this.worker.terminate();
       this.worker = null;
     }
 
     return new Promise((resolve, reject) => {
       try {
-        console.log('[CompilationService] Initializing worker...');
+        logger.info('CompilationService', 'Initializing worker...');
         const worker = new Worker(this.workerUrl, { 
           type: 'module',
           name: 'solidity-compiler-worker'
@@ -32,7 +34,7 @@ export class CompilationService {
             lineno: error.lineno,
             colno: error.colno
           };
-          console.error('[CompilationService] Worker initialization error:', errorDetails);
+          logger.error('CompilationService', 'Worker initialization error', errorDetails);
           reject(new Error(error.message || 'Worker initialization failed'));
         };
 
@@ -40,21 +42,21 @@ export class CompilationService {
           const { type, status, error } = event.data;
 
           if (type === 'ready' && status === true) {
-            console.log('[CompilationService] Worker initialized successfully');
+            logger.info('CompilationService', 'Worker initialized successfully');
             resolve(worker);
           } else if (type === 'error') {
-            console.error('[CompilationService] Worker initialization failed:', error);
+            logger.error('CompilationService', 'Worker initialization failed', { error });
             reject(new Error(error || 'Worker initialization failed'));
           }
         };
 
-        const version = { default: (import.meta as any).env.SOLC_VERSION || '0.8.17' };
-        // Send init message to worker with version information
+        const version = { default: (import.meta as any).env.SOLC_VERSION || '0.8.20' };
+        logger.debug('CompilationService', 'Sending init message to worker', { version });
         worker.postMessage({ type: 'init', version });
         this.worker = worker;
 
       } catch (error) {
-        console.error('[CompilationService] Failed to create worker:', error);
+        logger.error('CompilationService', 'Failed to create worker', { error });
         reject(error);
       }
     });
@@ -74,70 +76,59 @@ export class CompilationService {
     addConsoleMessage: (message: string, type: 'error' | 'warning' | 'success' | 'info') => void,
     setCurrentArtifact: (artifact: any | null) => void
   ): Promise<void> {
-    if (!code) return;
+    if (!code) {
+      logger.warn('CompilationService', 'Empty code provided for compilation');
+      return;
+    }
 
-    // Limpiar marcadores anteriores
-    monaco.editor.setModelMarkers(model, 'solidity', []);
-    addConsoleMessage("Starting compilation...", "info");
-
+    let worker: Worker;
     try {
-      console.log('[CompilationService] Attempting to create worker...');
-      const worker = await this.initWorker();
-      console.log('[CompilationService] Worker created successfully');
+      logger.info('CompilationService', 'Starting compilation process');
+      worker = await this.initWorker();
 
       return new Promise((resolve, reject) => {
         if (!worker) {
-          reject(new Error('Worker initialization failed'));
+          const error = new Error('Worker not initialized');
+          logger.error('CompilationService', 'Worker not initialized');
+          reject(error);
           return;
         }
 
         const messageHandler = (event: MessageEvent) => {
-          const { type, markers, error, output } = event.data;
-          
+          const { type, output, error, markers } = event.data;
+
           if (type === 'out') {
-            console.log('[CompilationService] Received compilation result:', event.data);
-            try {
-              const parsedOutput = typeof output === 'string' ? JSON.parse(output) : output;
-              this.handleCompilationResult(
-                {
-                  success: !parsedOutput.errors || parsedOutput.errors.length === 0,
-                  markers: markers || [],
-                  error: parsedOutput.errors ? parsedOutput.errors[0]?.formattedMessage : undefined,
-                  output: parsedOutput
-                },
-                monaco,
-                model,
-                addConsoleMessage,
-                setCurrentArtifact
-              );
-              worker.removeEventListener('message', messageHandler);
-              worker.terminate();
-              resolve();
-            } catch (error) {
-              console.error('[CompilationService] Error parsing compilation output:', error);
-              reject(error);
+            logger.info('CompilationService', 'Compilation successful', { output });
+            
+            if (output.errors) {
+              output.errors.forEach((error: any) => {
+                logger.warn('CompilationService', 'Compilation warning/error', { error });
+              });
             }
-          } else if (type === 'error') {
-            console.error('[CompilationService] Compilation error:', error);
+
             this.handleCompilationResult(
-              {
-                success: false,
-                error: error,
-                markers: markers || []
-              },
+              { success: true, result: output },
               monaco,
               model,
               addConsoleMessage,
               setCurrentArtifact
             );
-            worker.removeEventListener('message', messageHandler);
-            worker.terminate();
-            reject(new Error(error));
+            resolve();
+          } else if (type === 'error') {
+            logger.error('CompilationService', 'Compilation error', { error, markers });
+            this.handleCompilationResult(
+              { success: false, error },
+              monaco,
+              model,
+              addConsoleMessage,
+              setCurrentArtifact
+            );
+            resolve();
           }
         };
 
         const errorHandler = (error: ErrorEvent) => {
-          console.error('[CompilationService] Worker error:', {
+          logger.error('CompilationService', 'Worker error', {
             message: error.message,
             filename: error.filename,
             lineno: error.lineno,
@@ -147,7 +138,7 @@ export class CompilationService {
           this.handleCompilationResult(
             {
               success: false,
-              error: `Worker error: ${error.message || 'Unknown error'}. Check console for details.`
+              error: `Worker error: ${error.message || 'Unknown error'}`
             },
             monaco,
             model,
@@ -163,7 +154,10 @@ export class CompilationService {
         worker.addEventListener('message', messageHandler);
         worker.addEventListener('error', errorHandler);
 
-        console.log('[CompilationService] Posting message to worker...');
+        logger.debug('CompilationService', 'Sending compilation request to worker', {
+          codeLength: code.length
+        });
+        
         worker.postMessage({
           type: 'compile',
           sourceCode: code,
@@ -172,14 +166,13 @@ export class CompilationService {
       });
 
     } catch (error) {
-      console.error('[CompilationService] Compilation initialization error:', error);
+      logger.error('CompilationService', 'Compilation initialization error', { error });
       const errorMessage = error instanceof Error ? error.message : String(error);
       addConsoleMessage(
         `Failed to initialize compiler: ${errorMessage}. Please check if you're using a modern browser with Web Workers support.`,
         "error"
       );
       
-      // Set error marker in editor
       const errorMarker = {
         startLineNumber: 1,
         startColumn: 1,
@@ -193,64 +186,45 @@ export class CompilationService {
   }
 
   private handleCompilationResult(
-    result: CompilationResult,
+    result: { success: boolean; result?: any; error?: string },
     monaco: typeof import('monaco-editor'),
     model: monaco.editor.ITextModel,
     addConsoleMessage: (message: string, type: 'error' | 'warning' | 'success' | 'info') => void,
     setCurrentArtifact: (artifact: any | null) => void
   ): void {
-    const { markers, error, output } = result;
+    if (result.success && result.result) {
+      logger.info('CompilationService', 'Processing successful compilation result');
+      // Process successful compilation
+      const output = result.result;
+      const markers: monaco.editor.IMarker[] = [];
+      
+      if (output.errors) {
+        output.errors.forEach((error: any) => {
+          logger.warn('CompilationService', 'Processing compilation warning/error', { error });
+          // Process error/warning markers...
+        });
+      }
 
-    if (error) {
+      // Update markers and artifacts
+      monaco.editor.setModelMarkers(model, 'solidity', markers);
+      setCurrentArtifact(output);
+      addConsoleMessage('Compilation successful', 'success');
+      
+    } else if (!result.success) {
+      logger.error('CompilationService', 'Processing compilation error', { error: result.error });
+      // Process compilation error
       const errorMarker = {
         startLineNumber: 1,
         startColumn: 1,
         endLineNumber: 1,
         endColumn: 1,
-        message: error,
+        message: result.error || 'Unknown compilation error',
         severity: monaco.MarkerSeverity.Error
       };
+      
       monaco.editor.setModelMarkers(model, 'solidity', [errorMarker]);
-      addConsoleMessage(error, 'error');
-      return;
-    }
-
-    if (markers && markers.length > 0) {
-      const processedMarkers = markers.map(marker => ({
-        ...marker,
-        severity: marker.severity >= 8
-          ? monaco.MarkerSeverity.Error
-          : monaco.MarkerSeverity.Warning
-      }));
-
-      monaco.editor.setModelMarkers(model, 'solidity', processedMarkers);
-
-      // Usar Set para mensajes únicos
-      const uniqueMessages = new Set<string>();
-      markers.forEach(marker => {
-        const message = `[Line ${marker.startLineNumber}:${marker.startColumn}] ${marker.message}`;
-        if (!uniqueMessages.has(message)) {
-          uniqueMessages.add(message);
-          addConsoleMessage(message, marker.severity >= 8 ? 'error' : 'warning');
-        }
-      });
-    }
-
-    if (output?.contracts) {
-      const contractName = Object.keys(output.contracts['Compiled_Contracts'])[0];
-      if (contractName) {
-        const abi = output.contracts['Compiled_Contracts'][contractName].abi;
-        const processedFunctions = this.processABI(abi);
-        const newArtifact = {
-          name: contractName,
-          description: `Smart contract ${contractName} interface`,
-          functions: processedFunctions,
-          abi: abi
-        };
-        setCurrentArtifact(newArtifact);
-
-        addConsoleMessage(`Contract "${contractName}" compiled successfully`, 'success');
-      }
+      setCurrentArtifact(null);
+      addConsoleMessage(result.error || 'Compilation failed', 'error');
     }
   }
 

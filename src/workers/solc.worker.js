@@ -3,6 +3,7 @@ self.window = self; // Some libraries expect window to be defined
 
 import { Solc } from '../services/solc-browserify';
 import { virtualFS } from '../services/virtual-fs';
+import { logger } from '../services/logger';
 
 let compiler = null;
 const fileCache = new Map();
@@ -10,6 +11,7 @@ const fileCache = new Map();
 // Function to preload all local dependencies
 async function preloadDependencies(sourceCode, sourcePath) {
   try {
+    logger.debug('SolcWorker', 'Starting dependency preload', { sourcePath });
     // Store the main file
     fileCache.set(sourcePath, sourceCode);
     
@@ -22,6 +24,7 @@ async function preloadDependencies(sourceCode, sourcePath) {
       
       // Skip OpenZeppelin imports as they'll be handled separately
       if (importPath.startsWith('@openzeppelin/')) {
+        logger.debug('SolcWorker', 'Skipping OpenZeppelin import', { importPath });
         continue;
       }
       
@@ -32,36 +35,44 @@ async function preloadDependencies(sourceCode, sourcePath) {
       if (!fileCache.has(normalizedPath)) {
         try {
           const content = await virtualFS.readFile(normalizedPath);
-          console.log(`[Worker] Loaded local file ${normalizedPath}:`, content);
+          logger.info('SolcWorker', 'Loaded local file', { path: normalizedPath });
           fileCache.set(normalizedPath, content);
           // Recursively preload dependencies
           await preloadDependencies(content, normalizedPath);
         } catch (error) {
-          console.error(`[Worker] Failed to load dependency ${normalizedPath}:`, error);
+          logger.error('SolcWorker', 'Failed to load dependency', { 
+            path: normalizedPath,
+            error: error.message 
+          });
         }
       }
     }
   } catch (error) {
-    console.error('[Worker] Error preloading dependencies:', error);
+    logger.error('SolcWorker', 'Error preloading dependencies', { error: error.message });
   }
 }
 
 // Import resolution callback function - must be synchronous
 function importCallback(path) {
-  console.log('[Worker] Resolving import:', path);
+  logger.debug('SolcWorker', 'Resolving import', { path });
   
   try {
     // Handle OpenZeppelin imports
     if (path.startsWith('@openzeppelin/')) {
+      logger.info('SolcWorker', 'Processing OpenZeppelin import', { path });
       const xhr = new XMLHttpRequest();
       xhr.open('GET', `https://raw.githubusercontent.com/OpenZeppelin/openzeppelin-contracts/v4.9.0/contracts/${path.replace('@openzeppelin/contracts/', '')}`, false);
       xhr.send(null);
       
       if (xhr.status === 200) {
-        console.log('[Worker] Successfully resolved OpenZeppelin import:', path);
+        logger.info('SolcWorker', 'Successfully resolved OpenZeppelin import', { path });
         return { contents: xhr.responseText };
       } else {
-        console.error('[Worker] OpenZeppelin import resolution error:', xhr.statusText);
+        logger.error('SolcWorker', 'OpenZeppelin import resolution error', { 
+          path,
+          status: xhr.status,
+          statusText: xhr.statusText 
+        });
         return { error: `Failed to load ${path}: ${xhr.statusText}` };
       }
     }
@@ -69,13 +80,17 @@ function importCallback(path) {
     // Handle local imports from cache
     const normalizedPath = path.replace(/^\.\//, '').replace(/^\.\.\//, '');
     if (fileCache.has(normalizedPath)) {
-      console.log('[Worker] Successfully resolved local import from cache:', normalizedPath);
+      logger.info('SolcWorker', 'Resolved local import from cache', { path: normalizedPath });
       return { contents: fileCache.get(normalizedPath) };
     }
     
+    logger.error('SolcWorker', 'Import not found', { path });
     throw new Error(`Could not find ${path}`);
   } catch (error) {
-    console.error('[Worker] Import resolution error:', error);
+    logger.error('SolcWorker', 'Import resolution error', { 
+      path,
+      error: error.message 
+    });
     return { error: error.message };
   }
 }
@@ -84,12 +99,14 @@ function importCallback(path) {
 self.onmessage = async (event) => {
   try {
     const { type, sourceCode, sourcePath, version } = event.data;
+    logger.debug('SolcWorker', 'Received message', { type });
 
     // Handle initialization message
     if (type === 'init') {
       if (!compiler) {
+        logger.info('SolcWorker', 'Initializing compiler');
         compiler = new Solc((solc) => {
-          console.log('[Worker] Compiler initialized successfully');
+          logger.info('SolcWorker', 'Compiler initialized successfully');
           self.postMessage({ type: 'ready', status: true });
         });
       }
@@ -98,9 +115,7 @@ self.onmessage = async (event) => {
 
     // Handle compilation message
     if (type === 'compile') {
-      // Get the source code from the message
-      const sourceCode = event.data.sourceCode;
-      console.log('[Worker] Received source code:', sourceCode);
+      logger.info('SolcWorker', 'Starting compilation');
       
       // Create the compiler input object
       const input = {
@@ -125,87 +140,39 @@ self.onmessage = async (event) => {
         const version = pragmaMatch[1].replace('^', '');
         const versionParts = version.split('.').map(Number);
         if (versionParts[0] === 0 && versionParts[1] === 8 && versionParts[2] > 20) {
+          logger.error('SolcWorker', 'Unsupported Solidity version', { version });
           throw new Error(`La versión ${version} no está disponible. La última versión estable es 0.8.20. Por favor, actualiza el pragma solidity a una versión disponible.`);
         }
       }
       
       // Clear the file cache
+      logger.debug('SolcWorker', 'Clearing file cache');
       fileCache.clear();
       
       // Preload all local dependencies
       await preloadDependencies(sourceCode, 'main.sol');
       
-      // Log the contents of fileCache for debugging
-      console.log('[Worker] Files loaded:', Array.from(fileCache.entries()));
+      logger.debug('SolcWorker', 'Files loaded', { 
+        cacheSize: fileCache.size,
+        files: Array.from(fileCache.keys())
+      });
       
       // Compile the contract
-      console.log('[Worker] Starting compilation');
+      logger.info('SolcWorker', 'Executing compilation');
       try {
-        // Send the input object to the compiler
-        console.log('[Worker] Sending input to compiler:', input);
         const output = await compiler.compile(input, importCallback);
-        console.log('[Worker] Raw compilation output:', output);
-
-        // Parse the output if it's a string
-        const parsedOutput = typeof output === 'string' ? JSON.parse(output) : output;
-        console.log('[Worker] Parsed compilation output:', parsedOutput);
+        logger.info('SolcWorker', 'Compilation completed successfully');
         
-        if (parsedOutput.errors) {
-          console.log('[Worker] Compilation errors:', JSON.stringify(parsedOutput.errors, null, 2));
-        }
-
-        // Process compilation results
-        const markers = [];
-      
-        if (parsedOutput.errors) {
-          parsedOutput.errors.forEach(error => {
-            // Extraer información de línea y columna del mensaje formateado
-            const locationMatch = error.formattedMessage?.match(/Compiled_Contracts:(\d+):(\d+):/);
-            if (locationMatch) {
-              const [_, line, column] = locationMatch;
-              
-              // Extraer el rango del error del mensaje formateado
-              const errorLines = error.formattedMessage.split('\n');
-              let errorLength = 1;
-              
-              // Buscar la línea que contiene el código con el error
-              const codeLine = errorLines.find(line => line.includes('^'));
-              if (codeLine) {
-                const caretIndex = codeLine.indexOf('^');
-                const caretLength = codeLine.split('').filter(char => char === '^').length;
-                errorLength = caretLength;
-              }
-              
-              markers.push({
-                startLineNumber: parseInt(line),
-                endLineNumber: parseInt(line),
-                startColumn: parseInt(column),
-                endColumn: parseInt(column) + errorLength,
-                message: error.formattedMessage,
-                severity: error.type === 'ParserError' || error.type === 'DeclarationError' || error.severity === 'error' ? 8 : 4,
-                source: 'solidity'
-              });
-            } else {
-              // Si no se puede extraer la ubicación exacta, usar un marcador genérico
-              markers.push({
-                startLineNumber: 1,
-                endLineNumber: 1,
-                startColumn: 1,
-                endColumn: 1000,
-                message: error.formattedMessage || error.message,
-                severity: error.type === 'ParserError' || error.type === 'DeclarationError' || error.severity === 'error' ? 8 : 4,
-                source: 'solidity'
-              });
-            }
+        if (output.errors) {
+          logger.warn('SolcWorker', 'Compilation completed with warnings/errors', { 
+            errorCount: output.errors.length 
           });
         }
 
-        // Log the compilation result and send it back
-        console.log('[Worker] Compilation completed. Sending result:', { type: 'out', output: parsedOutput });
-        self.postMessage({ type: 'out', output: parsedOutput });
+        self.postMessage({ type: 'out', output });
         return;
       } catch (error) {
-        console.error('[Worker] Compilation error:', error);
+        logger.error('SolcWorker', 'Compilation error', { error: error.message });
         self.postMessage({
           type: 'error',
           error: error.message,
@@ -223,9 +190,10 @@ self.onmessage = async (event) => {
     }
 
     // Handle unknown message type
+    logger.error('SolcWorker', 'Unknown message type', { type });
     throw new Error(`Unknown message type: ${type}`);
   } catch (error) {
-    console.error('[Worker] Error:', error);
+    logger.error('SolcWorker', 'Worker error', { error: error.message });
     self.postMessage({
       type: 'error',
       error: error.message,
