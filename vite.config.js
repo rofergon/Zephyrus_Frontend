@@ -29,7 +29,11 @@ export default defineConfig({
     rollupOptions: {
       output: {
         format: 'es',
-        entryFileNames: 'assets/[name].js',
+        entryFileNames: (chunkInfo) => {
+          return chunkInfo.name.includes('worker') 
+            ? '[name].js'
+            : 'assets/[name].js';
+        },
       },
     },
   },
@@ -46,7 +50,12 @@ export default defineConfig({
       output: {
         entryFileNames: 'assets/[name].js',
         chunkFileNames: 'assets/[name].js',
-        assetFileNames: 'assets/[name].[ext]',
+        assetFileNames: (assetInfo) => {
+          if (assetInfo.name.endsWith('.worker.js')) {
+            return '[name]';
+          }
+          return 'assets/[name].[ext]';
+        },
       },
       plugins: [nodePolyfills()]
     }

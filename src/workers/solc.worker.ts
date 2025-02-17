@@ -1,15 +1,17 @@
-// Explicitly mark as module worker
+// TypeScript declarations
 declare const self: Worker & { window?: any };
-self.window = self; // Some libraries expect window to be defined
 
+import { CompilerInput, CompilerOutput, CompilerError, ImportCallback } from '@/types/compiler';
 import { Solc } from '../services/solc-browserify';
 import { virtualFS } from '../services/virtual-fs';
-import { CompilerInput, CompilerOutput, CompilerError, ImportCallback } from '@/types/compiler';
+
+// Explicitly mark as module worker
+self.window = self; // Some libraries expect window to be defined
 
 let compiler: Solc | null = null;
 const fileCache: Map<string, string> = new Map();
 
-// Function to preload all local dependencies
+// Function to preload all dependencies
 async function preloadDependencies(sourceCode: string, sourcePath: string): Promise<void> {
   try {
     // Store the main file
@@ -72,7 +74,10 @@ function importCallback(path: string): { contents: string } | { error: string } 
     const normalizedPath = path.replace(/^\.\//, '').replace(/^\.\.\//, '');
     if (fileCache.has(normalizedPath)) {
       console.log('[Worker] Successfully resolved local import from cache:', normalizedPath);
-      return { contents: fileCache.get(normalizedPath) };
+      const contents = fileCache.get(normalizedPath);
+      if (contents) {
+        return { contents };
+      }
     }
     
     throw new Error(`Could not find ${path}`);
@@ -85,7 +90,6 @@ function importCallback(path: string): { contents: string } | { error: string } 
 interface WorkerMessage {
   type: 'init' | 'compile';
   sourceCode?: string;
-  sourcePath?: string;
   version?: string;
 }
 
@@ -96,12 +100,11 @@ interface WorkerResponse {
   error?: string;
   markers?: Array<{
     startLineNumber: number;
-    endLineNumber: number;
     startColumn: number;
+    endLineNumber: number;
     endColumn: number;
     message: string;
     severity: number;
-    source: string;
   }>;
 }
 
@@ -113,9 +116,9 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     // Handle initialization message
     if (type === 'init') {
       if (!compiler) {
-        compiler = new Solc((solc) => {
+        compiler = new Solc((solc: any) => {
           console.log('[Worker] Compiler initialized successfully');
-          self.postMessage({ type: 'ready', status: true });
+          self.postMessage({ type: 'ready', status: true } as WorkerResponse);
         });
       }
       return;
@@ -170,7 +173,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
         console.log('[Worker] Raw compilation output:', output);
 
         if (!output) {
-          throw new Error('No compilation output received');
+          throw new Error('Compiler returned no output');
         }
 
         // Parse the output if it's a string
@@ -181,60 +184,13 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
           console.log('[Worker] Compilation errors:', JSON.stringify(parsedOutput.errors, null, 2));
         }
 
-        // Process compilation results
-        const markers = [];
-      
-        if (parsedOutput.errors) {
-          parsedOutput.errors.forEach((error: CompilerError) => {
-            // Extract line and column information from formatted message
-            const locationMatch = error.formattedMessage?.match(/Compiled_Contracts:(\d+):(\d+):/);
-            if (locationMatch) {
-              const [_, line, column] = locationMatch;
-              
-              // Extract error range from formatted message
-              const errorLines = error.formattedMessage.split('\n');
-              let errorLength = 1;
-              
-              // Find the line containing the error code
-              const codeLine = errorLines.find(line => line.includes('^'));
-              if (codeLine) {
-                const caretIndex = codeLine.indexOf('^');
-                const caretLength = codeLine.split('').filter(char => char === '^').length;
-                errorLength = caretLength;
-              }
-              
-              markers.push({
-                startLineNumber: parseInt(line),
-                endLineNumber: parseInt(line),
-                startColumn: parseInt(column),
-                endColumn: parseInt(column) + errorLength,
-                message: error.formattedMessage,
-                severity: error.type === 'ParserError' || error.type === 'DeclarationError' || error.severity === 'error' ? 8 : 4,
-                source: 'solidity'
-              });
-            } else {
-              // If exact location cannot be extracted, use a generic marker
-              markers.push({
-                startLineNumber: 1,
-                endLineNumber: 1,
-                startColumn: 1,
-                endColumn: 1000,
-                message: error.formattedMessage || error.message,
-                severity: error.type === 'ParserError' || error.type === 'DeclarationError' || error.severity === 'error' ? 8 : 4,
-                source: 'solidity'
-              });
-            }
-          });
-        }
-
         // Log the compilation result and send it back
-        const response: WorkerResponse = { type: 'out', output: parsedOutput };
-        console.log('[Worker] Compilation completed. Sending result:', response);
-        self.postMessage(response);
+        console.log('[Worker] Compilation completed. Sending result:', { type: 'out', output: parsedOutput });
+        self.postMessage({ type: 'out', output: parsedOutput } as WorkerResponse);
         return;
       } catch (error) {
         console.error('[Worker] Compilation error:', error);
-        const response: WorkerResponse = {
+        self.postMessage({
           type: 'error',
           error: error instanceof Error ? error.message : String(error),
           markers: [{
@@ -243,11 +199,9 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
             endLineNumber: 1,
             endColumn: 1,
             message: `Compilation error: ${error instanceof Error ? error.message : String(error)}`,
-            severity: 8,
-            source: 'solidity'
+            severity: 8
           }]
-        };
-        self.postMessage(response);
+        } as WorkerResponse);
         return;
       }
     }
@@ -256,7 +210,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     throw new Error(`Unknown message type: ${type}`);
   } catch (error) {
     console.error('[Worker] Error:', error);
-    const response: WorkerResponse = {
+    self.postMessage({
       type: 'error',
       error: error instanceof Error ? error.message : String(error),
       markers: [{
@@ -265,10 +219,8 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
         endLineNumber: 1,
         endColumn: 1,
         message: `Compilation error: ${error instanceof Error ? error.message : String(error)}`,
-        severity: 8,
-        source: 'solidity'
+        severity: 8
       }]
-    };
-    self.postMessage(response);
+    } as WorkerResponse);
   }
 }; 
