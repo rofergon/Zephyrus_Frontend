@@ -4,6 +4,7 @@ import * as monaco from 'monaco-editor';
 export class CompilationService {
   private static instance: CompilationService;
   private workerUrl: string;
+  private worker: Worker | null = null;
 
   private constructor() {
     // Use environment-aware path for worker
@@ -12,6 +13,45 @@ export class CompilationService {
       ? new URL('../workers/solc.worker.js', import.meta.url).toString()
       : '/assets/workers/solc.worker.js';
     console.log('[CompilationService] Worker URL:', this.workerUrl, 'Environment:', isDevelopment ? 'development' : 'production');
+  }
+
+  private async initWorker(): Promise<Worker> {
+    if (this.worker) {
+      this.worker.terminate();
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        console.log('[CompilationService] Initializing worker...');
+        const worker = new Worker(this.workerUrl, { 
+          type: 'module',
+          name: 'solidity-compiler-worker'
+        });
+
+        worker.onerror = (error) => {
+          console.error('[CompilationService] Worker initialization error:', {
+            message: error.message,
+            filename: error.filename,
+            lineno: error.lineno,
+            colno: error.colno
+          });
+          reject(error);
+        };
+
+        worker.onmessage = () => {
+          console.log('[CompilationService] Worker initialized successfully');
+          resolve(worker);
+        };
+
+        // Send init message to worker
+        worker.postMessage({ type: 'init' });
+
+        this.worker = worker;
+      } catch (error) {
+        console.error('[CompilationService] Failed to create worker:', error);
+        reject(error);
+      }
+    });
   }
 
   public static getInstance(): CompilationService {
@@ -36,55 +76,62 @@ export class CompilationService {
 
     try {
       console.log('[CompilationService] Attempting to create worker...');
-      const worker = new Worker(this.workerUrl, { 
-        type: 'module',
-        name: 'solidity-compiler-worker'
-      });
+      const worker = await this.initWorker();
       console.log('[CompilationService] Worker created successfully');
 
-      worker.onmessage = (event) => {
-        console.log('[CompilationService] Received worker message:', event.data.type);
-        const { markers, error, output } = event.data;
-        this.handleCompilationResult(
-          {
-            success: !error,
-            markers,
-            error,
-            output
-          },
-          monaco,
-          model,
-          addConsoleMessage,
-          setCurrentArtifact
-        );
-        worker.terminate();
-      };
+      return new Promise((resolve, reject) => {
+        if (!worker) {
+          reject(new Error('Worker initialization failed'));
+          return;
+        }
 
-      worker.onerror = (error) => {
-        console.error('[CompilationService] Worker error:', {
-          message: error.message,
-          filename: error.filename,
-          lineno: error.lineno,
-          colno: error.colno
+        worker.onmessage = (event) => {
+          console.log('[CompilationService] Received worker message:', event.data?.type);
+          const { markers, error, output } = event.data;
+          this.handleCompilationResult(
+            {
+              success: !error,
+              markers,
+              error,
+              output
+            },
+            monaco,
+            model,
+            addConsoleMessage,
+            setCurrentArtifact
+          );
+          worker.terminate();
+          resolve();
+        };
+
+        worker.onerror = (error) => {
+          console.error('[CompilationService] Worker error:', {
+            message: error.message,
+            filename: error.filename,
+            lineno: error.lineno,
+            colno: error.colno
+          });
+          
+          this.handleCompilationResult(
+            {
+              success: false,
+              error: `Worker error: ${error.message || 'Unknown error'}. Check console for details.`
+            },
+            monaco,
+            model,
+            addConsoleMessage,
+            setCurrentArtifact
+          );
+          worker.terminate();
+          reject(error);
+        };
+
+        console.log('[CompilationService] Posting message to worker...');
+        worker.postMessage({
+          type: 'compile',
+          sourceCode: code,
+          sourcePath: 'main.sol'
         });
-        
-        this.handleCompilationResult(
-          {
-            success: false,
-            error: `Worker error: ${error.message}. Check console for details.`
-          },
-          monaco,
-          model,
-          addConsoleMessage,
-          setCurrentArtifact
-        );
-        worker.terminate();
-      };
-
-      console.log('[CompilationService] Posting message to worker...');
-      worker.postMessage({
-        sourceCode: code,
-        sourcePath: 'main.sol'
       });
 
     } catch (error) {
