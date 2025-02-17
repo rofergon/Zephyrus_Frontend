@@ -7,7 +7,9 @@ export class CompilationService {
   private worker: Worker | null = null;
 
   private constructor() {
-    this.workerUrl = new URL('/src/workers/solc.worker.js', import.meta.url).href;
+    // Use a dynamic import.meta.url to get the correct path in production
+    const workerPath = new URL('../workers/solc.worker.ts', import.meta.url);
+    this.workerUrl = workerPath.href;
     console.log('[CompilationService] Worker URL:', this.workerUrl);
   }
 
