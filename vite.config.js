@@ -55,7 +55,7 @@ export default defineConfig({
           ],
           'solc': [
             'solc',
-            'browserify-fs'
+            'memfs'
           ]
         },
         format: 'es',
@@ -109,7 +109,7 @@ export default defineConfig({
       '@safe-global/safe-apps-sdk',
       '@safe-global/safe-apps-provider',
       'solc',
-      'browserify-fs'
+      'memfs'
     ]
   },
   server: {
