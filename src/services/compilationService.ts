@@ -3,61 +3,11 @@ import * as monaco from 'monaco-editor';
 
 export class CompilationService {
   private static instance: CompilationService;
-  private workerUrl: string;
-  private worker: Worker | null = null;
+  private apiUrl: string;
 
   private constructor() {
-    this.workerUrl = new URL('../workers/solc.worker.js', import.meta.url).toString();
-    console.log('[CompilationService] Worker URL:', this.workerUrl);
-  }
-
-  private async initWorker(): Promise<Worker> {
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
-
-    return new Promise((resolve, reject) => {
-      try {
-        console.log('[CompilationService] Initializing worker...');
-        const worker = new Worker(this.workerUrl, { 
-          type: 'module',
-          name: 'solidity-compiler-worker'
-        });
-
-        worker.onerror = (error) => {
-          const errorDetails = {
-            message: error.message,
-            filename: error.filename,
-            lineno: error.lineno,
-            colno: error.colno
-          };
-          console.error('[CompilationService] Worker initialization error:', errorDetails);
-          reject(new Error(error.message || 'Worker initialization failed'));
-        };
-
-        worker.onmessage = (event) => {
-          const { type, status, error } = event.data;
-
-          if (type === 'ready' && status === true) {
-            console.log('[CompilationService] Worker initialized successfully');
-            resolve(worker);
-          } else if (type === 'error') {
-            console.error('[CompilationService] Worker initialization failed:', error);
-            reject(new Error(error || 'Worker initialization failed'));
-          }
-        };
-
-        const version = { default: (import.meta as any).env.SOLC_VERSION || '0.8.17' };
-        // Send init message to worker with version information
-        worker.postMessage({ type: 'init', version });
-        this.worker = worker;
-
-      } catch (error) {
-        console.error('[CompilationService] Failed to create worker:', error);
-        reject(error);
-      }
-    });
+    // Use environment variable for API URL with fallback
+    this.apiUrl = (import.meta as any).env.VITE_COMPILER_API_URL || 'http://localhost:3000/api/compile';
   }
 
   public static getInstance(): CompilationService {
@@ -76,106 +26,176 @@ export class CompilationService {
   ): Promise<void> {
     if (!code) return;
 
-    // Limpiar marcadores anteriores
+    // Clear previous markers
     monaco.editor.setModelMarkers(model, 'solidity', []);
     addConsoleMessage("Starting compilation...", "info");
 
     try {
-      console.log('[CompilationService] Attempting to create worker...');
-      const worker = await this.initWorker();
-      console.log('[CompilationService] Worker created successfully');
-
-      return new Promise((resolve, reject) => {
-        if (!worker) {
-          reject(new Error('Worker initialization failed'));
-          return;
-        }
-
-        const messageHandler = (event: MessageEvent) => {
-          const { type, markers, error, output } = event.data;
-          
-          if (type === 'out') {
-            console.log('[CompilationService] Received compilation result:', event.data);
-            try {
-              const parsedOutput = typeof output === 'string' ? JSON.parse(output) : output;
-              this.handleCompilationResult(
-                {
-                  success: !parsedOutput.errors || parsedOutput.errors.length === 0,
-                  markers: markers || [],
-                  error: parsedOutput.errors ? parsedOutput.errors[0]?.formattedMessage : undefined,
-                  output: parsedOutput
-                },
-                monaco,
-                model,
-                addConsoleMessage,
-                setCurrentArtifact
-              );
-              worker.removeEventListener('message', messageHandler);
-              worker.terminate();
-              resolve();
-            } catch (error) {
-              console.error('[CompilationService] Error parsing compilation output:', error);
-              reject(error);
-            }
-          } else if (type === 'error') {
-            console.error('[CompilationService] Compilation error:', error);
-            this.handleCompilationResult(
-              {
-                success: false,
-                error: error,
-                markers: markers || []
-              },
-              monaco,
-              model,
-              addConsoleMessage,
-              setCurrentArtifact
-            );
-            worker.removeEventListener('message', messageHandler);
-            worker.terminate();
-            reject(new Error(error));
-          }
-        };
-
-        const errorHandler = (error: ErrorEvent) => {
-          console.error('[CompilationService] Worker error:', {
-            message: error.message,
-            filename: error.filename,
-            lineno: error.lineno,
-            colno: error.colno
-          });
-          
-          this.handleCompilationResult(
-            {
-              success: false,
-              error: `Worker error: ${error.message || 'Unknown error'}. Check console for details.`
-            },
-            monaco,
-            model,
-            addConsoleMessage,
-            setCurrentArtifact
-          );
-          worker.removeEventListener('message', messageHandler);
-          worker.removeEventListener('error', errorHandler);
-          worker.terminate();
-          reject(error);
-        };
-
-        worker.addEventListener('message', messageHandler);
-        worker.addEventListener('error', errorHandler);
-
-        console.log('[CompilationService] Posting message to worker...');
-        worker.postMessage({
-          type: 'compile',
-          sourceCode: code,
-          sourcePath: 'main.sol'
+      console.log('[CompilationService] Analyzing source code...');
+      
+      // Extract contract name using a more precise regex
+      const contractRegex = /\bcontract\s+(\w+)(?:\s+is\s+[^{]+|\s+implements\s+[^{]+|\s*){/g;
+      const matches = [...code.matchAll(contractRegex)];
+      
+      console.log('[CompilationService] Found contract declarations:', matches.map(m => m[1]));
+      
+      let contractName = 'Contract'; // Default fallback
+      let mainContract = null;
+      
+      if (matches.length > 0) {
+        // Filter out any matches that have 'abstract' before them
+        const validContracts = matches.filter(match => {
+          const startIndex = match.index || 0;
+          const previousCode = code.substring(Math.max(0, startIndex - 50), startIndex);
+          return !previousCode.includes('abstract');
         });
+        
+        if (validContracts.length > 0) {
+          mainContract = validContracts[validContracts.length - 1];
+          contractName = mainContract[1];
+          console.log('[CompilationService] Selected main contract:', contractName);
+        }
+      }
+
+      // Extract the source code for just this contract
+      let relevantCode = code;
+      if (mainContract && mainContract.index !== undefined) {
+        const startIndex = mainContract.index;
+        let endIndex = code.length;
+        let braceCount = 0;
+        let inString = false;
+        let stringChar = '';
+
+        // Find the matching closing brace for this contract
+        for (let i = startIndex; i < code.length; i++) {
+          const char = code[i];
+          if (!inString) {
+            if (char === '{') braceCount++;
+            else if (char === '}') {
+              braceCount--;
+              if (braceCount === 0) {
+                endIndex = i + 1;
+                break;
+              }
+            }
+            else if (char === '"' || char === "'") {
+              inString = true;
+              stringChar = char;
+            }
+          } else if (char === stringChar && code[i - 1] !== '\\') {
+            inString = false;
+          }
+        }
+        relevantCode = code.substring(startIndex, endIndex);
+      }
+
+      // Double-check the contract name in the relevant code
+      const finalNameMatch = relevantCode.match(/\bcontract\s+(\w+)/);
+      if (finalNameMatch && finalNameMatch[1]) {
+        contractName = finalNameMatch[1];
+        console.log('[CompilationService] Final contract name:', contractName);
+      }
+
+      // Get Solidity version from pragma
+      const pragmaMatch = code.match(/pragma\s+solidity\s+(\^?\d+\.\d+\.\d+)/);
+      const solidityVersion = pragmaMatch ? pragmaMatch[1].replace('^', '') : '0.8.20';
+
+      console.log('[CompilationService] Sending compilation request...');
+      const requestBody = {
+        contractName: contractName,
+        sourceCode: code,
+        version: solidityVersion,
+        mainContractCode: relevantCode
+      };
+      
+      console.log('[CompilationService] API Request:', {
+        url: this.apiUrl,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          ...requestBody,
+          sourceCode: `${code.substring(0, 100)}... (${code.length} chars)` // Truncate for logging
+        }
       });
 
+      const response = await fetch(this.apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      console.log('[CompilationService] Response status:', response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[CompilationService] API Error:', errorText);
+        try {
+          const errorJson = JSON.parse(errorText);
+          console.error('[CompilationService] Parsed API Error:', errorJson);
+          throw new Error(`Compilation failed: ${response.status} - ${errorJson.error}${errorJson.details ? ': ' + errorJson.details : ''}`);
+        } catch (e) {
+          throw new Error(`Compilation failed: ${response.status} - ${errorText}`);
+        }
+      }
+
+      const compilationResult = await response.json();
+      console.log('[CompilationService] Compilation result:', compilationResult);
+      
+      if (compilationResult.error) {
+        this.handleCompilationResult(
+          {
+            success: false,
+            markers: this.convertErrorsToMarkers([{ 
+              formattedMessage: compilationResult.error,
+              severity: 'error'
+            }], monaco),
+            error: compilationResult.error,
+            output: null
+          },
+          monaco,
+          model,
+          addConsoleMessage,
+          setCurrentArtifact
+        );
+        return;
+      }
+
+      if (compilationResult.errors && compilationResult.errors.length > 0) {
+        this.handleCompilationResult(
+          {
+            success: false,
+            markers: this.convertErrorsToMarkers(compilationResult.errors, monaco),
+            error: compilationResult.errors[0]?.formattedMessage || 'Compilation failed',
+            output: compilationResult
+          },
+          monaco,
+          model,
+          addConsoleMessage,
+          setCurrentArtifact
+        );
+        return;
+      }
+
+      // Handle successful compilation
+      this.handleCompilationResult(
+        {
+          success: true,
+          markers: [],
+          output: compilationResult
+        },
+        monaco,
+        model,
+        addConsoleMessage,
+        setCurrentArtifact
+      );
+
     } catch (error) {
-      console.error('[CompilationService] Compilation initialization error:', error);
+      console.error('[CompilationService] Compilation error:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       addConsoleMessage(
-        `Failed to initialize compiler: ${errorMessage}. Please check if you're using a modern browser with Web Workers support.`,
+        `Compilation failed: ${errorMessage}`,
         "error"
       );
       
@@ -185,11 +205,36 @@ export class CompilationService {
         startColumn: 1,
         endLineNumber: 1,
         endColumn: 1,
-        message: `Compiler initialization failed: ${errorMessage}`,
+        message: `Compilation failed: ${errorMessage}`,
         severity: monaco.MarkerSeverity.Error
       };
       monaco.editor.setModelMarkers(model, 'solidity', [errorMarker]);
     }
+  }
+
+  private convertErrorsToMarkers(errors: any[], monaco: typeof import('monaco-editor')): any[] {
+    return errors.map(error => {
+      // Extract line and column information from the error message
+      const locationMatch = error.formattedMessage?.match(/\d+:\d+/);
+      let startLineNumber = 1;
+      let startColumn = 1;
+      
+      if (locationMatch) {
+        const [line, column] = locationMatch[0].split(':').map(Number);
+        startLineNumber = line;
+        startColumn = column;
+      }
+
+      return {
+        startLineNumber,
+        endLineNumber: startLineNumber,
+        startColumn,
+        endColumn: startColumn + 1,
+        message: error.formattedMessage || error.message,
+        severity: error.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+        source: 'solidity'
+      };
+    });
   }
 
   private handleCompilationResult(
@@ -225,7 +270,7 @@ export class CompilationService {
 
       monaco.editor.setModelMarkers(model, 'solidity', processedMarkers);
 
-      // Usar Set para mensajes únicos
+      // Use Set for unique messages
       const uniqueMessages = new Set<string>();
       markers.forEach(marker => {
         const message = `[Line ${marker.startLineNumber}:${marker.startColumn}] ${marker.message}`;
@@ -237,19 +282,38 @@ export class CompilationService {
     }
 
     if (output?.contracts) {
-      const contractName = Object.keys(output.contracts['Compiled_Contracts'])[0];
-      if (contractName) {
-        const abi = output.contracts['Compiled_Contracts'][contractName].abi;
-        const processedFunctions = this.processABI(abi);
-        const newArtifact = {
-          name: contractName,
-          description: `Smart contract ${contractName} interface`,
-          functions: processedFunctions,
-          abi: abi
-        };
-        setCurrentArtifact(newArtifact);
+      try {
+        // Handle both possible response formats
+        const contracts = output.contracts;
+        const contractName = Object.keys(contracts)[0];
+        
+        if (contractName) {
+          let contract;
+          if (contracts[contractName][contractName]) {
+            // Handle nested format
+            contract = contracts[contractName][contractName];
+          } else {
+            // Handle flat format
+            contract = contracts[contractName];
+          }
 
-        addConsoleMessage(`Contract "${contractName}" compiled successfully`, 'success');
+          if (contract && contract.abi) {
+            const processedFunctions = this.processABI(contract.abi);
+            const newArtifact = {
+              name: contractName,
+              description: `Smart contract ${contractName} interface`,
+              functions: processedFunctions,
+              abi: contract.abi
+            };
+            setCurrentArtifact(newArtifact);
+            addConsoleMessage(`Contract "${contractName}" compiled successfully`, 'success');
+          } else {
+            throw new Error('Invalid contract ABI format in compilation output');
+          }
+        }
+      } catch (error) {
+        console.error('[CompilationService] Error processing compilation output:', error);
+        addConsoleMessage(`Error processing compilation output: ${error instanceof Error ? error.message : String(error)}`, 'error');
       }
     }
   }
