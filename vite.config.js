@@ -16,7 +16,6 @@ export default defineConfig({
   ],
   define: {
     'process.env': process.env ?? {},
-    'global': 'globalThis'
   },
   worker: {
     format: 'es',
@@ -115,7 +114,7 @@ export default defineConfig({
     esbuildOptions: {
       target: 'esnext',
       define: {
-        global: 'globalThis'
+        global: 'window'
       },
       plugins: [
         NodeGlobalsPolyfillPlugin({
@@ -131,7 +130,9 @@ export default defineConfig({
       '@safe-global/safe-apps-provider',
       'solc',
       'memfs',
-      '@wagmi/connectors'
+      '@wagmi/connectors',
+      'buffer',
+      'process'
     ]
   },
   server: {

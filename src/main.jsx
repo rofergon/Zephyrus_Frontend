@@ -19,6 +19,7 @@ import { configureMonaco } from './config/monaco'
 
 import App from './App'
 import './index.css'
+import './styles/global.css'
 
 // Create react-query client
 const queryClient = new QueryClient()
