@@ -15,14 +15,11 @@ export class CompilationService {
   private workerUrl: string;
 
   private constructor() {
-    // Adjust worker path based on environment
-    const baseUrl = import.meta.env.PROD 
-      ? window.location.origin + import.meta.env.BASE_URL
-      : '';
-    
-    this.workerUrl = baseUrl + (import.meta.env.PROD 
-      ? '/assets/workers/solc.worker.js'
-      : '/src/workers/solc.worker.js');
+    // Use the correct worker path based on environment
+    this.workerUrl = window.location.origin + 
+      (import.meta.env?.PROD 
+        ? '/assets/workers/browser.solidity.worker.js'
+        : '/src/services/solc-browserify/browser.solidity.worker.js');
     
     console.log('[CompilationService] Worker URL:', this.workerUrl);
   }

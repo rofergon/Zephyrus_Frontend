@@ -35,7 +35,7 @@ export default defineConfig({
     ],
     rollupOptions: {
       input: {
-        'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js')
+        'browser.solidity.worker': resolve(__dirname, 'src/services/solc-browserify/browser.solidity.worker.ts')
       },
       output: {
         format: 'es',
