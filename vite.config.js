@@ -14,10 +14,14 @@ export default defineConfig({
     }),
     NodeModulesPolyfillPlugin(),
     {
-      name: 'copy-worker',
-      writeBundle() {
-        // Log para debug
-        console.log('Copying worker files to build directory');
+      name: 'configure-worker',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url?.includes('browser.solidity.worker')) {
+            res.setHeader('Content-Type', 'application/javascript');
+          }
+          next();
+        });
       }
     }
   ],
@@ -39,11 +43,7 @@ export default defineConfig({
       },
       output: {
         format: 'es',
-        entryFileNames: (chunkInfo) => {
-          return chunkInfo.name.includes('worker') 
-            ? 'assets/[name].js'
-            : 'assets/workers/[name].js';
-        }
+        entryFileNames: '[name].js'
       }
     }
   },
@@ -79,7 +79,7 @@ export default defineConfig({
             return 'assets/css/[name]-[hash][extname]';
           }
           if (assetInfo.name.includes('worker')) {
-            return 'assets/[name][extname]';
+            return '[name][extname]';
           }
           return 'assets/[name]-[hash][extname]';
         },

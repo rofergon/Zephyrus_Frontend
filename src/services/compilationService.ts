@@ -16,10 +16,11 @@ export class CompilationService {
 
   private constructor() {
     const isDev = process.env.NODE_ENV === 'development';
+    const baseUrl = window.location.origin;
     
     this.workerUrl = isDev
-      ? '/src/services/solc-browserify/browser.solidity.worker.js'
-      : '/assets/browser.solidity.worker.js';
+      ? `${baseUrl}/src/services/solc-browserify/browser.solidity.worker.js`
+      : `${baseUrl}/browser.solidity.worker.js`;
     
     console.log('[CompilationService] Worker URL:', this.workerUrl);
   }
