@@ -15,14 +15,9 @@ export class CompilationService {
   private workerUrl: string;
 
   private constructor() {
-    const isDev = process.env.NODE_ENV === 'development';
-    const baseUrl = window.location.origin;
-    
-    this.workerUrl = isDev
-      ? `${baseUrl}/src/services/solc-browserify/browser.solidity.worker.js`
-      : `${baseUrl}/browser.solidity.worker.js`;
-    
-    console.log('[CompilationService] Worker URL:', this.workerUrl);
+    // Usar el worker de Monaco que ya está cargando
+    this.workerUrl = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/base/worker/workerMain.js';
+    console.log('[CompilationService] Using Monaco worker URL:', this.workerUrl);
   }
 
   public static getInstance(): CompilationService {
@@ -46,13 +41,23 @@ export class CompilationService {
     addConsoleMessage("Starting compilation...", "info");
 
     try {
-      // Create worker with more robust error handling
+      // Create worker with Monaco's worker
       let worker: Worker;
       try {
         worker = new Worker(this.workerUrl, { 
           type: 'module',
-          name: 'solidity-compiler-worker'
+          name: 'monaco-solidity-worker'
         });
+
+        // Configurar el worker para compilación de Solidity
+        worker.postMessage({
+          type: 'config',
+          data: {
+            type: 'solidity',
+            libs: ['solc']
+          }
+        });
+
       } catch (workerError) {
         console.error('[CompilationService] Failed to create worker:', workerError);
         addConsoleMessage(`Failed to initialize compiler: ${workerError.message}`, "error");
@@ -62,19 +67,21 @@ export class CompilationService {
       // Set up message handler before posting message
       worker.onmessage = (event) => {
         try {
-          const { markers, error, output } = event.data;
-          this.handleCompilationResult(
-            {
-              success: !error,
-              markers,
-              error,
-              output
-            },
-            monaco,
-            model,
-            addConsoleMessage,
-            setCurrentArtifact
-          );
+          const { data } = event;
+          if (data.type === 'compiled') {
+            this.handleCompilationResult(
+              {
+                success: !data.error,
+                markers: data.markers,
+                error: data.error,
+                output: data.output
+              },
+              monaco,
+              model,
+              addConsoleMessage,
+              setCurrentArtifact
+            );
+          }
         } catch (handlerError) {
           console.error('[CompilationService] Message handler error:', handlerError);
           addConsoleMessage(`Compilation handler error: ${handlerError.message}`, "error");
@@ -99,10 +106,13 @@ export class CompilationService {
         worker.terminate();
       };
 
-      // Post message to worker
+      // Post code to compile
       worker.postMessage({
-        sourceCode: code,
-        sourcePath: 'main.sol'
+        type: 'compile',
+        data: {
+          code,
+          fileName: 'main.sol'
+        }
       });
 
     } catch (error) {
