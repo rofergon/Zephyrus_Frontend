@@ -37,20 +37,18 @@ export class CompilationService {
         };
 
         worker.onmessage = (event) => {
-          const { type, success, error } = event.data;
-          
-          if (type === 'init') {
-            if (success) {
-              console.log('[CompilationService] Worker initialized successfully');
-              resolve(worker);
-            } else {
-              console.error('[CompilationService] Worker initialization failed:', error);
-              reject(new Error(error || 'Worker initialization failed'));
-            }
+          const { type, status, error } = event.data;
+
+          if (type === 'ready' && status === true) {
+            console.log('[CompilationService] Worker initialized successfully');
+            resolve(worker);
+          } else if (type === 'error') {
+            console.error('[CompilationService] Worker initialization failed:', error);
+            reject(new Error(error || 'Worker initialization failed'));
           }
         };
 
-        const version = { default: import.meta.env.SOLC_VERSION || '0.8.17' };
+        const version = { default: (import.meta as any).env.SOLC_VERSION || '0.8.17' };
         // Send init message to worker with version information
         worker.postMessage({ type: 'init', version });
         this.worker = worker;
