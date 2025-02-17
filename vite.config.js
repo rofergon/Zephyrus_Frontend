@@ -12,18 +12,7 @@ export default defineConfig({
       buffer: true,
       process: true
     }),
-    NodeModulesPolyfillPlugin(),
-    {
-      name: 'configure-worker',
-      configureServer(server) {
-        server.middlewares.use((req, res, next) => {
-          if (req.url?.includes('browser.solidity.worker')) {
-            res.setHeader('Content-Type', 'application/javascript');
-          }
-          next();
-        });
-      }
-    }
+    NodeModulesPolyfillPlugin()
   ],
   define: {
     'process.env': process.env ?? {},
@@ -38,12 +27,15 @@ export default defineConfig({
       NodeModulesPolyfillPlugin()
     ],
     rollupOptions: {
-      input: {
-        'browser.solidity.worker': resolve(__dirname, 'src/services/solc-browserify/browser.solidity.worker.ts')
-      },
       output: {
         format: 'es',
-        entryFileNames: '[name].js'
+        inlineDynamicImports: true,
+        assetFileNames: (assetInfo) => {
+          if (assetInfo.name.includes('solc.worker')) {
+            return 'assets/workers/[name][extname]';
+          }
+          return 'assets/[name]-[hash][extname]';
+        }
       }
     }
   },
@@ -55,6 +47,10 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       plugins: [nodePolyfills()],
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js')
+      },
       output: {
         manualChunks: {
           'vendor': [
@@ -78,13 +74,18 @@ export default defineConfig({
           if (assetInfo.name.endsWith('.css')) {
             return 'assets/css/[name]-[hash][extname]';
           }
-          if (assetInfo.name.includes('worker')) {
-            return '[name][extname]';
+          if (assetInfo.name.includes('solc.worker')) {
+            return 'assets/workers/[name][extname]';
           }
           return 'assets/[name]-[hash][extname]';
         },
         chunkFileNames: 'assets/js/[name]-[hash].js',
-        entryFileNames: 'assets/js/[name]-[hash].js',
+        entryFileNames: (chunkInfo) => {
+          if (chunkInfo.name.includes('solc.worker')) {
+            return 'assets/workers/[name].js';
+          }
+          return 'assets/js/[name]-[hash].js';
+        }
       },
       external: [
         '@safe-global/safe-apps-sdk',

@@ -1,23 +1,14 @@
 import { CompilationResult } from '../types/contracts';
 import * as monaco from 'monaco-editor';
 
-interface ImportMetaEnv {
-  PROD: boolean;
-  BASE_URL: string;
-}
-
-interface ImportMeta {
-  env: ImportMetaEnv;
-}
-
 export class CompilationService {
   private static instance: CompilationService;
   private workerUrl: string;
 
   private constructor() {
-    // Usar el worker de Monaco que ya está cargando
-    this.workerUrl = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/base/worker/workerMain.js';
-    console.log('[CompilationService] Using Monaco worker URL:', this.workerUrl);
+    // Use a direct path for production compatibility
+    this.workerUrl = '/assets/workers/solc.worker.js';
+    console.log('[CompilationService] Worker URL:', this.workerUrl);
   }
 
   public static getInstance(): CompilationService {
@@ -41,62 +32,22 @@ export class CompilationService {
     addConsoleMessage("Starting compilation...", "info");
 
     try {
-      // Create worker with Monaco's worker
-      let worker: Worker;
-      try {
-        worker = new Worker(this.workerUrl, { 
-          type: 'module',
-          name: 'monaco-solidity-worker'
-        });
+      console.log('[CompilationService] Attempting to create worker...');
+      const worker = new Worker(this.workerUrl, { 
+        type: 'module',
+        name: 'solidity-compiler-worker'
+      });
+      console.log('[CompilationService] Worker created successfully');
 
-        // Configurar el worker para compilación de Solidity
-        worker.postMessage({
-          type: 'config',
-          data: {
-            type: 'solidity',
-            libs: ['solc']
-          }
-        });
-
-      } catch (workerError) {
-        console.error('[CompilationService] Failed to create worker:', workerError);
-        addConsoleMessage(`Failed to initialize compiler: ${workerError.message}`, "error");
-        return;
-      }
-
-      // Set up message handler before posting message
       worker.onmessage = (event) => {
-        try {
-          const { data } = event;
-          if (data.type === 'compiled') {
-            this.handleCompilationResult(
-              {
-                success: !data.error,
-                markers: data.markers,
-                error: data.error,
-                output: data.output
-              },
-              monaco,
-              model,
-              addConsoleMessage,
-              setCurrentArtifact
-            );
-          }
-        } catch (handlerError) {
-          console.error('[CompilationService] Message handler error:', handlerError);
-          addConsoleMessage(`Compilation handler error: ${handlerError.message}`, "error");
-        } finally {
-          worker.terminate();
-        }
-      };
-
-      worker.onerror = (error) => {
-        console.error('[CompilationService] Worker error:', error);
-        const errorMessage = error.message || 'Unknown worker error';
+        console.log('[CompilationService] Received worker message:', event.data.type);
+        const { markers, error, output } = event.data;
         this.handleCompilationResult(
           {
-            success: false,
-            error: `Worker error: ${errorMessage}`
+            success: !error,
+            markers,
+            error,
+            output
           },
           monaco,
           model,
@@ -106,21 +57,51 @@ export class CompilationService {
         worker.terminate();
       };
 
-      // Post code to compile
+      worker.onerror = (error) => {
+        console.error('[CompilationService] Worker error:', {
+          message: error.message,
+          filename: error.filename,
+          lineno: error.lineno,
+          colno: error.colno
+        });
+        
+        this.handleCompilationResult(
+          {
+            success: false,
+            error: `Worker error: ${error.message}. Check console for details.`
+          },
+          monaco,
+          model,
+          addConsoleMessage,
+          setCurrentArtifact
+        );
+        worker.terminate();
+      };
+
+      console.log('[CompilationService] Posting message to worker...');
       worker.postMessage({
-        type: 'compile',
-        data: {
-          code,
-          fileName: 'main.sol'
-        }
+        sourceCode: code,
+        sourcePath: 'main.sol'
       });
 
     } catch (error) {
-      console.error('[CompilationService] Compilation error:', error);
+      console.error('[CompilationService] Compilation initialization error:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       addConsoleMessage(
-        `Compilation error: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to initialize compiler: ${errorMessage}. Please check if you're using a modern browser with Web Workers support.`,
         "error"
       );
+      
+      // Set error marker in editor
+      const errorMarker = {
+        startLineNumber: 1,
+        startColumn: 1,
+        endLineNumber: 1,
+        endColumn: 1,
+        message: `Compiler initialization failed: ${errorMessage}`,
+        severity: monaco.MarkerSeverity.Error
+      };
+      monaco.editor.setModelMarkers(model, 'solidity', [errorMarker]);
     }
   }
 
