@@ -162,23 +162,7 @@ export class CompilationService {
         return;
       }
 
-      if (compilationResult.errors && compilationResult.errors.length > 0) {
-        this.handleCompilationResult(
-          {
-            success: false,
-            markers: this.convertErrorsToMarkers(compilationResult.errors, monaco),
-            error: compilationResult.errors[0]?.formattedMessage || 'Compilation failed',
-            output: compilationResult
-          },
-          monaco,
-          model,
-          addConsoleMessage,
-          setCurrentArtifact
-        );
-        return;
-      }
-
-      // Handle successful compilation
+      // Handle successful compilation with new format
       this.handleCompilationResult(
         {
           success: true,
@@ -281,36 +265,18 @@ export class CompilationService {
       });
     }
 
-    if (output?.contracts) {
+    if (output?.artifact?.abi) {
       try {
-        // Handle both possible response formats
-        const contracts = output.contracts;
-        const contractName = Object.keys(contracts)[0];
-        
-        if (contractName) {
-          let contract;
-          if (contracts[contractName][contractName]) {
-            // Handle nested format
-            contract = contracts[contractName][contractName];
-          } else {
-            // Handle flat format
-            contract = contracts[contractName];
-          }
-
-          if (contract && contract.abi) {
-            const processedFunctions = this.processABI(contract.abi);
-            const newArtifact = {
-              name: contractName,
-              description: `Smart contract ${contractName} interface`,
-              functions: processedFunctions,
-              abi: contract.abi
-            };
-            setCurrentArtifact(newArtifact);
-            addConsoleMessage(`Contract "${contractName}" compiled successfully`, 'success');
-          } else {
-            throw new Error('Invalid contract ABI format in compilation output');
-          }
-        }
+        const processedFunctions = this.processABI(output.artifact.abi);
+        const contractName = output.artifact.name || 'Contract';
+        const newArtifact = {
+          name: contractName,
+          description: `Smart contract ${contractName} interface`,
+          functions: processedFunctions,
+          abi: output.artifact.abi
+        };
+        setCurrentArtifact(newArtifact);
+        addConsoleMessage(`Contract "${contractName}" compiled successfully`, 'success');
       } catch (error) {
         console.error('[CompilationService] Error processing compilation output:', error);
         addConsoleMessage(`Error processing compilation output: ${error instanceof Error ? error.message : String(error)}`, 'error');
@@ -320,8 +286,26 @@ export class CompilationService {
 
   private processABI(abi: any[]): any[] {
     return abi
-      .filter(item => item.type === 'function')
+      .filter(item => item.type === 'function' || item.type === 'constructor')
       .map(item => {
+        // Para constructores, crear una descripción especial
+        if (item.type === 'constructor') {
+          return {
+            name: 'constructor',
+            description: 'Contract constructor',
+            type: 'constructor',
+            stateMutability: item.stateMutability || 'nonpayable',
+            inputs: item.inputs?.map((input: any) => ({
+              name: input.name || 'value',
+              type: input.type,
+              description: `Constructor parameter of type ${input.type}`,
+              components: input.components
+            })) || [],
+            outputs: []
+          };
+        }
+
+        // Para funciones regulares
         const funcForDescription = {
           name: item.name,
           description: '',
@@ -336,24 +320,25 @@ export class CompilationService {
           description: this.generateFunctionDescription(funcForDescription),
           type: item.type,
           stateMutability: item.stateMutability,
-          inputs: item.inputs.map((input: any) => ({
+          inputs: item.inputs?.map((input: any) => ({
             name: input.name || 'value',
             type: input.type,
             description: `Input parameter of type ${input.type}`,
             components: input.components
-          })),
+          })) || [],
           outputs: item.outputs?.map((output: any) => ({
             name: output.name || 'value',
             type: output.type,
             components: output.components
-          }))
+          })) || []
         };
-      });
+      })
+      .filter(item => item !== null); // Filtrar cualquier resultado nulo
   }
 
   private generateFunctionDescription(func: any): string {
     const inputsDesc = func.inputs
-      .map((input: any) => `${input.name} (${input.type})`)
+      .map((input: any) => `${input.name || 'value'} (${input.type})`)
       .join(', ');
 
     const outputsDesc = func.outputs && func.outputs.length > 0
@@ -361,7 +346,21 @@ export class CompilationService {
       : '';
 
     const mutability = func.stateMutability ? ` [${func.stateMutability}]` : '';
+    
+    // Generar una descripción más detallada basada en el tipo de función
+    let description = `${func.name}(${inputsDesc})${outputsDesc}${mutability}`;
+    
+    // Añadir información adicional basada en la mutabilidad
+    if (func.stateMutability === 'view') {
+      description += ' - Read-only function that does not modify the contract state';
+    } else if (func.stateMutability === 'pure') {
+      description += ' - Pure function that neither reads from nor modifies the contract state';
+    } else if (func.stateMutability === 'payable') {
+      description += ' - Function that can receive Ether';
+    } else if (func.stateMutability === 'nonpayable') {
+      description += ' - Function that modifies the contract state';
+    }
 
-    return `${func.name}(${inputsDesc})${outputsDesc}${mutability}`;
+    return description;
   }
 } 
