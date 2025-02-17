@@ -14,7 +14,7 @@ import { http } from 'viem'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createAppKit } from '@reown/appkit/react'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
-import { safe } from 'wagmi/connectors'
+import { safe } from '@wagmi/connectors'
 import { configureMonaco } from './config/monaco'
 
 import App from './App'

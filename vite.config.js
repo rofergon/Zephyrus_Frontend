@@ -52,22 +52,15 @@ export default defineConfig({
         'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js')
       },
       output: {
-        manualChunks: {
-          'vendor': [
-            'react',
-            'react-dom',
-            'react-router-dom',
-          ],
-          'monaco': [
-            'monaco-editor',
-          ],
-          'web3': [
-            'web3'
-          ],
-          'solc': [
-            'solc',
-            'memfs'
-          ]
+        manualChunks: (id) => {
+          if (id.includes('node_modules')) {
+            if (id.includes('react')) return 'vendor';
+            if (id.includes('monaco-editor')) return 'monaco';
+            if (id.includes('web3')) return 'web3';
+            if (id.includes('solc') || id.includes('memfs')) return 'solc';
+            if (id.includes('wagmi') || id.includes('viem') || id.includes('@wagmi')) return 'wagmi';
+            return 'vendor'; // all other node_modules
+          }
         },
         format: 'es',
         assetFileNames: (assetInfo) => {
@@ -86,12 +79,7 @@ export default defineConfig({
           }
           return 'assets/js/[name]-[hash].js';
         }
-      },
-      external: [
-        '@safe-global/safe-apps-sdk',
-        '@safe-global/safe-apps-provider',
-        '@wagmi/connectors'
-      ]
+      }
     }
   },
   resolve: {
@@ -130,9 +118,12 @@ export default defineConfig({
       '@safe-global/safe-apps-provider',
       'solc',
       'memfs',
-      '@wagmi/connectors',
       'buffer',
-      'process'
+      'process',
+      'wagmi',
+      'viem',
+      '@wagmi/core',
+      '@wagmi/connectors'
     ]
   },
   server: {
