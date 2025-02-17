@@ -7,7 +7,7 @@ export class CompilationService {
   private worker: Worker | null = null;
 
   private constructor() {
-    this.workerUrl = new URL('../workers/solc.worker.js', import.meta.url).toString();
+    this.workerUrl = new URL('/src/workers/solc.worker.js', import.meta.url).href;
     console.log('[CompilationService] Worker URL:', this.workerUrl);
   }
 

@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { NodeGlobalsPolyfillPlugin } from '@esbuild-plugins/node-globals-polyfill'
 import { NodeModulesPolyfillPlugin } from '@esbuild-plugins/node-modules-polyfill'
 import nodePolyfills from 'rollup-plugin-polyfill-node'
+import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [
@@ -27,10 +28,9 @@ export default defineConfig({
     ],
     rollupOptions: {
       output: {
-        format: 'es',
-        inlineDynamicImports: true
-      }
-    }
+        entryFileNames: 'assets/[name].js',
+      },
+    },
   },
   build: {
     target: 'esnext',
@@ -39,39 +39,15 @@ export default defineConfig({
     },
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
-      plugins: [nodePolyfills()],
-      output: {
-        manualChunks: {
-          'vendor': [
-            'react',
-            'react-dom',
-            'react-router-dom',
-          ],
-          'monaco': [
-            'monaco-editor',
-          ],
-          'web3': [
-            'web3'
-          ],
-          'solc': [
-            'solc',
-            'memfs'
-          ]
-        },
-        format: 'es',
-        assetFileNames: (assetInfo) => {
-          if (assetInfo.name.endsWith('.css')) {
-            return 'assets/css/[name]-[hash][extname]';
-          }
-          return 'assets/[name]-[hash][extname]';
-        },
-        chunkFileNames: 'assets/js/[name]-[hash].js',
-        entryFileNames: 'assets/js/[name]-[hash].js',
+      input: {
+        main: resolve(__dirname, 'index.html'),
       },
-      external: [
-        '@safe-global/safe-apps-sdk',
-        '@safe-global/safe-apps-provider'
-      ]
+      output: {
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/[name].js',
+        assetFileNames: 'assets/[name].[ext]',
+      },
+      plugins: [nodePolyfills()]
     }
   },
   resolve: {
@@ -87,7 +63,8 @@ export default defineConfig({
       '@safe-global/safe-apps-sdk': '@safe-global/safe-apps-sdk',
       '@safe-global/safe-apps-provider': '@safe-global/safe-apps-provider',
       'solc-browserify': './src/services/solc-browserify',
-      'fs': 'memfs'
+      'fs': 'memfs',
+      '@': resolve(__dirname, 'src'),
     }
   },
   optimizeDeps: {
