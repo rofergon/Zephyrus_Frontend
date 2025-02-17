@@ -39,8 +39,11 @@ export default defineConfig({
       },
       output: {
         format: 'es',
-        entryFileNames: 'assets/workers/[name].js',
-        chunkFileNames: 'assets/workers/[name]-[hash].js'
+        entryFileNames: (chunkInfo) => {
+          return chunkInfo.name.includes('worker') 
+            ? 'assets/[name].js'
+            : 'assets/workers/[name].js';
+        }
       }
     }
   },
@@ -76,7 +79,7 @@ export default defineConfig({
             return 'assets/css/[name]-[hash][extname]';
           }
           if (assetInfo.name.includes('worker')) {
-            return 'assets/workers/[name]-[hash][extname]';
+            return 'assets/[name][extname]';
           }
           return 'assets/[name]-[hash][extname]';
         },
