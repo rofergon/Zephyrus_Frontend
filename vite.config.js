@@ -49,23 +49,27 @@ export default defineConfig({
       plugins: [nodePolyfills()],
       input: {
         main: resolve(__dirname, 'index.html'),
-        'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js')
+        'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js'),
+        'editor.worker': resolve(__dirname, 'node_modules/monaco-editor/esm/vs/editor/editor.worker.js'),
+        'json.worker': resolve(__dirname, 'node_modules/monaco-editor/esm/vs/language/json/json.worker.js'),
+        'ts.worker': resolve(__dirname, 'node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js')
       },
       output: {
-        manualChunks: (id) => {
-          if (id.includes('node_modules')) {
-            if (id.includes('monaco-editor')) {
-              if (id.includes('editor.worker')) return 'monaco.editor.worker';
-              if (id.includes('json.worker')) return 'monaco.json.worker';
-              if (id.includes('typescript.worker')) return 'monaco.ts.worker';
-              return 'monaco.editor';
-            }
-            if (id.includes('react')) return 'vendor';
-            if (id.includes('web3')) return 'web3';
-            if (id.includes('solc') || id.includes('memfs')) return 'solc';
-            if (id.includes('wagmi') || id.includes('viem') || id.includes('@wagmi')) return 'wagmi';
-            return 'vendor'; // all other node_modules
-          }
+        manualChunks: {
+          'monaco': ['monaco-editor'],
+          'vendor': [
+            'react',
+            'react-dom',
+            'react-router-dom',
+          ],
+          'web3': ['web3'],
+          'solc': ['solc', 'memfs'],
+          'wagmi': [
+            'wagmi',
+            'viem',
+            '@wagmi/core',
+            '@wagmi/connectors'
+          ]
         },
         format: 'es',
         assetFileNames: (assetInfo) => {
@@ -129,10 +133,7 @@ export default defineConfig({
       'viem',
       '@wagmi/core',
       '@wagmi/connectors',
-      'monaco-editor',
-      'monaco-editor/esm/vs/editor/editor.worker',
-      'monaco-editor/esm/vs/language/json/json.worker',
-      'monaco-editor/esm/vs/language/typescript/ts.worker'
+      'monaco-editor'
     ]
   },
   server: {
