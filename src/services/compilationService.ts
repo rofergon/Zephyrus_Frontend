@@ -6,7 +6,10 @@ export class CompilationService {
   private workerUrl: string;
 
   private constructor() {
-    this.workerUrl = new URL('../workers/solc.worker.js', import.meta.url).toString();
+    this.workerUrl = new URL(
+      new URL('../workers/solc.worker.js', import.meta.url).href,
+      window.location.origin
+    ).href;
   }
 
   public static getInstance(): CompilationService {
@@ -30,31 +33,50 @@ export class CompilationService {
     addConsoleMessage("Starting compilation...", "info");
 
     try {
-      const worker = new Worker(this.workerUrl, { type: 'module' });
+      // Create worker with more robust error handling
+      let worker: Worker;
+      try {
+        worker = new Worker(this.workerUrl, { 
+          type: 'module',
+          name: 'solidity-compiler-worker'
+        });
+      } catch (workerError) {
+        console.error('[CompilationService] Failed to create worker:', workerError);
+        addConsoleMessage(`Failed to initialize compiler: ${workerError.message}`, "error");
+        return;
+      }
 
+      // Set up message handler before posting message
       worker.onmessage = (event) => {
-        const { markers, error, output } = event.data;
-        this.handleCompilationResult(
-          {
-            success: !error,
-            markers,
-            error,
-            output
-          },
-          monaco,
-          model,
-          addConsoleMessage,
-          setCurrentArtifact
-        );
-        worker.terminate();
+        try {
+          const { markers, error, output } = event.data;
+          this.handleCompilationResult(
+            {
+              success: !error,
+              markers,
+              error,
+              output
+            },
+            monaco,
+            model,
+            addConsoleMessage,
+            setCurrentArtifact
+          );
+        } catch (handlerError) {
+          console.error('[CompilationService] Message handler error:', handlerError);
+          addConsoleMessage(`Compilation handler error: ${handlerError.message}`, "error");
+        } finally {
+          worker.terminate();
+        }
       };
 
       worker.onerror = (error) => {
         console.error('[CompilationService] Worker error:', error);
+        const errorMessage = error.message || 'Unknown worker error';
         this.handleCompilationResult(
           {
             success: false,
-            error: `Worker error: ${error.message}`
+            error: `Worker error: ${errorMessage}`
           },
           monaco,
           model,
@@ -64,6 +86,7 @@ export class CompilationService {
         worker.terminate();
       };
 
+      // Post message to worker
       worker.postMessage({
         sourceCode: code,
         sourcePath: 'main.sol'

@@ -28,7 +28,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         format: 'es',
-        inlineDynamicImports: true
+        inlineDynamicImports: true,
+        chunkFileNames: 'assets/workers/[name]-[hash].js'
       }
     }
   },
@@ -62,6 +63,9 @@ export default defineConfig({
         assetFileNames: (assetInfo) => {
           if (assetInfo.name.endsWith('.css')) {
             return 'assets/css/[name]-[hash][extname]';
+          }
+          if (assetInfo.name.includes('worker')) {
+            return 'assets/workers/[name]-[hash][extname]';
           }
           return 'assets/[name]-[hash][extname]';
         },
