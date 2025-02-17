@@ -87,7 +87,7 @@ export default defineConfig({
       '@safe-global/safe-apps-sdk': '@safe-global/safe-apps-sdk',
       '@safe-global/safe-apps-provider': '@safe-global/safe-apps-provider',
       'solc-browserify': './src/services/solc-browserify',
-      'fs': 'browserify-fs'
+      'fs': 'memfs'
     }
   },
   optimizeDeps: {

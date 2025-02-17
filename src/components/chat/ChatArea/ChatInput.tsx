@@ -1,4 +1,4 @@
-import React, { ChangeEvent, FormEvent, KeyboardEvent } from 'react';
+import { ChangeEvent, FormEvent, KeyboardEvent } from 'react';
 import { PaperClipIcon, PaperAirplaneIcon } from '@heroicons/react/24/outline';
 
 interface ChatInputProps {

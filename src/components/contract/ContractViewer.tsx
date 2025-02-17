@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import { useRef } from 'react';
 import { ResizableBox } from 'react-resizable';
 import Editor from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';

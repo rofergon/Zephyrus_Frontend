@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAccount } from 'wagmi';
 import { ChatService, type WebSocketResponse } from '../services/chatService';
 import { virtualFS } from '../services/virtual-fs';

@@ -1,4 +1,3 @@
-import React from 'react';
 import { ChatBubbleLeftRightIcon, XMarkIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { ConversationContext } from '../../services/conversationService';
 
