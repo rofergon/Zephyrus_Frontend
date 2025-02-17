@@ -1,15 +1,30 @@
 import { CompilationResult } from '../types/contracts';
 import * as monaco from 'monaco-editor';
 
+interface ImportMetaEnv {
+  PROD: boolean;
+  BASE_URL: string;
+}
+
+interface ImportMeta {
+  env: ImportMetaEnv;
+}
+
 export class CompilationService {
   private static instance: CompilationService;
   private workerUrl: string;
 
   private constructor() {
-    this.workerUrl = new URL(
-      new URL('../workers/solc.worker.js', import.meta.url).href,
-      window.location.origin
-    ).href;
+    // Adjust worker path based on environment
+    const baseUrl = import.meta.env.PROD 
+      ? window.location.origin + import.meta.env.BASE_URL
+      : '';
+    
+    this.workerUrl = baseUrl + (import.meta.env.PROD 
+      ? '/assets/workers/solc.worker.js'
+      : '/src/workers/solc.worker.js');
+    
+    console.log('[CompilationService] Worker URL:', this.workerUrl);
   }
 
   public static getInstance(): CompilationService {

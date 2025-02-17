@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { NodeGlobalsPolyfillPlugin } from '@esbuild-plugins/node-globals-polyfill'
 import { NodeModulesPolyfillPlugin } from '@esbuild-plugins/node-modules-polyfill'
 import nodePolyfills from 'rollup-plugin-polyfill-node'
+import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [
@@ -11,7 +12,14 @@ export default defineConfig({
       buffer: true,
       process: true
     }),
-    NodeModulesPolyfillPlugin()
+    NodeModulesPolyfillPlugin(),
+    {
+      name: 'copy-worker',
+      writeBundle() {
+        // Log para debug
+        console.log('Copying worker files to build directory');
+      }
+    }
   ],
   define: {
     'process.env': process.env ?? {},
@@ -26,9 +34,12 @@ export default defineConfig({
       NodeModulesPolyfillPlugin()
     ],
     rollupOptions: {
+      input: {
+        'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js')
+      },
       output: {
         format: 'es',
-        inlineDynamicImports: true,
+        entryFileNames: 'assets/workers/[name].js',
         chunkFileNames: 'assets/workers/[name]-[hash].js'
       }
     }
