@@ -6,9 +6,12 @@ export class CompilationService {
   private workerUrl: string;
 
   private constructor() {
-    // Use a direct path for production compatibility
-    this.workerUrl = '/assets/workers/solc.worker.js';
-    console.log('[CompilationService] Worker URL:', this.workerUrl);
+    // Use environment-aware path for worker
+    const isDevelopment = import.meta.env.DEV;
+    this.workerUrl = isDevelopment 
+      ? new URL('../workers/solc.worker.js', import.meta.url).toString()
+      : '/assets/workers/solc.worker.js';
+    console.log('[CompilationService] Worker URL:', this.workerUrl, 'Environment:', isDevelopment ? 'development' : 'production');
   }
 
   public static getInstance(): CompilationService {

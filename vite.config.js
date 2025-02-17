@@ -16,6 +16,7 @@ export default defineConfig({
   ],
   define: {
     'process.env': process.env ?? {},
+    'global': 'globalThis'
   },
   worker: {
     format: 'es',
@@ -74,14 +75,14 @@ export default defineConfig({
           if (assetInfo.name.endsWith('.css')) {
             return 'assets/css/[name]-[hash][extname]';
           }
-          if (assetInfo.name.includes('solc.worker')) {
+          if (assetInfo.name.includes('solc.worker') || assetInfo.name.includes('editor.worker') || assetInfo.name.includes('json.worker') || assetInfo.name.includes('typescript.worker')) {
             return 'assets/workers/[name][extname]';
           }
           return 'assets/[name]-[hash][extname]';
         },
         chunkFileNames: 'assets/js/[name]-[hash].js',
         entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name.includes('solc.worker')) {
+          if (chunkInfo.name.includes('solc.worker') || chunkInfo.name.includes('editor.worker') || chunkInfo.name.includes('json.worker') || chunkInfo.name.includes('typescript.worker')) {
             return 'assets/workers/[name].js';
           }
           return 'assets/js/[name]-[hash].js';
@@ -89,7 +90,8 @@ export default defineConfig({
       },
       external: [
         '@safe-global/safe-apps-sdk',
-        '@safe-global/safe-apps-provider'
+        '@safe-global/safe-apps-provider',
+        '@wagmi/connectors'
       ]
     }
   },
@@ -128,7 +130,8 @@ export default defineConfig({
       '@safe-global/safe-apps-sdk',
       '@safe-global/safe-apps-provider',
       'solc',
-      'memfs'
+      'memfs',
+      '@wagmi/connectors'
     ]
   },
   server: {
