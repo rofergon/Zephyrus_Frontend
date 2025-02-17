@@ -16,6 +16,7 @@ export default defineConfig({
   ],
   define: {
     'process.env': process.env ?? {},
+    global: 'globalThis',
   },
   worker: {
     format: 'es',
@@ -40,6 +41,7 @@ export default defineConfig({
     },
     chunkSizeWarningLimit: 5000,
     rollupOptions: {
+      plugins: [nodePolyfills()],
       input: {
         main: resolve(__dirname, 'index.html'),
         'solc.worker': resolve(__dirname, 'src/workers/solc.worker.js')
@@ -101,7 +103,7 @@ export default defineConfig({
     esbuildOptions: {
       target: 'esnext',
       define: {
-        global: 'window'
+        global: 'globalThis'
       },
       plugins: [
         NodeGlobalsPolyfillPlugin({
