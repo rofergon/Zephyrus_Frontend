@@ -163,7 +163,31 @@ const AssistedChat: React.FC = () => {
       sender: 'user',
       timestamp: Date.now()
     };
-    setMessages(prev => [...prev, newMessage]);
+
+    // Actualizar el estado de mensajes de manera inmutable
+    setMessages(prevMessages => [...prevMessages, newMessage]);
+
+    // Actualizar el contexto activo y los contextos
+    setActiveContext(prevContext => {
+      if (!prevContext) return null;
+      const updatedContext = {
+        ...prevContext,
+        messages: [...prevContext.messages, newMessage]
+      };
+      
+      // Actualizar los contextos en el servicio
+      conversationService.addMessage(prevContext.id, newMessage);
+      
+      // Actualizar el estado de los contextos
+      setConversationContexts(prevContexts => 
+        prevContexts.map(ctx => 
+          ctx.id === prevContext.id ? updatedContext : ctx
+        )
+      );
+      
+      return updatedContext;
+    });
+
     setIsTyping(true);
 
     // Create context with current code and file information
@@ -196,7 +220,7 @@ const AssistedChat: React.FC = () => {
           console.log('[AssistedChat] Loaded contexts:', contexts);
           
           if (Array.isArray(contexts)) {
-            // Actualizar los contextos
+            // Actualizar los contextos de manera inmutable
             const processedContexts = contexts.map(ctx => ({
               ...ctx,
               messages: ctx.messages || [],
@@ -206,11 +230,11 @@ const AssistedChat: React.FC = () => {
             
             // Establecer el último contexto como activo
             if (processedContexts.length > 0) {
-              processedContexts[processedContexts.length - 1].active = true;
-              const activeCtx = processedContexts[processedContexts.length - 1];
-              setActiveContext(activeCtx);
-              // Cargar los mensajes del contexto activo
-              setMessages(activeCtx.messages || []);
+              const lastContext = processedContexts[processedContexts.length - 1];
+              lastContext.active = true;
+              setActiveContext(lastContext);
+              // Actualizar los mensajes del contexto activo de manera inmediata
+              setMessages(lastContext.messages || []);
             }
             
             setConversationContexts(processedContexts);
@@ -220,20 +244,37 @@ const AssistedChat: React.FC = () => {
           console.error('[AssistedChat] Error parsing contexts:', error);
         }
       } else if (response.type === 'message') {
-        const currentContext = conversationService.getActiveContext();
-        if (currentContext) {
-          const newMessage: Message = {
-            id: generateUniqueId(),
-            text: response.content,
-            sender: 'ai',
-            timestamp: Date.now()
+        // Crear el nuevo mensaje
+        const newMessage: Message = {
+          id: generateUniqueId(),
+          text: response.content,
+          sender: 'ai',
+          timestamp: Date.now()
+        };
+
+        // Actualizar el estado de manera inmutable
+        setMessages(prevMessages => [...prevMessages, newMessage]);
+        
+        // Actualizar el contexto activo y los contextos
+        setActiveContext(prevContext => {
+          if (!prevContext) return null;
+          const updatedContext = {
+            ...prevContext,
+            messages: [...prevContext.messages, newMessage]
           };
-          conversationService.addMessage(currentContext.id, newMessage);
-          setActiveContext({...currentContext, messages: [...currentContext.messages, newMessage]});
-          setConversationContexts([...conversationService.getContexts()]);
-          // Actualizar también el estado de mensajes
-          setMessages(prev => [...prev, newMessage]);
-        }
+          
+          // Actualizar los contextos en el servicio
+          conversationService.addMessage(prevContext.id, newMessage);
+          
+          // Actualizar el estado de los contextos
+          setConversationContexts(prevContexts => 
+            prevContexts.map(ctx => 
+              ctx.id === prevContext.id ? updatedContext : ctx
+            )
+          );
+          
+          return updatedContext;
+        });
       }
       setIsTyping(false);
     });
