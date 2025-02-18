@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { ResizableBox } from 'react-resizable';
 import Editor from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
@@ -169,7 +169,26 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                   }
                 });
 
-                // Definir el tema personalizado para Solidity
+                // Configurar el editor para mostrar los marcadores de error
+                editor.updateOptions({
+                  glyphMargin: true,
+                  lineNumbers: 'on',
+                  folding: true,
+                  renderValidationDecorations: 'on',
+                  minimap: { enabled: true },
+                  scrollBeyondLastLine: false,
+                  lineDecorationsWidth: 10,
+                  renderLineHighlight: 'all',
+                  scrollbar: {
+                    verticalScrollbarSize: 10,
+                    horizontalScrollbarSize: 10
+                  },
+                  suggest: {
+                    showWords: true
+                  }
+                });
+
+                // Configurar el tema con soporte para marcadores de error
                 monaco.editor.defineTheme('solidityTheme', {
                   base: 'vs-dark',
                   inherit: true,
@@ -190,12 +209,96 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                     'editor.lineHighlightBackground': '#2F3337',
                     'editorCursor.foreground': '#FFFFFF',
                     'editor.selectionBackground': '#264F78',
-                    'editor.inactiveSelectionBackground': '#3A3D41'
+                    'editor.inactiveSelectionBackground': '#3A3D41',
+                    'editorError.foreground': '#F14C4C',
+                    'editorError.border': '#F14C4C',
+                    'editorWarning.foreground': '#CCA700',
+                    'editorWarning.border': '#CCA700',
+                    'editorGutter.background': '#1E1E1E',
+                    'editorGutter.modifiedBackground': '#4B9FD6',
+                    'editorGutter.addedBackground': '#487E02',
+                    'editorGutter.deletedBackground': '#F14C4C',
+                    'editorOverviewRuler.errorForeground': '#F14C4C',
+                    'editorOverviewRuler.warningForeground': '#CCA700'
                   }
                 });
 
                 // Aplicar el tema
                 monaco.editor.setTheme('solidityTheme');
+                // Configure custom decorations for errors
+                const decorations = editor.createDecorationsCollection();
+
+                // Subscribe to marker changes
+                const disposable = monaco.editor.onDidChangeMarkers(([resource]) => {
+                  if (resource.toString() === editor.getModel()?.uri.toString()) {
+                    const markers = monaco.editor.getModelMarkers({ resource });
+                    const model = editor.getModel();
+                    
+                    if (!model) return;
+
+                    const newDecorations = markers.map(marker => {
+                      // Get the content of the line where the error occurs
+                      const lineContent = model.getLineContent(marker.startLineNumber);
+                      
+                      // Calculate the actual error range
+                      let startColumn = marker.startColumn;
+                      let endColumn = marker.endColumn;
+                      
+                      // If we have a specific column in the error
+                      if (marker.startColumn > 0) {
+                        // Look for the closest token around the error position
+                        const beforeError = lineContent.substring(0, marker.startColumn - 1);
+                        const afterError = lineContent.substring(marker.startColumn - 1);
+                        
+                        // Find the last word boundary before the error
+                        const lastWord = beforeError.match(/\w+$/);
+                        if (lastWord) {
+                          startColumn = marker.startColumn - lastWord[0].length;
+                        }
+                        
+                        // Find the next word boundary after the error
+                        const nextWord = afterError.match(/^\w+/);
+                        if (nextWord) {
+                          endColumn = marker.startColumn + nextWord[0].length;
+                        } else {
+                          // If no word is found, try to find the next symbol
+                          const nextSymbol = afterError.match(/^[^\s\w]*/);
+                          if (nextSymbol) {
+                            endColumn = marker.startColumn + nextSymbol[0].length;
+                          }
+                        }
+                      } else {
+                        // If no specific column, highlight the first problematic token in the line
+                        const tokenMatch = lineContent.match(/[^\s]+/);
+                        if (tokenMatch) {
+                          startColumn = tokenMatch.index! + 1;
+                          endColumn = startColumn + tokenMatch[0].length;
+                        }
+                      }
+
+                      return {
+                        range: new monaco.Range(
+                          marker.startLineNumber,
+                          startColumn,
+                          marker.startLineNumber,
+                          endColumn
+                        ),
+                        options: {
+                          isWholeLine: false,
+                          className: marker.severity === monaco.MarkerSeverity.Error ? 'error-decoration' : 'warning-decoration',
+                          glyphMarginClassName: 'glyph-margin-error',
+                          hoverMessage: { value: marker.message },
+                          overviewRuler: {
+                            color: marker.severity === monaco.MarkerSeverity.Error ? '#F14C4C' : '#CCA700',
+                            position: monaco.editor.OverviewRulerLane.Right
+                          }
+                        }
+                      };
+                    });
+
+                    decorations.set(newDecorations);
+                  }
+                });
 
                 // Add change handler
                 editor.onDidChangeModelContent(() => {
@@ -210,6 +313,11 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                     onCompile(newCode);
                   }, 1000);
                 });
+
+                // Cleanup
+                return () => {
+                  disposable.dispose();
+                };
               }}
               onChange={(value) => {
                 if (!value) return;
@@ -241,68 +349,64 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                   )}
                 </div>
 
-                {/* View/Pure Functions */}
-                {currentArtifact.functions.filter(f => f.stateMutability === 'view' || f.stateMutability === 'pure').length > 0 && (
-                  <div className="relative">
-                    <div className="sticky top-0 z-10 backdrop-blur-sm bg-gray-900/80 -mx-6 px-6 py-4 border-b border-gray-700/50">
-                      <div className="flex items-center space-x-3">
-                        <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
-                          <MagnifyingGlassIcon className="w-5 h-5" />
+                {/* Functions */}
+                {currentArtifact.functions && currentArtifact.functions.length > 0 ? (
+                  <>
+                    {/* View/Pure Functions */}
+                    {currentArtifact.functions.filter(f => f.stateMutability === 'view' || f.stateMutability === 'pure').length > 0 && (
+                      <div className="relative">
+                        <div className="sticky top-0 z-10 backdrop-blur-sm bg-gray-900/80 -mx-6 px-6 py-4 border-b border-gray-700/50">
+                          <div className="flex items-center space-x-3">
+                            <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
+                              <MagnifyingGlassIcon className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-semibold text-white">Read Functions</h3>
+                              <p className="text-sm text-gray-400">Query contract state without gas fees</p>
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <h3 className="text-lg font-semibold text-white">Read Functions</h3>
-                          <p className="text-sm text-gray-400">Query contract state without gas fees</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className={`mt-6 grid grid-cols-1 ${
-                      isMaximized ? 'lg:grid-cols-4' : 'lg:grid-cols-2'
-                    } gap-6`}>
-                      {currentArtifact.functions
-                        .filter(f => f.stateMutability === 'view' || f.stateMutability === 'pure')
-                        .map((func, index) => (
-                          <FunctionCard key={index} func={func} />
-                        ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Write Functions */}
-                {currentArtifact.functions.filter(f => f.stateMutability !== 'view' && f.stateMutability !== 'pure').length > 0 && (
-                  <div className="relative mt-8">
-                    <div className="sticky top-0 z-10 backdrop-blur-sm bg-gray-900/80 -mx-6 px-6 py-4 border-b border-gray-700/50">
-                      <div className="flex items-center space-x-3">
-                        <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
-                          <BoltIcon className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-lg font-semibold text-white">Write Functions</h3>
-                          <p className="text-sm text-gray-400">Modify contract state (requires gas)</p>
+                        <div className={`mt-6 grid grid-cols-1 ${
+                          isMaximized ? 'lg:grid-cols-4' : 'lg:grid-cols-2'
+                        } gap-6`}>
+                          {currentArtifact.functions
+                            .filter(f => f.stateMutability === 'view' || f.stateMutability === 'pure')
+                            .map((func, index) => (
+                              <FunctionCard key={index} func={func} />
+                            ))}
                         </div>
                       </div>
-                    </div>
-                    <div className={`mt-6 grid grid-cols-1 ${
-                      isMaximized ? 'lg:grid-cols-4' : 'lg:grid-cols-2'
-                    } gap-6`}>
-                      {currentArtifact.functions
-                        .filter(f => f.stateMutability !== 'view' && f.stateMutability !== 'pure')
-                        .map((func, index) => (
-                          <FunctionCard key={index} func={func} />
-                        ))}
-                    </div>
-                  </div>
-                )}
+                    )}
 
-                {/* Empty State */}
-                {currentArtifact.functions.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <div className="p-4 rounded-full bg-gray-800/50 mb-4">
-                      <CodeBracketIcon className="w-8 h-8 text-gray-400" />
-                    </div>
-                    <h3 className="text-lg font-medium text-gray-300">No Functions Available</h3>
-                    <p className="text-gray-500 mt-2 max-w-md">
-                      This contract doesn't have any functions defined yet. Add some functions to your contract to see them here.
-                    </p>
+                    {/* Write Functions */}
+                    {currentArtifact.functions.filter(f => f.stateMutability !== 'view' && f.stateMutability !== 'pure').length > 0 && (
+                      <div className="relative mt-8">
+                        <div className="sticky top-0 z-10 backdrop-blur-sm bg-gray-900/80 -mx-6 px-6 py-4 border-b border-gray-700/50">
+                          <div className="flex items-center space-x-3">
+                            <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
+                              <BoltIcon className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-semibold text-white">Write Functions</h3>
+                              <p className="text-sm text-gray-400">Modify contract state (requires gas)</p>
+                            </div>
+                          </div>
+                        </div>
+                        <div className={`mt-6 grid grid-cols-1 ${
+                          isMaximized ? 'lg:grid-cols-4' : 'lg:grid-cols-2'
+                        } gap-6`}>
+                          {currentArtifact.functions
+                            .filter(f => f.stateMutability !== 'view' && f.stateMutability !== 'pure')
+                            .map((func, index) => (
+                              <FunctionCard key={index} func={func} />
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-gray-400 text-center py-8">
+                    No functions found in contract
                   </div>
                 )}
               </div>

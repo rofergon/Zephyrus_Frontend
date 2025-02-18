@@ -348,11 +348,8 @@ const AssistedChat: React.FC = () => {
     try {
       console.log('[Chat] Deleting context:', contextId);
       
-      // Enviar mensaje al backend para borrar el chat
-      await chatService.current?.sendMessage('', {
-        type: 'delete_context',
-        chat_id: contextId
-      });
+      // Usar el nuevo método deleteContext
+      chatService.current?.deleteContext(contextId);
       
       // Actualizar el estado local
       const updatedContexts = conversationContexts.filter(ctx => ctx.id !== contextId);

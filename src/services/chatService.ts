@@ -180,7 +180,7 @@ export class ChatService {
     }
   }
 
-  public sendMessage(content: string, context: any = {}, chatId?: string, p0?: string): void {
+  public sendMessage(content: string, context: any = {}, chatId?: string): void {
     if (!this.walletAddress || !this.walletAddress.startsWith('0x')) {
       console.error('[ChatService] Cannot send message without a valid wallet address');
       return;
@@ -188,6 +188,12 @@ export class ChatService {
 
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.error('[ChatService] WebSocket is not connected');
+      return;
+    }
+
+    // No enviar mensajes vacíos a menos que sea un tipo específico de operación
+    if (!content && context.type !== 'delete_context' && context.type !== 'create_context' && context.type !== 'switch_context') {
+      console.log('[ChatService] Skipping empty message');
       return;
     }
 
@@ -388,5 +394,28 @@ export class ChatService {
         content: JSON.stringify(chat)
       });
     }
+  }
+
+  public deleteContext(contextId: string): void {
+    if (!this.walletAddress || !this.walletAddress.startsWith('0x')) {
+      console.error('[ChatService] Cannot delete context without a valid wallet address');
+      return;
+    }
+
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.error('[ChatService] WebSocket is not connected');
+      return;
+    }
+
+    const message = {
+      type: 'delete_context',
+      chat_id: contextId,
+      context: {
+        wallet_address: this.walletAddress
+      }
+    };
+
+    console.log('[ChatService] Deleting context:', message);
+    this.ws.send(JSON.stringify(message));
   }
 } 

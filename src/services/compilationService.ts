@@ -134,8 +134,81 @@ export class CompilationService {
         try {
           const errorJson = JSON.parse(errorText);
           console.error('[CompilationService] Parsed API Error:', errorJson);
-          throw new Error(`Compilation failed: ${response.status} - ${errorJson.error}${errorJson.details ? ': ' + errorJson.details : ''}`);
+          
+          let errorMarker;
+          
+          if (errorJson.location) {
+            // Obtener el texto de la línea para determinar la longitud del error
+            const lines = code.split('\n');
+            const errorLine = lines[errorJson.location.line - 1] || '';
+            const errorLength = 1; // Longitud mínima por defecto
+            
+            // Intentar determinar la longitud del error basado en el contexto
+            let contextLength = errorLength;
+            if (errorLine) {
+              // Si estamos en la línea correcta, intentar encontrar un token relevante
+              const tokenMatch = errorLine.substr(errorJson.location.column - 1).match(/[a-zA-Z0-9_]+|[^a-zA-Z0-9_\s]+/);
+              if (tokenMatch) {
+                contextLength = tokenMatch[0].length;
+              }
+            }
+
+            errorMarker = {
+              startLineNumber: errorJson.location.line,
+              endLineNumber: errorJson.location.line,
+              startColumn: errorJson.location.column,
+              endColumn: errorJson.location.column + contextLength,
+              message: `${errorJson.message}${errorJson.suggestion ? `\nSuggestion: ${errorJson.suggestion}` : ''}`,
+              severity: monaco.MarkerSeverity.Error,
+              source: 'solidity'
+            };
+
+            // Log para debugging
+            console.log('[CompilationService] Created error marker:', {
+              line: errorJson.location.line,
+              column: errorJson.location.column,
+              errorLine,
+              contextLength
+            });
+          } else {
+            errorMarker = {
+              startLineNumber: 1,
+              startColumn: 1,
+              endLineNumber: 1,
+              endColumn: 1,
+              message: errorJson.message || 'Unknown error',
+              severity: monaco.MarkerSeverity.Error,
+              source: 'solidity'
+            };
+          }
+
+          // Limpiar marcadores anteriores antes de establecer el nuevo
+          monaco.editor.setModelMarkers(model, 'solidity', []);
+          
+          // Establecer el nuevo marcador
+          monaco.editor.setModelMarkers(model, 'solidity', [errorMarker]);
+          
+          // Añadir mensaje a la consola con información de ubicación
+          const locationInfo = errorJson.location 
+            ? ` at line ${errorJson.location.line}, column ${errorJson.location.column}`
+            : '';
+          const errorMessage = `Compilation failed${locationInfo}: ${errorJson.message}${errorJson.suggestion ? `\nSuggestion: ${errorJson.suggestion}` : ''}`;
+          addConsoleMessage(errorMessage, 'error');
+          
+          throw new Error(errorMessage);
         } catch (e) {
+          // Si no podemos parsear el error JSON, usar el mensaje de error original
+          const errorMarker = {
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: 1,
+            endColumn: 1,
+            message: errorText,
+            severity: monaco.MarkerSeverity.Error,
+            source: 'solidity'
+          };
+          monaco.editor.setModelMarkers(model, 'solidity', [errorMarker]);
+          addConsoleMessage(errorText, 'error');
           throw new Error(`Compilation failed: ${response.status} - ${errorText}`);
         }
       }
@@ -178,21 +251,26 @@ export class CompilationService {
     } catch (error) {
       console.error('[CompilationService] Compilation error:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Si el error ya tiene un marcador establecido (por el código anterior), no necesitamos hacer nada más
+      const existingMarkers = monaco.editor.getModelMarkers({ resource: model.uri });
+      if (existingMarkers.length === 0) {
+        // Solo establecer un nuevo marcador si no hay ninguno existente
+        const errorMarker = {
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 1,
+          message: `Compilation failed: ${errorMessage}`,
+          severity: monaco.MarkerSeverity.Error
+        };
+        monaco.editor.setModelMarkers(model, 'solidity', [errorMarker]);
+      }
+      
       addConsoleMessage(
         `Compilation failed: ${errorMessage}`,
         "error"
       );
-      
-      // Set error marker in editor
-      const errorMarker = {
-        startLineNumber: 1,
-        startColumn: 1,
-        endLineNumber: 1,
-        endColumn: 1,
-        message: `Compilation failed: ${errorMessage}`,
-        severity: monaco.MarkerSeverity.Error
-      };
-      monaco.editor.setModelMarkers(model, 'solidity', [errorMarker]);
     }
   }
 
