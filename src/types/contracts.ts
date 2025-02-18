@@ -3,31 +3,26 @@ export interface ContractFunction {
   description: string;
   type: 'function' | 'constructor' | 'event';
   stateMutability?: 'pure' | 'view' | 'nonpayable' | 'payable';
-  inputs: Array<{
+  inputs: {
     name: string;
     type: string;
     description?: string;
-    components?: Array<{
-      name: string;
-      type: string;
-    }>;
-  }>;
-  outputs?: Array<{
+    components?: any[];
+  }[];
+  outputs?: {
     name: string;
     type: string;
-    components?: Array<{
-      name: string;
-      type: string;
-    }>;
-  }>;
+    components?: any[];
+  }[];
 }
 
 export interface ContractArtifact {
   name: string;
   description: string;
   functions: ContractFunction[];
-  address?: string;
   abi?: any[];
+  bytecode?: string;
+  address?: string;
 }
 
 export interface Message {
@@ -43,21 +38,13 @@ export interface Message {
 
 export interface ConsoleMessage {
   id: string;
-  type: 'error' | 'warning' | 'success' | 'info';
+  type: 'info' | 'warning' | 'error' | 'success' | 'process';
   message: string;
-  timestamp: number;
+  timestamp?: number;
 }
 
 export interface CompilationResult {
   success: boolean;
-  markers?: Array<{
-    startLineNumber: number;
-    startColumn: number;
-    endLineNumber: number;
-    endColumn: number;
-    message: string;
-    severity: number;
-  }>;
-  output?: any;
+  artifact?: ContractArtifact;
   error?: string;
 } 

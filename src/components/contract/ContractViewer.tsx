@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { ResizableBox } from 'react-resizable';
 import Editor from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
@@ -6,9 +6,12 @@ import {
   CodeBracketIcon,
   MagnifyingGlassIcon,
   BoltIcon,
+  RocketLaunchIcon,
 } from '@heroicons/react/24/outline';
 import FunctionCard from '../FunctionCard';
 import { ContractFunction, ContractArtifact, ConsoleMessage } from '../../types/contracts';
+import { useDeployment } from '../../services/deploymentService';
+import { useAccount, useChainId, useSwitchChain } from 'wagmi';
 
 interface ContractViewerProps {
   currentArtifact: ContractArtifact | null;
@@ -38,8 +41,70 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   monacoRef,
 }) => {
   const compileTimeoutRef = useRef<NodeJS.Timeout>();
+  const { deployContract } = useDeployment();
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const { switchChain } = useSwitchChain();
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [deploymentResult, setDeploymentResult] = useState<{
+    success?: boolean;
+    contractAddress?: string;
+    transactionHash?: string;
+    error?: string;
+  } | null>(null);
+  const [constructorArgs, setConstructorArgs] = useState<any[]>([]);
+
+  // Función para obtener el constructor del ABI
+  const getConstructor = useCallback(() => {
+    if (!currentArtifact?.abi) return null;
+    return currentArtifact.abi.find((item: any) => item.type === 'constructor');
+  }, [currentArtifact]);
+
+  const handleDeploy = async () => {
+    if (!currentArtifact?.abi || !currentArtifact?.bytecode || !isConnected) {
+      console.error('No contract compiled or wallet not connected');
+      return;
+    }
+
+    // Asegurarse de que estamos en la red Sonic Blaze Testnet
+    if (chainId !== 57054) {
+      await switchChain?.({ chainId: 57054 });
+      return;
+    }
+
+    setIsDeploying(true);
+    setDeploymentResult(null);
+
+    try {
+      const result = await deployContract(
+        currentArtifact.abi,
+        currentArtifact.bytecode,
+        constructorArgs
+      );
+
+      setDeploymentResult(result);
+    } catch (error) {
+      setDeploymentResult({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      });
+    } finally {
+      setIsDeploying(false);
+    }
+  };
+
+  // Función para manejar cambios en los argumentos del constructor
+  const handleConstructorArgChange = (index: number, value: string) => {
+    setConstructorArgs(prev => {
+      const newArgs = [...prev];
+      newArgs[index] = value;
+      return newArgs;
+    });
+  };
 
   if (!currentArtifact) return null;
+
+  const constructor = getConstructor();
 
   return (
     <div className="flex-1 flex flex-col">
@@ -491,6 +556,84 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Add deployment section */}
+      <div className="flex-none p-4 border-t border-gray-700 bg-gray-800/50">
+        <div className="flex flex-col space-y-4">
+          {/* Constructor Arguments */}
+          {constructor && constructor.inputs && constructor.inputs.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium text-gray-300">Constructor Arguments</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {constructor.inputs.map((input: any, index: number) => (
+                  <div key={index} className="space-y-1">
+                    <label className="text-sm text-gray-400">
+                      {input.name} ({input.type})
+                    </label>
+                    <input
+                      type="text"
+                      value={constructorArgs[index] || ''}
+                      onChange={(e) => handleConstructorArgChange(index, e.target.value)}
+                      placeholder={`Enter ${input.type} value`}
+                      className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Deployment Button and Result */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={handleDeploy}
+                disabled={!isConnected || isDeploying || chainId !== 57054}
+                className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+                  isConnected && !isDeploying && chainId === 57054
+                    ? 'bg-blue-600 hover:bg-blue-700'
+                    : 'bg-gray-700 cursor-not-allowed'
+                } text-white transition-colors duration-200`}
+              >
+                {isDeploying ? (
+                  <BoltIcon className="w-5 h-5 animate-spin" />
+                ) : (
+                  <RocketLaunchIcon className="w-5 h-5" />
+                )}
+                <span>
+                  {isDeploying
+                    ? 'Deploying...'
+                    : chainId !== 57054
+                    ? 'Switch to Sonic'
+                    : 'Deploy Contract'}
+                </span>
+              </button>
+            </div>
+            
+            {deploymentResult && (
+              <div className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+                deploymentResult.success ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'
+              }`}>
+                {deploymentResult.success ? (
+                  <>
+                    <span>Deployed at: </span>
+                    <a
+                      href={`https://testnet.sonicscan.org/address/${deploymentResult.contractAddress}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-green-300"
+                    >
+                      {deploymentResult.contractAddress}
+                    </a>
+                  </>
+                ) : (
+                  <span>Error: {deploymentResult.error}</span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

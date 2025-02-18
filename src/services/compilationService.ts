@@ -1,4 +1,4 @@
-import { CompilationResult } from '../types/contracts';
+import { CompilationResult, ContractArtifact } from '../types/contracts';
 import * as monaco from 'monaco-editor';
 
 export class CompilationService {
@@ -300,64 +300,62 @@ export class CompilationService {
   }
 
   private handleCompilationResult(
-    result: CompilationResult,
+    result: {
+      success: boolean;
+      markers?: any[];
+      error?: string;
+      output?: any;
+    },
     monaco: typeof import('monaco-editor'),
     model: monaco.editor.ITextModel,
     addConsoleMessage: (message: string, type: 'error' | 'warning' | 'success' | 'info') => void,
     setCurrentArtifact: (artifact: any | null) => void
   ): void {
-    const { markers, error, output } = result;
+    // Clear previous markers
+    monaco.editor.setModelMarkers(model, 'solidity', []);
 
-    if (error) {
-      const errorMarker = {
-        startLineNumber: 1,
-        startColumn: 1,
-        endLineNumber: 1,
-        endColumn: 1,
-        message: error,
-        severity: monaco.MarkerSeverity.Error
-      };
-      monaco.editor.setModelMarkers(model, 'solidity', [errorMarker]);
-      addConsoleMessage(error, 'error');
+    if (!result.success || result.error) {
+      // Handle compilation error
+      const errorMessage = result.error || 'Unknown compilation error';
+      addConsoleMessage(errorMessage, 'error');
+
+      if (result.markers && result.markers.length > 0) {
+        monaco.editor.setModelMarkers(model, 'solidity', result.markers);
+      }
+
+      setCurrentArtifact(null);
       return;
     }
 
-    if (markers && markers.length > 0) {
-      const processedMarkers = markers.map(marker => ({
-        ...marker,
-        severity: marker.severity >= 8
-          ? monaco.MarkerSeverity.Error
-          : monaco.MarkerSeverity.Warning
-      }));
+    // Handle successful compilation
+    addConsoleMessage('Compilation successful!', 'success');
 
-      monaco.editor.setModelMarkers(model, 'solidity', processedMarkers);
+    if (result.output) {
+      const { artifact } = result.output;
+      if (artifact) {
+        // Procesar el ABI para generar las funciones
+        const functions = artifact.abi
+          .filter((item: any) => item.type === 'function' || item.type === 'constructor' || item.type === 'event')
+          .map((item: any) => ({
+            name: item.name || (item.type === 'constructor' ? 'constructor' : 'unknown'),
+            description: `${item.name || item.type}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+            type: item.type as 'function' | 'constructor' | 'event',
+            stateMutability: item.stateMutability as 'pure' | 'view' | 'nonpayable' | 'payable',
+            inputs: item.inputs || [],
+            outputs: item.outputs || []
+          }));
 
-      // Use Set for unique messages
-      const uniqueMessages = new Set<string>();
-      markers.forEach(marker => {
-        const message = `[Line ${marker.startLineNumber}:${marker.startColumn}] ${marker.message}`;
-        if (!uniqueMessages.has(message)) {
-          uniqueMessages.add(message);
-          addConsoleMessage(message, marker.severity >= 8 ? 'error' : 'warning');
-        }
-      });
-    }
-
-    if (output?.artifact?.abi) {
-      try {
-        const processedFunctions = this.processABI(output.artifact.abi);
-        const contractName = output.artifact.name || 'Contract';
-        const newArtifact = {
-          name: contractName,
-          description: `Smart contract ${contractName} interface`,
-          functions: processedFunctions,
-          abi: output.artifact.abi
+        // Crear el artefacto del contrato
+        const contractArtifact: ContractArtifact = {
+          name: artifact.contractName || 'Smart Contract',
+          description: 'Compiled Smart Contract',
+          functions,
+          abi: artifact.abi,
+          bytecode: artifact.bytecode
         };
-        setCurrentArtifact(newArtifact);
-        addConsoleMessage(`Contract "${contractName}" compiled successfully`, 'success');
-      } catch (error) {
-        console.error('[CompilationService] Error processing compilation output:', error);
-        addConsoleMessage(`Error processing compilation output: ${error instanceof Error ? error.message : String(error)}`, 'error');
+
+        setCurrentArtifact(contractArtifact);
+        addConsoleMessage(`Contract ${contractArtifact.name} compiled successfully with ${functions.length} functions`, 'success');
       }
     }
   }
