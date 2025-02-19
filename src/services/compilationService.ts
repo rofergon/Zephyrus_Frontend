@@ -1,4 +1,4 @@
-import { CompilationResult, ContractArtifact } from '../types/contracts';
+import { ContractArtifact } from '../types/contracts';
 import * as monaco from 'monaco-editor';
 
 export class CompilationService {
@@ -57,55 +57,17 @@ export class CompilationService {
         }
       }
 
-      // Extract the source code for just this contract
-      let relevantCode = code;
-      if (mainContract && mainContract.index !== undefined) {
-        const startIndex = mainContract.index;
-        let endIndex = code.length;
-        let braceCount = 0;
-        let inString = false;
-        let stringChar = '';
-
-        // Find the matching closing brace for this contract
-        for (let i = startIndex; i < code.length; i++) {
-          const char = code[i];
-          if (!inString) {
-            if (char === '{') braceCount++;
-            else if (char === '}') {
-              braceCount--;
-              if (braceCount === 0) {
-                endIndex = i + 1;
-                break;
-              }
-            }
-            else if (char === '"' || char === "'") {
-              inString = true;
-              stringChar = char;
-            }
-          } else if (char === stringChar && code[i - 1] !== '\\') {
-            inString = false;
-          }
-        }
-        relevantCode = code.substring(startIndex, endIndex);
-      }
-
-      // Double-check the contract name in the relevant code
-      const finalNameMatch = relevantCode.match(/\bcontract\s+(\w+)/);
-      if (finalNameMatch && finalNameMatch[1]) {
-        contractName = finalNameMatch[1];
-        console.log('[CompilationService] Final contract name:', contractName);
-      }
-
       // Get Solidity version from pragma
       const pragmaMatch = code.match(/pragma\s+solidity\s+(\^?\d+\.\d+\.\d+)/);
       const solidityVersion = pragmaMatch ? pragmaMatch[1].replace('^', '') : '0.8.20';
 
       console.log('[CompilationService] Sending compilation request...');
       const requestBody = {
-        contractName: contractName,
         sourceCode: code,
         version: solidityVersion,
-        mainContractCode: relevantCode
+        contractName: contractName,
+        optimize: true,
+        runs: 200
       };
       
       console.log('[CompilationService] API Request:', {
@@ -114,7 +76,7 @@ export class CompilationService {
         headers: { 'Content-Type': 'application/json' },
         body: {
           ...requestBody,
-          sourceCode: `${code.substring(0, 100)}... (${code.length} chars)` // Truncate for logging
+          sourceCode: `${code.substring(0, 100)}... (${code.length} chars)`
         }
       });
 
@@ -358,85 +320,5 @@ export class CompilationService {
         addConsoleMessage(`Contract ${contractArtifact.name} compiled successfully with ${functions.length} functions`, 'success');
       }
     }
-  }
-
-  private processABI(abi: any[]): any[] {
-    return abi
-      .filter(item => item.type === 'function' || item.type === 'constructor')
-      .map(item => {
-        // Para constructores, crear una descripción especial
-        if (item.type === 'constructor') {
-          return {
-            name: 'constructor',
-            description: 'Contract constructor',
-            type: 'constructor',
-            stateMutability: item.stateMutability || 'nonpayable',
-            inputs: item.inputs?.map((input: any) => ({
-              name: input.name || 'value',
-              type: input.type,
-              description: `Constructor parameter of type ${input.type}`,
-              components: input.components
-            })) || [],
-            outputs: []
-          };
-        }
-
-        // Para funciones regulares
-        const funcForDescription = {
-          name: item.name,
-          description: '',
-          type: item.type,
-          stateMutability: item.stateMutability,
-          inputs: item.inputs || [],
-          outputs: item.outputs || []
-        };
-
-        return {
-          name: item.name,
-          description: this.generateFunctionDescription(funcForDescription),
-          type: item.type,
-          stateMutability: item.stateMutability,
-          inputs: item.inputs?.map((input: any) => ({
-            name: input.name || 'value',
-            type: input.type,
-            description: `Input parameter of type ${input.type}`,
-            components: input.components
-          })) || [],
-          outputs: item.outputs?.map((output: any) => ({
-            name: output.name || 'value',
-            type: output.type,
-            components: output.components
-          })) || []
-        };
-      })
-      .filter(item => item !== null); // Filtrar cualquier resultado nulo
-  }
-
-  private generateFunctionDescription(func: any): string {
-    const inputsDesc = func.inputs
-      .map((input: any) => `${input.name || 'value'} (${input.type})`)
-      .join(', ');
-
-    const outputsDesc = func.outputs && func.outputs.length > 0
-      ? ` returns (${func.outputs.map((out: any) => `${out.name || 'value'} (${out.type})`).join(', ')})`
-      : '';
-
-    const mutability = func.stateMutability ? ` [${func.stateMutability}]` : '';
-    
-    // Generar una descripción más detallada basada en el tipo de función
-    let description = `${func.name}(${inputsDesc})${outputsDesc}${mutability}`;
-    
-    // Añadir información adicional basada en la mutabilidad
-    if (func.stateMutability === 'view') {
-      description += ' - Read-only function that does not modify the contract state';
-    } else if (func.stateMutability === 'pure') {
-      description += ' - Pure function that neither reads from nor modifies the contract state';
-    } else if (func.stateMutability === 'payable') {
-      description += ' - Function that can receive Ether';
-    } else if (func.stateMutability === 'nonpayable') {
-      description += ' - Function that modifies the contract state';
-    }
-
-    return description;
   }
 } 

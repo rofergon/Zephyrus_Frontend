@@ -45,6 +45,34 @@ export interface ConsoleMessage {
 
 export interface CompilationResult {
   success: boolean;
-  artifact?: ContractArtifact;
+  markers?: any[];
+  output?: {
+    artifact?: ContractArtifact;
+    [key: string]: any;
+  };
   error?: string;
+}
+
+export interface DeployedContract {
+  id: string;
+  wallet_address: string;
+  conversation_id: string;
+  contract_address: string;
+  name: string;
+  abi: string | null;
+  bytecode: string;
+  source_code: string | null;
+  compiler_version: string | null;
+  constructor_args: string | null;
+  network_id: string | null;
+  deployed_at: string;
+  sourceCode: {
+    content: string;
+    language: string;
+    version: string;
+    timestamp: string;
+    format: string;
+    encoding: string;
+  } | string | null;
+  constructorArgs: any[] | null;
 } 

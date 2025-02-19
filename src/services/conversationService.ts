@@ -1,4 +1,3 @@
-import { sessionService, type Session } from './sessionService';
 
 export interface Message {
   id: string;

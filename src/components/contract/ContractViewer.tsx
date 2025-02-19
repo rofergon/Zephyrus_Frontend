@@ -1,17 +1,17 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useState, useRef } from 'react';
 import { ResizableBox } from 'react-resizable';
 import Editor from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { 
-  CodeBracketIcon,
   MagnifyingGlassIcon,
   BoltIcon,
   RocketLaunchIcon,
 } from '@heroicons/react/24/outline';
 import FunctionCard from '../FunctionCard';
-import { ContractFunction, ContractArtifact, ConsoleMessage } from '../../types/contracts';
+import { ContractArtifact, ConsoleMessage } from '../../types/contracts';
 import { useDeployment } from '../../services/deploymentService';
 import { useAccount, useChainId, useSwitchChain } from 'wagmi';
+import 'react-resizable/css/styles.css';
 
 interface ContractViewerProps {
   currentArtifact: ContractArtifact | null;
@@ -25,6 +25,7 @@ interface ContractViewerProps {
   onConsoleResize: (height: number) => void;
   editorRef: React.MutableRefObject<monaco.editor.IStandaloneCodeEditor | null>;
   monacoRef: React.MutableRefObject<typeof monaco | null>;
+  conversationId: string;
 }
 
 const ContractViewer: React.FC<ContractViewerProps> = ({
@@ -39,10 +40,11 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   onConsoleResize,
   editorRef,
   monacoRef,
+  conversationId,
 }) => {
   const compileTimeoutRef = useRef<NodeJS.Timeout>();
   const { deployContract } = useDeployment();
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
   const [isDeploying, setIsDeploying] = useState(false);
@@ -53,16 +55,18 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     error?: string;
   } | null>(null);
   const [constructorArgs, setConstructorArgs] = useState<any[]>([]);
+  const [, setError] = useState<string | null>(null);
 
   // Función para obtener el constructor del ABI
-  const getConstructor = useCallback(() => {
+  const getConstructor = () => {
     if (!currentArtifact?.abi) return null;
     return currentArtifact.abi.find((item: any) => item.type === 'constructor');
-  }, [currentArtifact]);
+  };
 
   const handleDeploy = async () => {
-    if (!currentArtifact?.abi || !currentArtifact?.bytecode || !isConnected) {
-      console.error('No contract compiled or wallet not connected');
+    if (!currentArtifact?.abi || !currentArtifact?.bytecode || !isConnected || !conversationId) {
+      console.error('No contract compiled, wallet not connected, or no conversation ID');
+      setError('Missing required data for deployment');
       return;
     }
 
@@ -79,7 +83,10 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       const result = await deployContract(
         currentArtifact.abi,
         currentArtifact.bytecode,
-        constructorArgs
+        constructorArgs,
+        conversationId,
+        currentArtifact.name,
+        currentCode
       );
 
       setDeploymentResult(result);
@@ -437,7 +444,12 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                           {currentArtifact.functions
                             .filter(f => f.stateMutability === 'view' || f.stateMutability === 'pure')
                             .map((func, index) => (
-                              <FunctionCard key={index} func={func} />
+                              <FunctionCard 
+                                key={index} 
+                                func={func} 
+                                contractAddress={currentArtifact.address}
+                                abi={currentArtifact.abi}
+                              />
                             ))}
                         </div>
                       </div>
@@ -463,7 +475,12 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                           {currentArtifact.functions
                             .filter(f => f.stateMutability !== 'view' && f.stateMutability !== 'pure')
                             .map((func, index) => (
-                              <FunctionCard key={index} func={func} />
+                              <FunctionCard 
+                                key={index} 
+                                func={func} 
+                                contractAddress={currentArtifact.address}
+                                abi={currentArtifact.abi}
+                              />
                             ))}
                         </div>
                       </div>
@@ -546,7 +563,7 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                     </div>
                   </div>
                   <div className="flex-shrink-0 text-xs text-gray-500 mt-1">
-                    {new Date(msg.timestamp).toLocaleTimeString()}
+                    {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()}
                   </div>
                 </div>
               ))}

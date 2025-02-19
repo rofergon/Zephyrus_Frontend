@@ -1,13 +1,6 @@
 import { virtualFS } from './virtual-fs';
 
 // Generador de IDs únicos usando UUID v4
-const generateUniqueId = (): string => {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-};
 
 export interface ChatInfo {
   id: string;
@@ -55,11 +48,9 @@ export interface WebSocketResponse {
 
 export class ChatService {
   private ws: WebSocket | null = null;
-  private messageQueue: string[] = [];
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = 5;
   private reconnectTimeout: NodeJS.Timeout | null = null;
-  private pingInterval: NodeJS.Timeout | null = null;
   private walletAddress: string | null = null;
   private currentChatId: string | null = null;
   private messageHandler: ((message: AgentResponse) => void) | null = null;
@@ -72,7 +63,7 @@ export class ChatService {
     this.chatsLoadedHandler = null;
   }
 
-  public connect(walletAddress?: string, p0?: string): void {
+  public connect(walletAddress?: string, _p0?: string): void {
     if (!walletAddress || !walletAddress.startsWith('0x')) {
       console.log('[ChatService] No valid wallet address provided, connection aborted');
       return;
@@ -245,16 +236,9 @@ export class ChatService {
       return;
     }
 
-    const message = {
-      type: 'switch_context',
-      chat_id: chatId,
-      context: {
-        wallet_address: this.walletAddress
-      }
-    };
-
-    console.log('[ChatService] Switching chat:', message);
-    this.ws.send(JSON.stringify(message));
+    // Update current chat ID
+    this.currentChatId = chatId;
+    console.log('[ChatService] Switched to chat:', chatId);
   }
 
   public onMessage(handler: (message: AgentResponse) => void): void {
@@ -277,11 +261,6 @@ export class ChatService {
     this.currentChatId = chatId;
   }
 
-  private handleMessage(message: AgentResponse) {
-    if (this.messageHandler) {
-      this.messageHandler(message);
-    }
-  }
 
   private handleConnectionChange(connected: boolean) {
     if (this.connectionChangeHandler) {
@@ -337,7 +316,10 @@ export class ChatService {
     
     // Notificar a los handlers
     if (this.chatsLoadedHandler) {
-        this.chatsLoadedHandler(processedChats);
+        this.chatsLoadedHandler(processedChats.map(chat => ({
+            ...chat,
+            generatedCode: chat.generatedCode || undefined
+        })));
     }
     if (this.messageHandler) {
         this.messageHandler({

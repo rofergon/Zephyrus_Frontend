@@ -1,86 +1,29 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAccount } from 'wagmi';
-import { ChatService, type WebSocketResponse } from '../services/chatService';
+import { ChatService, type AgentResponse } from '../services/chatService';
 import { virtualFS } from '../services/virtual-fs';
 import { ResizableBox } from 'react-resizable';
-import { format } from 'date-fns';
-import ReactMarkdown from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { 
-  HomeIcon,   ChatBubbleLeftRightIcon,  DocumentDuplicateIcon,  CogIcon,  UsersIcon,  WrenchScrewdriverIcon,  CurrencyDollarIcon,  ChevronLeftIcon,  ChevronRightIcon,
-  PaperClipIcon,  PaperAirplaneIcon,  ClipboardDocumentIcon,  UserCircleIcon,  CommandLineIcon,  PlusIcon,  XMarkIcon,  CodeBracketIcon,
-  CheckIcon,  ArrowPathIcon,  MagnifyingGlassIcon,  BoltIcon,  ChevronDownIcon,  DocumentTextIcon
-} from '@heroicons/react/24/outline';
+  HomeIcon, ChatBubbleLeftRightIcon, DocumentDuplicateIcon, CogIcon, UsersIcon, WrenchScrewdriverIcon, CurrencyDollarIcon, ChevronLeftIcon, ChevronRightIcon,
+  CodeBracketIcon} from '@heroicons/react/24/outline';
 import { Link, useLocation } from 'react-router-dom';
 import 'react-resizable/css/styles.css';
-import { conversationService, type ConversationContext, type Message as IMessage } from '../services/conversationService';
-import { v4 as uuidv4 } from 'uuid';
-import Editor from '@monaco-editor/react';
+import { conversationService, Message, type ConversationContext } from '../services/conversationService';
 import * as monaco from 'monaco-editor';
 import '../styles/editor.css';
 import '../styles/global.css';
-import FunctionCard from '../components/FunctionCard';
-import MessageComponent, { Message } from '../components/MessageComponent';
-import { ContractFunction, ContractArtifact, ConsoleMessage, CompilationResult } from '../types/contracts';
+import { ContractArtifact, ConsoleMessage } from '../types/contracts';
 import { CompilationService } from '../services/compilationService';
 import ContractViewer from '../components/contract/ContractViewer';
 import ChatArea from '../components/chat/ChatArea';
-import { CompilationHandlerService } from '../services/compilationHandlerService';
 import { generateUniqueId } from '../utils/commonUtils';
 import ChatContexts from '../components/chat/ChatContexts';
 
-// Asegurarse de que el ícono esté disponible globalmente
-const ChevronDown = ChevronDownIcon;
-
-// Función para procesar el ABI y convertirlo en ContractFunction[]
-const processABI = (abi: any[]): ContractFunction[] => {
-  return abi
-    .filter(item => item.type === 'function')
-    .map(item => {
-      const funcForDescription: ContractFunction = {
-        name: item.name,
-        description: '',
-        type: item.type,
-        stateMutability: item.stateMutability,
-        inputs: item.inputs || [],
-        outputs: item.outputs || []
-      };
-      
-      return {
-        name: item.name,
-        description: generateFunctionDescription(funcForDescription),
-        type: item.type,
-        stateMutability: item.stateMutability,
-        inputs: item.inputs.map((input: any) => ({
-          name: input.name || 'value',
-          type: input.type,
-          description: `Input parameter of type ${input.type}`,
-          components: input.components
-        })),
-        outputs: item.outputs?.map((output: any) => ({
-          name: output.name || 'value',
-          type: output.type,
-          components: output.components
-        }))
-      };
-    });
-};
-
-// Función auxiliar para generar una descripción legible de una función
-const generateFunctionDescription = (func: ContractFunction): string => {
-  const inputsDesc = func.inputs
-    .map(input => `${input.name} (${input.type})`)
-    .join(', ');
-  
-  const outputsDesc = func.outputs && func.outputs.length > 0
-    ? ` returns (${func.outputs.map(out => `${out.name || 'value'} (${out.type})`).join(', ')})`
-    : '';
-  
-  const mutability = func.stateMutability ? ` [${func.stateMutability}]` : '';
-  
-  return `${func.name}(${inputsDesc})${outputsDesc}${mutability}`;
-};
+interface VirtualFile {
+  content: string;
+  language: string;
+  timestamp: number;
+}
 
 const demoArtifact: ContractArtifact = {
   name: "Contract Preview",
@@ -99,8 +42,8 @@ const AssistedChat: React.FC = () => {
   const [artifactWidth, setArtifactWidth] = useState(0);
   const [isResizing, setIsResizing] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [isMaximized, setIsMaximized] = useState(false);
-  const [isChatMaximized, setIsChatMaximized] = useState(false);
+  const [isMaximized] = useState(false);
+  const [isChatMaximized] = useState(false);
   const location = useLocation();
   const [conversationContexts, setConversationContexts] = useState<ConversationContext[]>([]);
   const [activeContext, setActiveContext] = useState<ConversationContext | undefined>();
@@ -109,12 +52,9 @@ const AssistedChat: React.FC = () => {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof monaco | null>(null);
   const [consoleMessages, setConsoleMessages] = useState<ConsoleMessage[]>([]);
-  const [isCompiling, setIsCompiling] = useState(false);
-  const compileTimeoutRef = useRef<NodeJS.Timeout>();
-  const lastCompilationRef = useRef<string>('');
+  const [] = useState(false);
   const [consoleHeight, setConsoleHeight] = useState(200);
   const compilationService = useRef<CompilationService>(CompilationService.getInstance());
-  const compilationHandlerService = useRef<CompilationHandlerService>(CompilationHandlerService.getInstance());
 
   // Calculate initial widths
   useEffect(() => {
@@ -166,10 +106,9 @@ const AssistedChat: React.FC = () => {
 
     // Actualizar el estado de mensajes de manera inmutable
     setMessages(prevMessages => [...prevMessages, newMessage]);
-
     // Actualizar el contexto activo y los contextos
     setActiveContext(prevContext => {
-      if (!prevContext) return null;
+      if (!prevContext) return undefined;
       const updatedContext = {
         ...prevContext,
         messages: [...prevContext.messages, newMessage]
@@ -211,7 +150,7 @@ const AssistedChat: React.FC = () => {
       setWsConnected(connected);
     });
 
-    service.onMessage((response: WebSocketResponse) => {
+    service.onMessage((response: AgentResponse) => {
       console.log('[AssistedChat] Received message:', response);
       
       if (response.type === 'contexts_loaded') {
@@ -235,6 +174,20 @@ const AssistedChat: React.FC = () => {
               setActiveContext(lastContext);
               // Actualizar los mensajes del contexto activo de manera inmediata
               setMessages(lastContext.messages || []);
+
+              // Si hay archivos Solidity, cargar el último en el editor
+              if (lastContext.virtualFiles) {
+                const solidityFiles = Object.entries(lastContext.virtualFiles)
+                  .filter(([_, file]) => (file as VirtualFile).language === 'solidity');
+                if (solidityFiles.length > 0) {
+                  const [_, lastSolidityFile] = solidityFiles[solidityFiles.length - 1];
+                  setCurrentCode((lastSolidityFile as VirtualFile).content);
+                  setShowCodeEditor(true);
+                  if (editorRef.current && monacoRef.current) {
+                    compileCode((lastSolidityFile as VirtualFile).content);
+                  }
+                }
+              }
             }
             
             setConversationContexts(processedContexts);
@@ -242,6 +195,40 @@ const AssistedChat: React.FC = () => {
           }
         } catch (error) {
           console.error('[AssistedChat] Error parsing contexts:', error);
+        }
+      } else if (response.type === 'file_create') {
+        try {
+          // El contenido puede venir como string directo o como objeto JSON
+          let fileData;
+          let content;
+          let metadata;
+          
+          try {
+            // Intentar parsear como JSON primero
+            fileData = JSON.parse(response.content);
+            content = fileData.content;
+            metadata = fileData.metadata;
+          } catch {
+            // Si falla el parse, asumir que es contenido directo
+            content = response.content;
+            // Intentar detectar si es Solidity por el contenido
+            const isSolidity = content.includes('pragma solidity') || content.includes('contract ');
+            metadata = {
+              language: isSolidity ? 'solidity' : undefined,
+              path: isSolidity ? 'Contract.sol' : undefined
+            };
+          }
+
+          if (metadata?.language === 'solidity' || metadata?.path?.endsWith('.sol')) {
+            console.log('[AssistedChat] Loading Solidity file into editor:', { content, metadata });
+            setCurrentCode(content);
+            setShowCodeEditor(true);
+            if (editorRef.current && monacoRef.current) {
+              compileCode(content);
+            }
+          }
+        } catch (error) {
+          console.error('[AssistedChat] Error handling file create:', error);
         }
       } else if (response.type === 'message') {
         // Crear el nuevo mensaje
@@ -257,7 +244,7 @@ const AssistedChat: React.FC = () => {
         
         // Actualizar el contexto activo y los contextos
         setActiveContext(prevContext => {
-          if (!prevContext) return null;
+          if (!prevContext) return undefined;
           const updatedContext = {
             ...prevContext,
             messages: [...prevContext.messages, newMessage]
@@ -272,6 +259,17 @@ const AssistedChat: React.FC = () => {
               ctx.id === prevContext.id ? updatedContext : ctx
             )
           );
+
+          // Buscar código Solidity en el mensaje y actualizar el editor si se encuentra
+          const solidityCodeMatch = response.content.match(/```solidity\n([\s\S]*?)```/);
+          if (solidityCodeMatch) {
+            const solidityCode = solidityCodeMatch[1];
+            setCurrentCode(solidityCode);
+            setShowCodeEditor(true);
+            if (editorRef.current && monacoRef.current) {
+              compileCode(solidityCode);
+            }
+          }
           
           return updatedContext;
         });
@@ -331,10 +329,6 @@ const AssistedChat: React.FC = () => {
     }
   }, [activeContext]);
 
-  const handleFunctionCall = (func: ContractFunction) => {
-    // Here we'll implement the actual contract interaction
-    console.log('Calling function:', func.name);
-  };
 
   const menuItems = [
     { path: '/dashboard', icon: HomeIcon, text: 'Dashboard' },
@@ -346,16 +340,41 @@ const AssistedChat: React.FC = () => {
     { path: '/social', icon: UsersIcon, text: 'Social' },
   ];
 
-  const createNewChat = () => {
+  const createNewChat = async () => {
     try {
-      chatService.current.createNewChat("New Chat");
-      setIsTyping(true);
+      if (!address) {
+        console.error('[Chat] No wallet address available');
+        return;
+      }
+
+      // Crear una nueva conversación en la base de datos
+      const newContext = await conversationService.createNewContext("New Chat");
+      
+      if (!newContext) {
+        console.error('[Chat] Failed to create new context');
+        return;
+      }
+
+      // Actualizar el estado local
+      const updatedContexts = [
+        ...conversationContexts.map(ctx => ({ ...ctx, active: false })),
+        { ...newContext, active: true }
+      ];
+
+      setConversationContexts(updatedContexts);
+      setActiveContext({ ...newContext, active: true });
+      
+      // Actualizar los servicios
+      conversationService.setActiveContext(newContext.id);
+      chatService.current.setCurrentChatId(newContext.id);
+      
+      console.log('[Chat] New context created:', newContext);
     } catch (error) {
       console.error('[Chat] Error creating new chat:', error);
     }
   };
 
-  const handleContextSwitch = (contextId: string) => {
+  const handleContextSwitch = async (contextId: string) => {
     try {
       console.log('[Chat] Switching to context:', contextId);
       
@@ -377,7 +396,36 @@ const AssistedChat: React.FC = () => {
       
       // Actualizar los servicios
       conversationService.setActiveContext(contextId);
-      chatService.current.switchChat(contextId);
+      chatService.current.setCurrentChatId(contextId);
+
+      // Cargar los mensajes del contexto seleccionado
+      setMessages(selectedContext.messages || []);
+      
+      // Manejar archivos virtuales
+      if (selectedContext.virtualFiles) {
+        console.log('[Chat] Found virtual files in context:', selectedContext.virtualFiles);
+        // Limpiar el sistema de archivos virtual
+        await virtualFS.clear();
+        
+        // Restaurar los archivos del contexto seleccionado
+        for (const [path, file] of Object.entries(selectedContext.virtualFiles)) {
+          try {
+            await virtualFS.writeFile(path, file.content);
+            console.log('[Chat] Restored file:', path);
+            if (file.language === 'solidity') {
+              setCurrentCode(file.content);
+              setShowCodeEditor(true);
+              await compileCode(file.content);
+            }
+          } catch (error) {
+            console.error('[Chat] Error restoring file:', path, error);
+          }
+        }
+      } else {
+        console.log('[Chat] No virtual files found in context');
+        setCurrentCode('');
+        setShowCodeEditor(false);
+      }
       
       console.log('[Chat] Context switch complete:', selectedContext);
     } catch (error) {
@@ -413,17 +461,6 @@ const AssistedChat: React.FC = () => {
     }
   };
 
-  const isConversationContext = (obj: any): obj is ConversationContext => {
-    return obj && 
-           typeof obj === 'object' && 
-           'id' in obj && 
-           'name' in obj && 
-           'type' in obj && 
-           'wallet_address' in obj &&
-           'created_at' in obj &&
-           'last_accessed' in obj &&
-           'messages' in obj;
-  };
 
   // Función para añadir mensajes a la consola
   const addConsoleMessage = (message: string, type: ConsoleMessage['type']) => {
@@ -558,7 +595,7 @@ const AssistedChat: React.FC = () => {
               window.innerHeight
             ]}
             onResizeStart={() => setIsResizing(true)}
-            onResizeStop={(e, { size }) => {
+            onResizeStop={(_e, { size }) => {
               setIsResizing(false);
               setArtifactWidth(window.innerWidth - size.width - (isSidebarOpen ? 256 : 64));
             }}
@@ -637,40 +674,6 @@ const AssistedChat: React.FC = () => {
               style={{ width: isMaximized ? 'auto' : `${artifactWidth}px` }}
             >
               <div className="flex-1 flex flex-col bg-gray-800/90 backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl">
-                {/* Header with Toggle Button */}
-                <div className="flex-none h-16 border-b border-gray-700 px-6 flex items-center justify-between bg-gray-800/95 rounded-t-lg">
-                  <div>
-                    <h2 className="text-xl font-bold text-white">{currentArtifact.name}</h2>
-                    <p className="text-sm text-gray-400">{currentArtifact.description}</p>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => setShowCodeEditor(!showCodeEditor)}
-                      className="p-2 text-gray-400 hover:text-blue-400 bg-gray-900/50 rounded-lg hover:bg-gray-900/80 transition-all duration-200"
-                      title={showCodeEditor ? "Show Contract Demo" : "Show Contract Code"}
-                    >
-                      <CodeBracketIcon className="w-5 h-5" />
-                      <span className="text-sm">{showCodeEditor ? "Show Demo" : "Show Code"}</span>
-                    </button>
-                    <button
-                      onClick={() => setIsMaximized(!isMaximized)}
-                      className="p-2 text-gray-400 hover:text-blue-400 bg-gray-900/50 rounded-lg hover:bg-gray-900/80 transition-all duration-200"
-                      title={isMaximized ? "Minimize" : "Maximize"}
-                    >
-                      {isMaximized ? (
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                        </svg>
-                      ) : (
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Content Area */}
                 <ContractViewer
                   currentArtifact={currentArtifact}
                   currentCode={currentCode}
@@ -678,11 +681,12 @@ const AssistedChat: React.FC = () => {
                   isMaximized={isMaximized}
                   consoleHeight={consoleHeight}
                   consoleMessages={consoleMessages}
-                  onCodeChange={setCurrentCode}
+                  onCodeChange={(value: string | undefined) => setCurrentCode(value || '')}
                   onCompile={compileCode}
                   onConsoleResize={setConsoleHeight}
                   editorRef={editorRef}
                   monacoRef={monacoRef}
+                  conversationId={activeContext?.id || ''}
                 />
               </div>
             </div>
