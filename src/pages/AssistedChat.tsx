@@ -47,7 +47,7 @@ const AssistedChat: React.FC = () => {
   const location = useLocation();
   const [conversationContexts, setConversationContexts] = useState<ConversationContext[]>([]);
   const [activeContext, setActiveContext] = useState<ConversationContext | undefined>();
-  const [showCodeEditor, setShowCodeEditor] = useState(false);
+  const [showCodeEditor, setShowCodeEditor] = useState(true);
   const [currentCode, setCurrentCode] = useState<string>('');
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof monaco | null>(null);

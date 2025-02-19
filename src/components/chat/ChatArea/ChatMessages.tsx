@@ -21,26 +21,23 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
   }, [messages]);
 
   return (
-    <div className="flex-1 overflow-y-auto bg-gradient-to-b from-gray-900/50 to-gray-800/30">
-      <div className="max-w-4xl mx-auto h-full flex flex-col">
-        <div className="flex-1 min-h-0"></div>
-        <div className="p-6 space-y-6">
-          {messages.map((message) => (
-            <MessageComponent key={message.id} message={message} />
-          ))}
-          {isTyping && (
-            <MessageComponent 
-              message={{
-                id: 'typing',
-                text: '',
-                sender: 'ai',
-                timestamp: Date.now(),
-                isTyping: true
-              }}
-            />
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+    <div className="h-full overflow-y-auto">
+      <div className="max-w-4xl mx-auto py-6 space-y-6">
+        {messages.map((message) => (
+          <MessageComponent key={message.id} message={message} />
+        ))}
+        {isTyping && (
+          <MessageComponent 
+            message={{
+              id: 'typing',
+              text: '',
+              sender: 'ai',
+              timestamp: Date.now(),
+              isTyping: true
+            }}
+          />
+        )}
+        <div ref={messagesEndRef} />
       </div>
     </div>
   );
