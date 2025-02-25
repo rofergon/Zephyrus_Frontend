@@ -72,44 +72,59 @@ const AssistedChat: React.FC = () => {
 
       try {
         console.log('[AssistedChat] Loading contracts for wallet:', address);
-        const contracts = await databaseService.current.getDeployedContracts(address);
         
-        console.log('[AssistedChat] Contracts loaded:', {
-          address,
-          contractsFound: contracts.length,
-          contracts: contracts.map(c => ({
-            name: c.name,
-            address: c.contract_address,
-            hasAbi: !!c.abi,
-            deployedAt: c.deployed_at
-          }))
-        });
-
-        if (contracts && contracts.length > 0) {
-          const lastContract = contracts[0];
-          // Create contract artifact from the deployed contract
-          const contractArtifact: ContractArtifact = {
-            name: lastContract.name,
-            description: 'Deployed Smart Contract',
-            address: lastContract.contract_address,
-            abi: typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [],
-            bytecode: lastContract.bytecode,
-            functions: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
-              .filter((item: any) => item.type === 'function')
-              .map((item: any) => ({
-                name: item.name,
-                description: `${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
-                type: 'function' as 'function',
-                stateMutability: item.stateMutability,
-                inputs: item.inputs || [],
-                outputs: item.outputs || []
-              })),
-            events: [],
-            constructor: null,
-            errors: []
-          };
+        try {
+          const contracts = await databaseService.current.getDeployedContracts(address);
           
-          setCurrentArtifact(contractArtifact);
+          console.log('[AssistedChat] Contracts loaded:', {
+            address,
+            contractsFound: contracts.length,
+            contracts: contracts.map(c => ({
+              name: c.name,
+              address: c.contract_address,
+              hasAbi: !!c.abi,
+              deployedAt: c.deployed_at
+            }))
+          });
+
+          if (contracts && contracts.length > 0) {
+            const lastContract = contracts[0];
+            // Create contract artifact from the deployed contract
+            const contractArtifact: ContractArtifact = {
+              name: lastContract.name,
+              description: 'Deployed Smart Contract',
+              address: lastContract.contract_address,
+              abi: typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [],
+              bytecode: lastContract.bytecode,
+              functions: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
+                .filter((item: any) => item.type === 'function')
+                .map((item: any) => ({
+                  name: item.name,
+                  description: `${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+                  type: 'function' as 'function',
+                  stateMutability: item.stateMutability,
+                  inputs: item.inputs || [],
+                  outputs: item.outputs || []
+                })),
+              events: [],
+              constructor: null,
+              errors: []
+            };
+            
+            setCurrentArtifact(contractArtifact);
+          } else {
+            console.log('[AssistedChat] No contracts found for wallet:', address);
+          }
+        } catch (apiError) {
+          console.error('[AssistedChat] API Error loading contracts:', apiError);
+          
+          // Show a user-friendly message if the console message functionality is available
+          if (typeof addConsoleMessage === 'function') {
+            addConsoleMessage(
+              "Could not connect to the contracts database. The API may be unavailable.",
+              "warning"
+            );
+          }
         }
       } catch (error) {
         console.error('[AssistedChat] Error loading contracts:', error);
@@ -141,161 +156,184 @@ const AssistedChat: React.FC = () => {
 
       if (!address) {
         console.error('[AssistedChat] No wallet address available');
+        setCurrentArtifact(demoArtifact);
         return;
       }
 
-      const contracts = await databaseService.current.getDeployedContracts(address);
-      
-      console.log('[AssistedChat] Database query completed:', {
-        address,
-        contractsFound: contracts.length,
-        contracts: contracts.map(c => ({
-          name: c.name,
-          address: c.contract_address,
-          hasAbi: !!c.abi,
-          deployedAt: c.deployed_at
-        }))
-      });
-      
-      if (contracts && contracts.length > 0) {
-        const lastContract = contracts[0]; // Contracts are ordered by deployed_at DESC
-        console.log('[AssistedChat] Processing most recent contract:', {
-          name: lastContract.name,
-          address: lastContract.contract_address,
-          hasAbi: !!lastContract.abi,
-          deployedAt: lastContract.deployed_at,
-          sourceCodeExists: !!lastContract.sourceCode,
-          abiPreview: lastContract.abi ? JSON.stringify(lastContract.abi).substring(0, 100) + '...' : 'null'
+      try {
+        const contracts = await databaseService.current.getDeployedContracts(address);
+        
+        console.log('[AssistedChat] Database query completed:', {
+          address,
+          contractsFound: contracts.length,
+          contracts: contracts.map(c => ({
+            name: c.name,
+            address: c.contract_address,
+            hasAbi: !!c.abi,
+            deployedAt: c.deployed_at
+          }))
         });
-
-        if (!lastContract.abi) {
-          console.error('[AssistedChat] Contract ABI is missing:', {
+        
+        if (contracts && contracts.length > 0) {
+          const lastContract = contracts[0]; // Contracts are ordered by deployed_at DESC
+          console.log('[AssistedChat] Processing most recent contract:', {
             name: lastContract.name,
             address: lastContract.contract_address,
-            deployedAt: lastContract.deployed_at
+            hasAbi: !!lastContract.abi,
+            deployedAt: lastContract.deployed_at,
+            sourceCodeExists: !!lastContract.sourceCode,
+            abiPreview: lastContract.abi ? JSON.stringify(lastContract.abi).substring(0, 100) + '...' : 'null'
           });
-          setCurrentArtifact(demoArtifact);
-          return;
-        }
 
-        // Create contract artifact from the deployed contract
-        const contractArtifact: ContractArtifact = {
-          name: lastContract.name,
-          description: 'Deployed Smart Contract',
-          address: lastContract.contract_address,
-          abi: typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [],
-          bytecode: lastContract.bytecode,
-          functions: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
-            .filter((item: any) => item.type === 'function')
-            .map((item: any) => ({
-              name: item.name,
-              description: `${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
-              type: 'function' as 'function',
-              stateMutability: item.stateMutability,
-              inputs: (item.inputs || []).map((input: any) => ({
-                name: input.name || 'value',
-                type: input.type,
-                description: `Input parameter of type ${input.type}`,
-                components: input.components
+          if (!lastContract.abi) {
+            console.error('[AssistedChat] Contract ABI is missing:', {
+              name: lastContract.name,
+              address: lastContract.contract_address,
+              deployedAt: lastContract.deployed_at
+            });
+            setCurrentArtifact(demoArtifact);
+            return;
+          }
+
+          // Create contract artifact from the deployed contract
+          const contractArtifact: ContractArtifact = {
+            name: lastContract.name,
+            description: 'Deployed Smart Contract',
+            address: lastContract.contract_address,
+            abi: typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [],
+            bytecode: lastContract.bytecode,
+            functions: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
+              .filter((item: any) => item.type === 'function')
+              .map((item: any) => ({
+                name: item.name,
+                description: `${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+                type: 'function' as 'function',
+                stateMutability: item.stateMutability,
+                inputs: (item.inputs || []).map((input: any) => ({
+                  name: input.name || 'value',
+                  type: input.type,
+                  description: `Input parameter of type ${input.type}`,
+                  components: input.components
+                })),
+                outputs: (item.outputs || []).map((output: any) => ({
+                  name: output.name || 'value',
+                  type: output.type,
+                  components: output.components
+                }))
               })),
-              outputs: (item.outputs || []).map((output: any) => ({
-                name: output.name || 'value',
-                type: output.type,
-                components: output.components
-              }))
-            })),
-          events: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
-            .filter((item: any) => item.type === 'event')
-            .map((item: any) => ({
-              name: item.name,
-              description: `Event: ${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
-              type: 'event' as 'event',
-              inputs: (item.inputs || []).map((input: any) => ({
-                name: input.name || 'value',
-                type: input.type,
-                description: `Event parameter of type ${input.type}`,
-                components: input.components,
-                indexed: input.indexed
-              }))
-            })) || [],
-          constructor: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
-            .filter((item: any) => item.type === 'constructor')
-            .map((item: any) => ({
-              name: 'constructor',
-              description: `Constructor(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
-              type: 'constructor' as 'constructor',
-              stateMutability: item.stateMutability as 'nonpayable' | 'payable',
-              inputs: (item.inputs || []).map((input: any) => ({
-                name: input.name || 'value',
-                type: input.type,
-                description: `Constructor parameter of type ${input.type}`,
-                components: input.components
-              }))
-            }))[0] || null,
-          errors: []
-        };
-
-        console.log('[AssistedChat] Created contract artifact:', {
-          name: contractArtifact.name,
-          address: contractArtifact.address,
-          functionsCount: contractArtifact.functions.length,
-          eventsCount: contractArtifact.events?.length || 0,
-          hasConstructor: !!contractArtifact.constructor,
-          firstFunction: contractArtifact.functions[0]?.name || 'No functions'
-        });
-
-        setCurrentArtifact(contractArtifact);
-        
-        // Update active context with contract information
-        setActiveContext(prevContext => {
-          if (!prevContext) return undefined;
-          
-          const updatedContext = {
-            ...prevContext,
-            contractAddress: lastContract.contract_address,
-            contractName: lastContract.name,
-            contractAbi: lastContract.abi
+            events: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
+              .filter((item: any) => item.type === 'event')
+              .map((item: any) => ({
+                name: item.name,
+                description: `Event: ${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+                type: 'event' as 'event',
+                inputs: (item.inputs || []).map((input: any) => ({
+                  name: input.name || 'value',
+                  type: input.type,
+                  description: `Event parameter of type ${input.type}`,
+                  components: input.components,
+                  indexed: input.indexed
+                }))
+              })) || [],
+            constructor: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
+              .filter((item: any) => item.type === 'constructor')
+              .map((item: any) => ({
+                name: 'constructor',
+                description: `Constructor(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+                type: 'constructor' as 'constructor',
+                stateMutability: item.stateMutability as 'nonpayable' | 'payable',
+                inputs: (item.inputs || []).map((input: any) => ({
+                  name: input.name || 'value',
+                  type: input.type,
+                  description: `Constructor parameter of type ${input.type}`,
+                  components: input.components
+                }))
+              }))[0] || null,
+            errors: []
           };
+
+          console.log('[AssistedChat] Created contract artifact:', {
+            name: contractArtifact.name,
+            address: contractArtifact.address,
+            functionsCount: contractArtifact.functions.length,
+            eventsCount: contractArtifact.events?.length || 0,
+            hasConstructor: !!contractArtifact.constructor,
+            firstFunction: contractArtifact.functions[0]?.name || 'No functions'
+          });
+
+          setCurrentArtifact(contractArtifact);
           
-          // Update conversation contexts
-          setConversationContexts(prevContexts => 
-            prevContexts.map(ctx => 
-              ctx.id === prevContext.id ? updatedContext : ctx
-            )
-          );
-          
-          // Update conversation service
-          conversationService.updateContext(updatedContext);
-          
-          console.log('[AssistedChat] Updated context with contract information:', {
-            id: updatedContext.id,
-            name: updatedContext.name,
-            contractAddress: updatedContext.contractAddress,
-            contractName: updatedContext.contractName,
-            hasAbi: !!updatedContext.contractAbi
+          // Update active context with contract information
+          setActiveContext(prevContext => {
+            if (!prevContext) return undefined;
+            
+            const updatedContext = {
+              ...prevContext,
+              contractAddress: lastContract.contract_address,
+              contractName: lastContract.name,
+              contractAbi: lastContract.abi
+            };
+            
+            // Update conversation contexts
+            setConversationContexts(prevContexts => 
+              prevContexts.map(ctx => 
+                ctx.id === prevContext.id ? updatedContext : ctx
+              )
+            );
+            
+            // Update conversation service
+            conversationService.updateContext(updatedContext);
+            
+            console.log('[AssistedChat] Updated context with contract information:', {
+              id: updatedContext.id,
+              name: updatedContext.name,
+              contractAddress: updatedContext.contractAddress,
+              contractName: updatedContext.contractName,
+              hasAbi: !!updatedContext.contractAbi
+            });
+            
+            return updatedContext;
           });
           
-          return updatedContext;
+          // If there's source code, set it in the editor
+          if (lastContract.sourceCode) {
+            const sourceCode = typeof lastContract.sourceCode === 'string' 
+              ? lastContract.sourceCode 
+              : lastContract.sourceCode.content;
+            console.log('[AssistedChat] Setting source code in editor, length:', sourceCode.length);
+            setCurrentCode(sourceCode);
+            setShowCodeEditor(true);
+          }
+        } else {
+          console.log('[AssistedChat] No deployed contracts found for conversation:', conversationId);
+          setCurrentArtifact(demoArtifact);
+        }
+      } catch (apiError) {
+        // Handle API error specifically
+        console.error('[AssistedChat] Error querying API for contracts:', {
+          error: apiError instanceof Error ? apiError.message : String(apiError),
+          address
         });
         
-        // If there's source code, set it in the editor
-        if (lastContract.sourceCode) {
-          const sourceCode = typeof lastContract.sourceCode === 'string' 
-            ? lastContract.sourceCode 
-            : lastContract.sourceCode.content;
-          console.log('[AssistedChat] Setting source code in editor, length:', sourceCode.length);
-          setCurrentCode(sourceCode);
-          setShowCodeEditor(true);
-        }
-      } else {
-        console.log('[AssistedChat] No deployed contracts found for conversation:', conversationId);
+        // Show a user-friendly message
+        addConsoleMessage(
+          "Could not connect to the contracts database. Using demo contract instead.",
+          "warning"
+        );
+        
         setCurrentArtifact(demoArtifact);
       }
     } catch (error) {
       console.error('[AssistedChat] Error loading last deployed contract:', error);
       setCurrentArtifact(demoArtifact);
+      
+      // Add a console message about the error
+      addConsoleMessage(
+        "An error occurred while loading contract data. Using demo contract instead.",
+        "error"
+      );
     }
-  }, []);
+  }, [address]);
 
   const initializeConversation = useCallback(() => {
     try {
@@ -704,12 +742,19 @@ const AssistedChat: React.FC = () => {
           setActiveContext({...selectedContext, active: true});
           setCurrentArtifact(demoArtifact);
         }
-      } catch (error) {
-        console.error('[AssistedChat] Error loading deployed contract:', {
+      } catch (apiError) {
+        console.error('[AssistedChat] API Error loading deployed contract:', {
           contextId,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          stack: error instanceof Error ? error.stack : undefined
+          error: apiError instanceof Error ? apiError.message : 'Unknown API error',
+          stack: apiError instanceof Error ? apiError.stack : undefined
         });
+        
+        // Add user notification about API error
+        addConsoleMessage(
+          "Could not connect to the contracts database. The API may be unavailable.",
+          "warning"
+        );
+        
         setConversationContexts(updatedContexts);
         setActiveContext({...selectedContext, active: true});
         setCurrentArtifact(demoArtifact);
@@ -775,6 +820,12 @@ const AssistedChat: React.FC = () => {
         error: error instanceof Error ? error.message : 'Unknown error',
         stack: error instanceof Error ? error.stack : undefined
       });
+      
+      // Provide user feedback
+      addConsoleMessage(
+        "An error occurred while switching contexts. Some features may not work properly.",
+        "error"
+      );
     }
   };
 

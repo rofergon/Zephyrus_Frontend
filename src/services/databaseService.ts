@@ -22,12 +22,35 @@ export class DatabaseService {
     return value.trim();
   }
 
-  private async handleResponse(response: Response) {
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'API request failed');
+  private async handleResponse(response: Response): Promise<any> {
+    try {
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `Request failed with status ${response.status} ${response.statusText}`;
+        
+        try {
+          // Try to parse as JSON first
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.message || errorData.error || errorMessage;
+        } catch (parseError) {
+          // If not JSON, use the text (but limit length)
+          errorMessage += `: ${errorText.substring(0, 100)}...`;
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      // Check content type
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error(`Expected JSON response but got ${contentType}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error(`[DatabaseService] Error handling response:`, error);
+      throw error;
     }
-    return response.json();
   }
 
   // Usuarios
@@ -224,7 +247,26 @@ export class DatabaseService {
   async getDeployedContracts(walletAddress: string): Promise<DeployedContract[]> {
     try {
       const validatedAddress = this.validateString(walletAddress, 'walletAddress');
+      console.log(`[DatabaseService] Fetching contracts for wallet: ${validatedAddress}`);
+      
       const response = await fetch(`${this.baseUrl}/contracts/${validatedAddress}`);
+      
+      // Check if response is OK
+      if (!response.ok) {
+        console.error(`[DatabaseService] Error fetching contracts: ${response.status} ${response.statusText}`);
+        return []; // Return empty array instead of throwing an error
+      }
+      
+      // Check content type to ensure we're getting JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        console.error(`[DatabaseService] Expected JSON but got ${contentType}`);
+        // Try to get the response text for debugging
+        const text = await response.text();
+        console.error(`[DatabaseService] Non-JSON response: ${text.substring(0, 200)}...`);
+        return []; // Return empty array
+      }
+      
       const contracts = await this.handleResponse(response);
 
       return contracts.map((contract: any) => ({
@@ -236,7 +278,8 @@ export class DatabaseService {
       }));
     } catch (error) {
       console.error('[DatabaseService] Error getting deployed contracts:', error);
-      throw error;
+      // Return empty array instead of throwing the error
+      return [];
     }
   }
 
