@@ -5,7 +5,7 @@ export class DatabaseService {
   private baseUrl: string;
 
   private constructor() {
-    this.baseUrl = 'https://9984-2800-e2-5e80-815-b1f6-4695-930e-b791.ngrok-free.app/api/db';
+    this.baseUrl = 'https://8cd8-2800-e2-5e80-815-b1f6-4695-930e-b791.ngrok-free.app/api/db';
   }
 
   public static getInstance(): DatabaseService {
