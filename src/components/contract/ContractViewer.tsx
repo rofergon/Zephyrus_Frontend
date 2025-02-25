@@ -21,6 +21,7 @@ interface ContractViewerProps {
   editorRef: React.MutableRefObject<monaco.editor.IStandaloneCodeEditor | null>;
   monacoRef: React.MutableRefObject<typeof monaco | null>;
   conversationId: string;
+  addConsoleMessage: (message: string, type: ConsoleMessage['type']) => void;
 }
 
 const ContractViewer: React.FC<ContractViewerProps> = ({
@@ -36,9 +37,11 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   editorRef,
   monacoRef,
   conversationId,
+  addConsoleMessage,
 }) => {
   const compileTimeoutRef = useRef<NodeJS.Timeout>();
   const consoleContainerRef = useRef<HTMLDivElement>(null);
+  const consoleContentRef = useRef<HTMLDivElement>(null);
   const { deployContract } = useDeployment();
   const { isConnected } = useAccount();
   const chainId = useChainId();
@@ -49,10 +52,12 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     contractAddress?: string;
     transactionHash?: string;
     error?: string;
+    timestamp?: number;
   } | null>(null);
   const [constructorArgs, setConstructorArgs] = useState<any[]>([]);
   const [, setError] = useState<string | null>(null);
   const previousCodeRef = useRef(currentCode);
+  const [autoScroll, setAutoScroll] = useState(true);
 
   // Effect to update deployment result when contract address changes
   useEffect(() => {
@@ -106,19 +111,65 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     };
   }, []);
 
-  // Add effect for auto-scrolling with animation delay
-  useEffect(() => {
-    if (consoleContainerRef.current && consoleMessages.length > 0) {
-      // Esperar a que termine la animación de fade-in
-      setTimeout(() => {
-        const scrollOptions = {
-          top: consoleContainerRef.current?.scrollHeight,
-          behavior: 'smooth' as ScrollBehavior
-        };
-        consoleContainerRef.current?.scrollTo(scrollOptions);
-      }, 150); // Delay slightly longer than the animation
+  // Function to scroll console to bottom
+  const scrollToBottom = () => {
+    if (consoleContainerRef.current) {
+      const container = consoleContainerRef.current;
+      // Force scroll to the very bottom
+      container.scrollTop = container.scrollHeight + 9999;
     }
+  };
+
+  // Add effect for auto-scrolling when new messages arrive
+  useEffect(() => {
+    // Use multiple approaches to ensure scroll happens after rendering
+    requestAnimationFrame(() => {
+      scrollToBottom();
+    });
+    
+    // Also try with timeouts at different intervals
+    setTimeout(scrollToBottom, 50);
+    setTimeout(scrollToBottom, 200);
+    setTimeout(scrollToBottom, 500);
   }, [consoleMessages]);
+
+  // Also scroll on deployment result changes
+  useEffect(() => {
+    if (deploymentResult) {
+      setTimeout(scrollToBottom, 100);
+      setTimeout(scrollToBottom, 300);
+    }
+  }, [deploymentResult]);
+
+  // Use mutation observer to detect DOM changes in the console and scroll to bottom
+  useEffect(() => {
+    if (consoleContentRef.current) {
+      const observer = new MutationObserver(() => {
+        if (autoScroll) {
+          scrollToBottom();
+        }
+      });
+      
+      observer.observe(consoleContentRef.current, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+      
+      return () => observer.disconnect();
+    }
+  }, [autoScroll]);
+
+  // Handle scroll events to determine if auto-scroll should be enabled/disabled
+  const handleConsoleScroll = () => {
+    if (consoleContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = consoleContainerRef.current;
+      // If user has scrolled up more than 50px from bottom, disable auto-scroll
+      // If user scrolls to bottom again, re-enable auto-scroll
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+      setAutoScroll(isAtBottom);
+    }
+  };
 
   // Función para obtener el constructor del ABI
   const getConstructor = () => {
@@ -152,12 +203,34 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
         currentCode
       );
 
-      setDeploymentResult(result);
+      // Add timestamp to deployment result
+      const resultWithTimestamp = {
+        ...result,
+        timestamp: Date.now()
+      };
+      
+      setDeploymentResult(resultWithTimestamp);
+      
+      // Add a success message to the console
+      if (result.success) {
+        const successMessage = `Deployment Successful! Contract address: ${result.contractAddress}`;
+        // Use the addConsoleMessage prop to add message to console
+        addConsoleMessage(successMessage, 'info');
+        // Ensure console is visible
+        onConsoleResize(Math.max(consoleHeight, 200));
+      }
     } catch (error) {
       setDeploymentResult({
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        timestamp: Date.now()
       });
+      
+      // Add error message to console
+      addConsoleMessage(
+        `Deployment failed: ${error instanceof Error ? error.message : 'Unknown error occurred'}`, 
+        'error'
+      );
     } finally {
       setIsDeploying(false);
     }
@@ -178,16 +251,6 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
 
   return (
     <div className="flex flex-col h-full relative">
-      {/* Contract Address Display */}
-      {(currentArtifact?.address || deploymentResult?.contractAddress) && (
-        <div className="px-4 py-2 bg-blue-900/20 border border-blue-700 rounded-lg mb-4">
-          <div className="text-sm text-gray-300">
-            <span className="text-gray-400">Contract Address: </span>
-            <code className="text-blue-400">{currentArtifact?.address || deploymentResult?.contractAddress}</code>
-          </div>
-        </div>
-      )}
-
       {/* Main Content Area - Editor/Function Cards con scroll propio */}
       <div className="flex-1 min-h-0 flex flex-col">
         {/* Editor Container */}
@@ -626,7 +689,6 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
 
           {/* Contenedor de la consola */}
           <div 
-            ref={consoleContainerRef}
             className="bg-gray-800/90 backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl overflow-hidden flex flex-col mt-1"
             style={{ 
               height: `${consoleHeight}px`,
@@ -646,9 +708,10 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
             {/* Contenido de la consola */}
             <div 
               ref={consoleContainerRef}
-              className="flex-1 overflow-y-auto p-4 font-mono text-sm scroll-smooth"
+              className="flex-1 overflow-y-auto p-4 pb-2 font-mono text-sm scroll-smooth"
+              onScroll={handleConsoleScroll}
             >
-              <div className="space-y-2">
+              <div ref={consoleContentRef} className="space-y-2">
                 {consoleMessages.map((msg) => (
                   <div
                     key={msg.id}
@@ -666,6 +729,8 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                     </div>
                   </div>
                 ))}
+                {/* Bottom anchor element for scrolling target - reduced height */}
+                <div id="console-bottom-anchor" style={{ height: '5px' }}></div>
               </div>
             </div>
           </div>
@@ -673,55 +738,91 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
 
         {/* Deploy Section */}
         {currentArtifact.bytecode && (
-          <div className="mt-4 p-4 bg-gray-800/90 backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
-                  <RocketLaunchIcon className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-white">Deploy Contract</h3>
-                  <p className="text-sm text-gray-400">Deploy this contract to the blockchain</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Constructor Arguments */}
-            {constructor && constructor.inputs && constructor.inputs.length > 0 && (
-              <div className="space-y-4 mb-4">
-                <h4 className="text-sm font-medium text-gray-400">Constructor Arguments</h4>
-                {constructor.inputs.map((input: { name: string; type: string }, index: number) => (
-                  <div key={index} className="space-y-1">
-                    <label className="text-sm text-gray-400">
-                      {input.name} ({input.type})
-                    </label>
-                    <input
-                      type="text"
-                      onChange={(e) => handleConstructorArgChange(index, e.target.value)}
-                      placeholder={`Enter ${input.type}`}
-                      className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
+          <div className={`mt-4 p-4 ${
+            currentArtifact.address || deploymentResult?.contractAddress 
+              ? 'bg-gray-800/70 border-gray-700/30' 
+              : 'bg-gray-800/90'
+            } backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl`}>
+            
+            {/* Display different UI based on whether contract is already deployed */}
+            {(currentArtifact.address || deploymentResult?.contractAddress) ? (
+              // Compact version for redeployment
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-400">
+                    <RocketLaunchIcon className="w-4 h-4" />
                   </div>
-                ))}
+                  <div className="text-sm">
+                    <span className="text-gray-400">Deployed at: </span>
+                    <code className="text-blue-400 text-xs">{currentArtifact.address || deploymentResult?.contractAddress}</code>
+                  </div>
+                </div>
+                <button
+                  onClick={handleDeploy}
+                  disabled={isDeploying || !isConnected}
+                  className={`px-3 py-1.5 text-sm rounded-md ${
+                    isDeploying || !isConnected
+                      ? 'bg-gray-700 cursor-not-allowed'
+                      : 'bg-yellow-600 hover:bg-yellow-700'
+                  } text-white transition-colors duration-200`}
+                >
+                  {isDeploying ? 'Deploying...' : 'Redeploy'}
+                </button>
               </div>
+            ) : (
+              // Full version for initial deployment
+              <>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
+                      <RocketLaunchIcon className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-white">Deploy Contract</h3>
+                      <p className="text-sm text-gray-400">Deploy this contract to the blockchain</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Constructor Arguments */}
+                {constructor && constructor.inputs && constructor.inputs.length > 0 && (
+                  <div className="space-y-4 mb-4">
+                    <h4 className="text-sm font-medium text-gray-400">Constructor Arguments</h4>
+                    {constructor.inputs.map((input: { name: string; type: string }, index: number) => (
+                      <div key={index} className="space-y-1">
+                        <label className="text-sm text-gray-400">
+                          {input.name} ({input.type})
+                        </label>
+                        <input
+                          type="text"
+                          onChange={(e) => handleConstructorArgChange(index, e.target.value)}
+                          placeholder={`Enter ${input.type}`}
+                          className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Deploy Button for initial deployment */}
+                <button
+                  onClick={handleDeploy}
+                  disabled={isDeploying || !isConnected}
+                  className={`w-full py-2 px-4 rounded-lg ${
+                    isDeploying || !isConnected
+                      ? 'bg-gray-700 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  } text-white transition-colors duration-200`}
+                >
+                  {isDeploying ? 'Deploying...' : 'Deploy Contract'}
+                </button>
+              </>
             )}
 
-            {/* Deploy Button */}
-            <button
-              onClick={handleDeploy}
-              disabled={isDeploying || !isConnected}
-              className={`w-full py-2 px-4 rounded-lg ${
-                isDeploying || !isConnected
-                  ? 'bg-gray-700 cursor-not-allowed'
-                  : 'bg-blue-600 hover:bg-blue-700'
-              } text-white transition-colors duration-200`}
-            >
-              {isDeploying ? 'Deploying...' : 'Deploy Contract'}
-            </button>
-
-            {/* Deployment Result */}
-            {deploymentResult && (
-              <div className={`mt-4 p-3 rounded-lg border ${
+            {/* Show deployment result only temporarily after a deployment */}
+            {deploymentResult && deploymentResult.timestamp && 
+             Date.now() - deploymentResult.timestamp < 10000 && (
+              <div className={`mt-4 p-3 rounded-lg border animate-fade-in ${
                 deploymentResult.success
                   ? 'bg-green-900/20 border-green-700'
                   : 'bg-red-900/20 border-red-700'

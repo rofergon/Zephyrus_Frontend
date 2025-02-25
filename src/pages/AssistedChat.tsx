@@ -1083,6 +1083,7 @@ const AssistedChat: React.FC = () => {
                   editorRef={editorRef}
                   monacoRef={monacoRef}
                   conversationId={activeContext?.id || ''}
+                  addConsoleMessage={addConsoleMessage}
                 />
               </div>
             </div>
