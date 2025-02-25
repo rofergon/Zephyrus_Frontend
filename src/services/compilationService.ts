@@ -7,7 +7,7 @@ export class CompilationService {
 
   private constructor() {
     // Use environment variable for API URL with fallback
-    this.apiUrl = (import.meta as any).env.VITE_COMPILER_API_URL || 'http://localhost:3000/api/compile';
+    this.apiUrl = `${(import.meta as any).env.VITE_API_BASE_URL || 'http://localhost:3000'}/api/compile`;
   }
 
   public static getInstance(): CompilationService {
@@ -84,6 +84,7 @@ export class CompilationService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
         },
         body: JSON.stringify(requestBody)
       });

@@ -5,7 +5,8 @@ export class DatabaseService {
   private baseUrl: string;
 
   private constructor() {
-    this.baseUrl = 'https://8cd8-2800-e2-5e80-815-b1f6-4695-930e-b791.ngrok-free.app/api/db';
+    // Use environment variable for API URL with fallback
+    this.baseUrl = `${(import.meta as any).env.VITE_API_BASE_URL || 'http://localhost:3000'}/api/db`;
   }
 
   public static getInstance(): DatabaseService {
@@ -61,6 +62,7 @@ export class DatabaseService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
         },
         body: JSON.stringify({ walletAddress: validatedAddress })
       });
@@ -74,7 +76,11 @@ export class DatabaseService {
   async getUser(walletAddress: string) {
     try {
       const validatedAddress = this.validateString(walletAddress, 'walletAddress');
-      const response = await fetch(`${this.baseUrl}/users/${validatedAddress}`);
+      const response = await fetch(`${this.baseUrl}/users/${validatedAddress}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
       return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error getting user:', error);
@@ -92,6 +98,7 @@ export class DatabaseService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
         },
         body: JSON.stringify({
           walletAddress: validatedAddress,
@@ -109,7 +116,11 @@ export class DatabaseService {
   async getConversations(walletAddress: string) {
     try {
       const validatedAddress = this.validateString(walletAddress, 'walletAddress');
-      const response = await fetch(`${this.baseUrl}/conversations/${validatedAddress}`);
+      const response = await fetch(`${this.baseUrl}/conversations/${validatedAddress}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
       return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error getting conversations:', error);
@@ -127,6 +138,7 @@ export class DatabaseService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
         },
         body: JSON.stringify({
           conversationId: validatedId,
@@ -146,7 +158,11 @@ export class DatabaseService {
   async getMessages(conversationId: string) {
     try {
       const validatedId = this.validateString(conversationId, 'conversationId');
-      const response = await fetch(`${this.baseUrl}/messages/${validatedId}`);
+      const response = await fetch(`${this.baseUrl}/messages/${validatedId}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
       return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error getting messages:', error);
@@ -164,6 +180,7 @@ export class DatabaseService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
         },
         body: JSON.stringify({
           conversationId: validatedId,
@@ -184,7 +201,11 @@ export class DatabaseService {
   async getCodeHistory(conversationId: string) {
     try {
       const validatedId = this.validateString(conversationId, 'conversationId');
-      const response = await fetch(`${this.baseUrl}/code-history/${validatedId}`);
+      const response = await fetch(`${this.baseUrl}/code-history/${validatedId}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
       return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error getting code history:', error);
@@ -221,6 +242,7 @@ export class DatabaseService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
         },
         body: JSON.stringify({
           walletAddress: this.validateString(contractData.walletAddress, 'walletAddress'),
@@ -249,7 +271,11 @@ export class DatabaseService {
       const validatedAddress = this.validateString(walletAddress, 'walletAddress');
       console.log(`[DatabaseService] Fetching contracts for wallet: ${validatedAddress}`);
       
-      const response = await fetch(`${this.baseUrl}/contracts/${validatedAddress}`);
+      const response = await fetch(`${this.baseUrl}/contracts/${validatedAddress}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
       
       // Check if response is OK
       if (!response.ok) {
@@ -286,7 +312,11 @@ export class DatabaseService {
   async getContractsByConversation(conversationId: string): Promise<DeployedContract[]> {
     try {
       const validatedId = this.validateString(conversationId, 'conversationId');
-      const response = await fetch(`${this.baseUrl}/contracts/conversation/${validatedId}`);
+      const response = await fetch(`${this.baseUrl}/contracts/conversation/${validatedId}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
       const contracts = await this.handleResponse(response);
 
       return contracts.map((contract: any) => ({
