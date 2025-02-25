@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from 'react';
-import { ResizableBox } from 'react-resizable';
 import Editor from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import {   MagnifyingGlassIcon,  BoltIcon,  RocketLaunchIcon,} from '@heroicons/react/24/outline';
@@ -39,6 +38,7 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   conversationId,
 }) => {
   const compileTimeoutRef = useRef<NodeJS.Timeout>();
+  const consoleContainerRef = useRef<HTMLDivElement>(null);
   const { deployContract } = useDeployment();
   const { isConnected } = useAccount();
   const chainId = useChainId();
@@ -53,6 +53,17 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   const [constructorArgs, setConstructorArgs] = useState<any[]>([]);
   const [, setError] = useState<string | null>(null);
   const previousCodeRef = useRef(currentCode);
+
+  // Effect to update deployment result when contract address changes
+  useEffect(() => {
+    if (currentArtifact?.address) {
+      console.log('[ContractViewer] Contract address detected:', currentArtifact.address);
+      setDeploymentResult({
+        success: true,
+        contractAddress: currentArtifact.address
+      });
+    }
+  }, [currentArtifact?.address]);
 
   // Efecto para manejar cambios automáticos en el código
   useEffect(() => {
@@ -94,6 +105,20 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       }
     };
   }, []);
+
+  // Add effect for auto-scrolling with animation delay
+  useEffect(() => {
+    if (consoleContainerRef.current && consoleMessages.length > 0) {
+      // Esperar a que termine la animación de fade-in
+      setTimeout(() => {
+        const scrollOptions = {
+          top: consoleContainerRef.current?.scrollHeight,
+          behavior: 'smooth' as ScrollBehavior
+        };
+        consoleContainerRef.current?.scrollTo(scrollOptions);
+      }, 150); // Delay slightly longer than the animation
+    }
+  }, [consoleMessages]);
 
   // Función para obtener el constructor del ABI
   const getConstructor = () => {
@@ -153,6 +178,16 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
 
   return (
     <div className="flex flex-col h-full relative">
+      {/* Contract Address Display */}
+      {(currentArtifact?.address || deploymentResult?.contractAddress) && (
+        <div className="px-4 py-2 bg-blue-900/20 border border-blue-700 rounded-lg mb-4">
+          <div className="text-sm text-gray-300">
+            <span className="text-gray-400">Contract Address: </span>
+            <code className="text-blue-400">{currentArtifact?.address || deploymentResult?.contractAddress}</code>
+          </div>
+        </div>
+      )}
+
       {/* Main Content Area - Editor/Function Cards con scroll propio */}
       <div className="flex-1 min-h-0 flex flex-col">
         {/* Editor Container */}
@@ -487,6 +522,7 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                                   func={func} 
                                   contractAddress={currentArtifact.address}
                                   abi={currentArtifact.abi}
+                                  deploymentResult={deploymentResult}
                                 />
                               ))}
                           </div>
@@ -520,6 +556,7 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                                   func={func} 
                                   contractAddress={currentArtifact.address}
                                   abi={currentArtifact.abi}
+                                  deploymentResult={deploymentResult}
                                 />
                               ))}
                           </div>
@@ -589,6 +626,7 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
 
           {/* Contenedor de la consola */}
           <div 
+            ref={consoleContainerRef}
             className="bg-gray-800/90 backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl overflow-hidden flex flex-col mt-1"
             style={{ 
               height: `${consoleHeight}px`,
@@ -606,131 +644,114 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
             </div>
 
             {/* Contenido de la consola */}
-            <div className="flex-1 overflow-y-auto p-4 font-mono text-sm">
+            <div 
+              ref={consoleContainerRef}
+              className="flex-1 overflow-y-auto p-4 font-mono text-sm scroll-smooth"
+            >
               <div className="space-y-2">
                 {consoleMessages.map((msg) => (
                   <div
                     key={msg.id}
-                    className={`console-message ${msg.type} flex items-start space-x-2 opacity-0 animate-fade-slide-up`}
-                    style={{
-                      animationDelay: '100ms',
-                      animationFillMode: 'forwards'
-                    }}
+                    className={`flex items-start space-x-2 p-2 rounded-lg transition-all duration-200 animate-fade-in ${
+                      msg.type === 'error' 
+                        ? 'bg-red-500/10 text-red-400' 
+                        : msg.type === 'warning'
+                        ? 'bg-yellow-500/10 text-yellow-400'
+                        : 'bg-gray-700/50 text-gray-300'
+                    }`}
                   >
-                    <div className={`flex-shrink-0 w-4 h-4 mt-1 rounded-full status-indicator ${msg.type} ${
-                      msg.type === 'error' ? 'bg-red-500' :
-                      msg.type === 'warning' ? 'bg-yellow-500' :
-                      msg.type === 'success' ? 'bg-green-500' :
-                      'bg-blue-500'
-                    }`}></div>
-                    <div className={`flex-1 ${
-                      msg.type === 'error' ? 'text-red-400' :
-                      msg.type === 'warning' ? 'text-yellow-400' :
-                      msg.type === 'success' ? 'text-green-400' :
-                      'text-blue-400'
-                    }`}>
-                      <div className="font-semibold mb-0.5">
-                        {msg.type.charAt(0).toUpperCase() + msg.type.slice(1)}
-                      </div>
-                      <div className="opacity-90">
-                        {msg.message}
-                      </div>
-                    </div>
-                    <div className="flex-shrink-0 text-xs text-gray-500 mt-1">
-                      {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()}
+                    <div className="flex-1 whitespace-pre-wrap">{msg.message}</div>
+                    <div className="flex-none text-xs text-gray-500">
+                      {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}
                     </div>
                   </div>
                 ))}
-                {consoleMessages.length === 0 && (
-                  <div className="text-gray-500 text-center py-4">
-                    No messages to display
-                  </div>
-                )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Constructor Arguments and Deploy Section */}
-        <div className="mx-4 lg:mx-6 mb-4 bg-gray-800/50 rounded-lg border border-gray-700/50">
-          <div className="p-4 overflow-x-auto"> {/* Añadido scroll horizontal */}
-            {/* Constructor Arguments Grid */}
-            {constructor && constructor.inputs && constructor.inputs.length > 0 && (
-              <div className="space-y-2 mb-4 min-w-[640px]"> {/* Ancho mínimo para evitar compresión */}
-                <h3 className="text-sm font-medium text-gray-300">Constructor Arguments</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {constructor.inputs.map((input: any, index: number) => (
-                    <div key={index} className="space-y-1">
-                      <label className="text-sm text-gray-400">
-                        {input.name} ({input.type})
-                      </label>
-                      <input
-                        type="text"
-                        value={constructorArgs[index] || ''}
-                        onChange={(e) => handleConstructorArgChange(index, e.target.value)}
-                        placeholder={`Enter ${input.type} value`}
-                        className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  ))}
+        {/* Deploy Section */}
+        {currentArtifact.bytecode && (
+          <div className="mt-4 p-4 bg-gray-800/90 backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
+                  <RocketLaunchIcon className="w-5 h-5" />
                 </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-white">Deploy Contract</h3>
+                  <p className="text-sm text-gray-400">Deploy this contract to the blockchain</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Constructor Arguments */}
+            {constructor && constructor.inputs && constructor.inputs.length > 0 && (
+              <div className="space-y-4 mb-4">
+                <h4 className="text-sm font-medium text-gray-400">Constructor Arguments</h4>
+                {constructor.inputs.map((input: { name: string; type: string }, index: number) => (
+                  <div key={index} className="space-y-1">
+                    <label className="text-sm text-gray-400">
+                      {input.name} ({input.type})
+                    </label>
+                    <input
+                      type="text"
+                      onChange={(e) => handleConstructorArgChange(index, e.target.value)}
+                      placeholder={`Enter ${input.type}`}
+                      className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                ))}
               </div>
             )}
 
-            {/* Deploy Section */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 min-w-[640px]">
-              <div className="flex items-center space-x-4">
-                <button
-                  onClick={handleDeploy}
-                  disabled={!isConnected || isDeploying || chainId !== 57054}
-                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
-                    isConnected && !isDeploying && chainId === 57054
-                      ? 'bg-blue-600 hover:bg-blue-700'
-                      : 'bg-gray-700 cursor-not-allowed'
-                  } text-white transition-colors duration-200 whitespace-nowrap`}
-                >
-                  {isDeploying ? (
-                    <BoltIcon className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <RocketLaunchIcon className="w-5 h-5" />
-                  )}
-                  <span>
-                    {isDeploying
-                      ? 'Deploying...'
-                      : chainId !== 57054
-                      ? 'Switch to Sonic'
-                      : 'Deploy Contract'}
-                  </span>
-                </button>
-              </div>
-              
-              {deploymentResult && (
-                <div className={`flex-1 min-w-0 flex items-center space-x-2 px-4 py-2 rounded-lg ${
-                  deploymentResult.success ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'
+            {/* Deploy Button */}
+            <button
+              onClick={handleDeploy}
+              disabled={isDeploying || !isConnected}
+              className={`w-full py-2 px-4 rounded-lg ${
+                isDeploying || !isConnected
+                  ? 'bg-gray-700 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700'
+              } text-white transition-colors duration-200`}
+            >
+              {isDeploying ? 'Deploying...' : 'Deploy Contract'}
+            </button>
+
+            {/* Deployment Result */}
+            {deploymentResult && (
+              <div className={`mt-4 p-3 rounded-lg border ${
+                deploymentResult.success
+                  ? 'bg-green-900/20 border-green-700'
+                  : 'bg-red-900/20 border-red-700'
+              }`}>
+                <h4 className={`text-sm font-medium mb-1 ${
+                  deploymentResult.success ? 'text-green-400' : 'text-red-400'
                 }`}>
-                  {deploymentResult.success ? (
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 w-full overflow-hidden">
-                      <span className="whitespace-nowrap">Deployed at: </span>
-                      <a
-                        href={`https://testnet.sonicscan.org/address/${deploymentResult.contractAddress}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:text-green-300 truncate"
-                      >
-                        {deploymentResult.contractAddress}
-                      </a>
+                  {deploymentResult.success ? 'Deployment Successful' : 'Deployment Failed'}
+                </h4>
+                {deploymentResult.success ? (
+                  <div className="space-y-2">
+                    <div className="text-sm text-gray-300">
+                      <span className="text-gray-400">Contract Address: </span>
+                      <code className="text-blue-400">{deploymentResult.contractAddress}</code>
                     </div>
-                  ) : (
-                    <span className="truncate">{deploymentResult.error}</span>
-                  )}
-                </div>
-              )}
-            </div>
+                    <div className="text-sm text-gray-300">
+                      <span className="text-gray-400">Transaction Hash: </span>
+                      <code className="text-blue-400">{deploymentResult.transactionHash}</code>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-red-300">{deploymentResult.error}</div>
+                )}
+              </div>
+            )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
 };
 
-export default ContractViewer; 
+export default ContractViewer;

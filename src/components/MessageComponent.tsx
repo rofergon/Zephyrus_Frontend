@@ -21,7 +21,6 @@ interface MessageComponentProps {
 }
 
 const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
-  const isAI = message.sender === 'ai';
   const isSystem = message.sender === 'system';
   const isUser = message.sender === 'user';
 

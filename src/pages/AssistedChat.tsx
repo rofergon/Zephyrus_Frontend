@@ -18,6 +18,7 @@ import ContractViewer from '../components/contract/ContractViewer';
 import ChatArea from '../components/chat/ChatArea';
 import { generateUniqueId } from '../utils/commonUtils';
 import ChatContexts from '../components/chat/ChatContexts';
+import { DatabaseService } from '../services/databaseService';
 
 interface VirtualFile {
   content: string;
@@ -28,7 +29,12 @@ interface VirtualFile {
 const demoArtifact: ContractArtifact = {
   name: "Contract Preview",
   description: "Your smart contract interface will appear here after compilation",
-  functions: []
+  functions: [],
+  events: [],
+  constructor: null,
+  errors: [],
+  abi: [],
+  address: undefined
 };
 
 const AssistedChat: React.FC = () => {
@@ -52,9 +58,66 @@ const AssistedChat: React.FC = () => {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof monaco | null>(null);
   const [consoleMessages, setConsoleMessages] = useState<ConsoleMessage[]>([]);
-  const [] = useState(false);
   const [consoleHeight, setConsoleHeight] = useState(200);
   const compilationService = useRef<CompilationService>(CompilationService.getInstance());
+  const databaseService = useRef<DatabaseService>(DatabaseService.getInstance());
+
+  // Nuevo useEffect para cargar contratos
+  useEffect(() => {
+    const loadContracts = async () => {
+      if (!address) {
+        console.log('[AssistedChat] No wallet address available for loading contracts');
+        return;
+      }
+
+      try {
+        console.log('[AssistedChat] Loading contracts for wallet:', address);
+        const contracts = await databaseService.current.getDeployedContracts(address);
+        
+        console.log('[AssistedChat] Contracts loaded:', {
+          address,
+          contractsFound: contracts.length,
+          contracts: contracts.map(c => ({
+            name: c.name,
+            address: c.contract_address,
+            hasAbi: !!c.abi,
+            deployedAt: c.deployed_at
+          }))
+        });
+
+        if (contracts && contracts.length > 0) {
+          const lastContract = contracts[0];
+          // Create contract artifact from the deployed contract
+          const contractArtifact: ContractArtifact = {
+            name: lastContract.name,
+            description: 'Deployed Smart Contract',
+            address: lastContract.contract_address,
+            abi: typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [],
+            bytecode: lastContract.bytecode,
+            functions: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
+              .filter((item: any) => item.type === 'function')
+              .map((item: any) => ({
+                name: item.name,
+                description: `${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+                type: 'function' as 'function',
+                stateMutability: item.stateMutability,
+                inputs: item.inputs || [],
+                outputs: item.outputs || []
+              })),
+            events: [],
+            constructor: null,
+            errors: []
+          };
+          
+          setCurrentArtifact(contractArtifact);
+        }
+      } catch (error) {
+        console.error('[AssistedChat] Error loading contracts:', error);
+      }
+    };
+
+    loadContracts();
+  }, [address]); // Se ejecutará cuando cambie la wallet address
 
   // Calculate initial widths
   useEffect(() => {
@@ -68,6 +131,171 @@ const AssistedChat: React.FC = () => {
     window.addEventListener('resize', calculateWidths);
     return () => window.removeEventListener('resize', calculateWidths);
   }, [isSidebarOpen]);
+
+  const loadLastDeployedContract = useCallback(async (conversationId: string) => {
+    try {
+      console.log('[AssistedChat] Starting to load last deployed contract:', {
+        address,
+        timestamp: new Date().toISOString()
+      });
+
+      if (!address) {
+        console.error('[AssistedChat] No wallet address available');
+        return;
+      }
+
+      const contracts = await databaseService.current.getDeployedContracts(address);
+      
+      console.log('[AssistedChat] Database query completed:', {
+        address,
+        contractsFound: contracts.length,
+        contracts: contracts.map(c => ({
+          name: c.name,
+          address: c.contract_address,
+          hasAbi: !!c.abi,
+          deployedAt: c.deployed_at
+        }))
+      });
+      
+      if (contracts && contracts.length > 0) {
+        const lastContract = contracts[0]; // Contracts are ordered by deployed_at DESC
+        console.log('[AssistedChat] Processing most recent contract:', {
+          name: lastContract.name,
+          address: lastContract.contract_address,
+          hasAbi: !!lastContract.abi,
+          deployedAt: lastContract.deployed_at,
+          sourceCodeExists: !!lastContract.sourceCode,
+          abiPreview: lastContract.abi ? JSON.stringify(lastContract.abi).substring(0, 100) + '...' : 'null'
+        });
+
+        if (!lastContract.abi) {
+          console.error('[AssistedChat] Contract ABI is missing:', {
+            name: lastContract.name,
+            address: lastContract.contract_address,
+            deployedAt: lastContract.deployed_at
+          });
+          setCurrentArtifact(demoArtifact);
+          return;
+        }
+
+        // Create contract artifact from the deployed contract
+        const contractArtifact: ContractArtifact = {
+          name: lastContract.name,
+          description: 'Deployed Smart Contract',
+          address: lastContract.contract_address,
+          abi: typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [],
+          bytecode: lastContract.bytecode,
+          functions: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
+            .filter((item: any) => item.type === 'function')
+            .map((item: any) => ({
+              name: item.name,
+              description: `${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+              type: 'function' as 'function',
+              stateMutability: item.stateMutability,
+              inputs: (item.inputs || []).map((input: any) => ({
+                name: input.name || 'value',
+                type: input.type,
+                description: `Input parameter of type ${input.type}`,
+                components: input.components
+              })),
+              outputs: (item.outputs || []).map((output: any) => ({
+                name: output.name || 'value',
+                type: output.type,
+                components: output.components
+              }))
+            })),
+          events: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
+            .filter((item: any) => item.type === 'event')
+            .map((item: any) => ({
+              name: item.name,
+              description: `Event: ${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+              type: 'event' as 'event',
+              inputs: (item.inputs || []).map((input: any) => ({
+                name: input.name || 'value',
+                type: input.type,
+                description: `Event parameter of type ${input.type}`,
+                components: input.components,
+                indexed: input.indexed
+              }))
+            })) || [],
+          constructor: (typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [])
+            .filter((item: any) => item.type === 'constructor')
+            .map((item: any) => ({
+              name: 'constructor',
+              description: `Constructor(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+              type: 'constructor' as 'constructor',
+              stateMutability: item.stateMutability as 'nonpayable' | 'payable',
+              inputs: (item.inputs || []).map((input: any) => ({
+                name: input.name || 'value',
+                type: input.type,
+                description: `Constructor parameter of type ${input.type}`,
+                components: input.components
+              }))
+            }))[0] || null,
+          errors: []
+        };
+
+        console.log('[AssistedChat] Created contract artifact:', {
+          name: contractArtifact.name,
+          address: contractArtifact.address,
+          functionsCount: contractArtifact.functions.length,
+          eventsCount: contractArtifact.events?.length || 0,
+          hasConstructor: !!contractArtifact.constructor,
+          firstFunction: contractArtifact.functions[0]?.name || 'No functions'
+        });
+
+        setCurrentArtifact(contractArtifact);
+        
+        // Update active context with contract information
+        setActiveContext(prevContext => {
+          if (!prevContext) return undefined;
+          
+          const updatedContext = {
+            ...prevContext,
+            contractAddress: lastContract.contract_address,
+            contractName: lastContract.name,
+            contractAbi: lastContract.abi
+          };
+          
+          // Update conversation contexts
+          setConversationContexts(prevContexts => 
+            prevContexts.map(ctx => 
+              ctx.id === prevContext.id ? updatedContext : ctx
+            )
+          );
+          
+          // Update conversation service
+          conversationService.updateContext(updatedContext);
+          
+          console.log('[AssistedChat] Updated context with contract information:', {
+            id: updatedContext.id,
+            name: updatedContext.name,
+            contractAddress: updatedContext.contractAddress,
+            contractName: updatedContext.contractName,
+            hasAbi: !!updatedContext.contractAbi
+          });
+          
+          return updatedContext;
+        });
+        
+        // If there's source code, set it in the editor
+        if (lastContract.sourceCode) {
+          const sourceCode = typeof lastContract.sourceCode === 'string' 
+            ? lastContract.sourceCode 
+            : lastContract.sourceCode.content;
+          console.log('[AssistedChat] Setting source code in editor, length:', sourceCode.length);
+          setCurrentCode(sourceCode);
+          setShowCodeEditor(true);
+        }
+      } else {
+        console.log('[AssistedChat] No deployed contracts found for conversation:', conversationId);
+        setCurrentArtifact(demoArtifact);
+      }
+    } catch (error) {
+      console.error('[AssistedChat] Error loading last deployed contract:', error);
+      setCurrentArtifact(demoArtifact);
+    }
+  }, []);
 
   const initializeConversation = useCallback(() => {
     try {
@@ -88,13 +316,16 @@ const AssistedChat: React.FC = () => {
         conversationService.setActiveContext(activeContext.id);
         chatService.current.setCurrentChatId(activeContext.id);
         
+        // Load the last deployed contract for the active context
+        loadLastDeployedContract(activeContext.id);
+        
         console.log('[Chat] Initialized contexts:', updatedContexts);
         console.log('[Chat] Active context:', activeContext);
       }
     } catch (error) {
       console.error('Error initializing conversation:', error);
     }
-  }, []);
+  }, [loadLastDeployedContract]);
 
   const handleSubmit = (message: string) => {
     const newMessage: Message = {
@@ -376,14 +607,36 @@ const AssistedChat: React.FC = () => {
 
   const handleContextSwitch = async (contextId: string) => {
     try {
-      console.log('[Chat] Switching to context:', contextId);
+      console.log('[AssistedChat] Starting context switch:', {
+        contextId,
+        address,
+        timestamp: new Date().toISOString()
+      });
       
+      if (!address) {
+        console.error('[AssistedChat] No wallet address available');
+        return;
+      }
+
       // Encontrar el contexto seleccionado
       const selectedContext = conversationContexts.find(ctx => ctx.id === contextId);
       if (!selectedContext) {
-        console.error('[Chat] Context not found:', contextId);
+        console.error('[AssistedChat] Context not found:', {
+          contextId,
+          availableContexts: conversationContexts.map(ctx => ({
+            id: ctx.id,
+            name: ctx.name
+          }))
+        });
         return;
       }
+      
+      console.log('[AssistedChat] Found context to switch to:', {
+        id: selectedContext.id,
+        name: selectedContext.name,
+        hasVirtualFiles: !!selectedContext.virtualFiles,
+        messageCount: selectedContext.messages?.length || 0
+      });
       
       // Actualizar el estado local
       const updatedContexts = conversationContexts.map(ctx => ({
@@ -391,8 +644,76 @@ const AssistedChat: React.FC = () => {
         active: ctx.id === contextId
       }));
       
-      setConversationContexts(updatedContexts);
-      setActiveContext({...selectedContext, active: true});
+      // Load the contracts for this wallet
+      console.log('[AssistedChat] Initiating contract load for wallet:', {
+        address,
+        timestamp: new Date().toISOString()
+      });
+
+      try {
+        const contracts = await databaseService.current.getDeployedContracts(address);
+        console.log('[AssistedChat] Database query for contracts completed:', {
+          address,
+          contractsFound: contracts.length,
+          contracts: contracts.map(c => ({
+            name: c.name,
+            address: c.contract_address,
+            hasAbi: !!c.abi,
+            deployedAt: c.deployed_at
+          }))
+        });
+
+        if (contracts && contracts.length > 0) {
+          const lastContract = contracts[0];
+          console.log('[AssistedChat] Found last deployed contract:', {
+            name: lastContract.name,
+            address: lastContract.contract_address,
+            hasAbi: !!lastContract.abi,
+            deployedAt: lastContract.deployed_at,
+            abiPreview: lastContract.abi ? JSON.stringify(lastContract.abi).substring(0, 100) + '...' : 'null'
+          });
+
+          // Actualizar el contexto con la información del contrato
+          const contextWithContract = {
+            ...selectedContext,
+            active: true,
+            contractAddress: lastContract.contract_address,
+            contractName: lastContract.name,
+            contractAbi: lastContract.abi
+          };
+
+          console.log('[AssistedChat] Updating context with contract info:', {
+            contextId: contextWithContract.id,
+            contractAddress: contextWithContract.contractAddress,
+            contractName: contextWithContract.contractName,
+            hasAbi: !!contextWithContract.contractAbi
+          });
+
+          setConversationContexts(updatedContexts.map(ctx => 
+            ctx.id === contextId ? contextWithContract : ctx
+          ));
+          setActiveContext(contextWithContract);
+          
+          await loadLastDeployedContract(contextId);
+        } else {
+          console.log('[AssistedChat] No deployed contracts found for context:', {
+            contextId,
+            timestamp: new Date().toISOString()
+          });
+          setConversationContexts(updatedContexts);
+          setActiveContext({...selectedContext, active: true});
+          setCurrentArtifact(demoArtifact);
+        }
+      } catch (error) {
+        console.error('[AssistedChat] Error loading deployed contract:', {
+          contextId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined
+        });
+        setConversationContexts(updatedContexts);
+        setActiveContext({...selectedContext, active: true});
+        setCurrentArtifact(demoArtifact);
+      }
       
       // Actualizar los servicios
       conversationService.setActiveContext(contextId);
@@ -403,7 +724,12 @@ const AssistedChat: React.FC = () => {
       
       // Manejar archivos virtuales
       if (selectedContext.virtualFiles) {
-        console.log('[Chat] Found virtual files in context:', selectedContext.virtualFiles);
+        console.log('[AssistedChat] Processing virtual files:', {
+          contextId,
+          filesFound: Object.keys(selectedContext.virtualFiles).length,
+          files: Object.keys(selectedContext.virtualFiles)
+        });
+        
         // Limpiar el sistema de archivos virtual
         await virtualFS.clear();
         
@@ -411,25 +737,44 @@ const AssistedChat: React.FC = () => {
         for (const [path, file] of Object.entries(selectedContext.virtualFiles)) {
           try {
             await virtualFS.writeFile(path, file.content);
-            console.log('[Chat] Restored file:', path);
+            console.log('[AssistedChat] Restored virtual file:', {
+              path,
+              language: file.language,
+              contentLength: file.content.length
+            });
+            
             if (file.language === 'solidity') {
               setCurrentCode(file.content);
               setShowCodeEditor(true);
               await compileCode(file.content);
             }
           } catch (error) {
-            console.error('[Chat] Error restoring file:', path, error);
+            console.error('[AssistedChat] Error restoring virtual file:', {
+              path,
+              error: error instanceof Error ? error.message : 'Unknown error'
+            });
           }
         }
       } else {
-        console.log('[Chat] No virtual files found in context');
+        console.log('[AssistedChat] No virtual files found in context:', {
+          contextId,
+          timestamp: new Date().toISOString()
+        });
         setCurrentCode('');
         setShowCodeEditor(false);
       }
       
-      console.log('[Chat] Context switch complete:', selectedContext);
+      console.log('[AssistedChat] Context switch completed:', {
+        contextId,
+        name: selectedContext.name,
+        timestamp: new Date().toISOString()
+      });
     } catch (error) {
-      console.error('[Chat] Error switching context:', error);
+      console.error('[AssistedChat] Error during context switch:', {
+        contextId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      });
     }
   };
 

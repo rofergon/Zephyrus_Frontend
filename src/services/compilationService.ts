@@ -295,29 +295,100 @@ export class CompilationService {
     if (result.output) {
       const { artifact } = result.output;
       if (artifact) {
-        // Procesar el ABI para generar las funciones
-        const functions = artifact.abi
-          .filter((item: any) => item.type === 'function' || item.type === 'constructor' || item.type === 'event')
-          .map((item: any) => ({
-            name: item.name || (item.type === 'constructor' ? 'constructor' : 'unknown'),
-            description: `${item.name || item.type}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
-            type: item.type as 'function' | 'constructor' | 'event',
-            stateMutability: item.stateMutability as 'pure' | 'view' | 'nonpayable' | 'payable',
-            inputs: item.inputs || [],
-            outputs: item.outputs || []
-          }));
+        console.log('[CompilationService] Processing ABI:', artifact.abi);
 
-        // Crear el artefacto del contrato
+        // Separar los elementos del ABI por tipo
+        const functions = artifact.abi.filter((item: any) => item.type === 'function');
+        const events = artifact.abi.filter((item: any) => item.type === 'event');
+        const constructors = artifact.abi.filter((item: any) => item.type === 'constructor');
+        const errors = artifact.abi.filter((item: any) => item.type === 'error');
+
+        // Procesar funciones
+        const processedFunctions = functions.map((item: any) => ({
+          name: item.name,
+          description: `${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+          type: 'function' as 'function',
+          stateMutability: item.stateMutability as 'pure' | 'view' | 'nonpayable' | 'payable',
+          inputs: (item.inputs || []).map((input: any) => ({
+            name: input.name || 'value',
+            type: input.type,
+            description: `Input parameter of type ${input.type}`,
+            components: input.components
+          })),
+          outputs: (item.outputs || []).map((output: any) => ({
+            name: output.name || 'value',
+            type: output.type,
+            components: output.components
+          }))
+        }));
+
+        // Procesar eventos
+        const processedEvents = events.map((item: any) => ({
+          name: item.name,
+          description: `Event: ${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+          type: 'event' as 'event',
+          inputs: (item.inputs || []).map((input: any) => ({
+            name: input.name || 'value',
+            type: input.type,
+            description: `Event parameter of type ${input.type}`,
+            components: input.components,
+            indexed: input.indexed
+          }))
+        }));
+
+        // Procesar constructor si existe
+        const constructor = constructors[0];
+        const processedConstructor = constructor ? {
+          name: 'constructor',
+          description: `Constructor(${(constructor.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+          type: 'constructor' as 'constructor',
+          stateMutability: constructor.stateMutability as 'nonpayable' | 'payable',
+          inputs: (constructor.inputs || []).map((input: any) => ({
+            name: input.name || 'value',
+            type: input.type,
+            description: `Constructor parameter of type ${input.type}`,
+            components: input.components
+          }))
+        } : null;
+
+        // Procesar errores personalizados
+        const processedErrors = errors.map((item: any) => ({
+          name: item.name,
+          description: `Error: ${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
+          type: 'error' as 'error',
+          inputs: (item.inputs || []).map((input: any) => ({
+            name: input.name || 'value',
+            type: input.type,
+            description: `Error parameter of type ${input.type}`,
+            components: input.components
+          }))
+        }));
+
+        // Crear el artefacto del contrato con todos los elementos procesados
         const contractArtifact: ContractArtifact = {
           name: artifact.contractName || 'Smart Contract',
           description: 'Compiled Smart Contract',
-          functions,
+          functions: processedFunctions,
+          events: processedEvents,
+          constructor: processedConstructor,
+          errors: processedErrors,
           abi: artifact.abi,
           bytecode: artifact.bytecode
         };
 
+        console.log('[CompilationService] Processed contract artifact:', {
+          name: contractArtifact.name,
+          functionsCount: contractArtifact.functions.length,
+          eventsCount: contractArtifact.events?.length || 0,
+          hasConstructor: !!contractArtifact.constructor,
+          errorsCount: contractArtifact.errors?.length || 0
+        });
+
         setCurrentArtifact(contractArtifact);
-        addConsoleMessage(`Contract ${contractArtifact.name} compiled successfully with ${functions.length} functions`, 'success');
+        addConsoleMessage(
+          `Contract ${contractArtifact.name} compiled successfully with ${contractArtifact.functions.length} functions, ${contractArtifact.events?.length || 0} events, and ${contractArtifact.errors?.length || 0} custom errors`, 
+          'success'
+        );
       }
     }
   }

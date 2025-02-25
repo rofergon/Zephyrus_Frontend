@@ -1,4 +1,3 @@
-
 export interface Message {
   id: string;
   text: string;
@@ -23,6 +22,9 @@ export interface ConversationContext {
       timestamp: number;
     }
   };
+  contractAddress?: string;
+  contractName?: string;
+  contractAbi?: any;
 }
 
 export class ConversationService {

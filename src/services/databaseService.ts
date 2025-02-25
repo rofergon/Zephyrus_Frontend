@@ -1,23 +1,11 @@
-import { createClient } from '@libsql/client';
-import { v4 as uuidv4 } from 'uuid';
 import { DeployedContract } from '../types/contracts';
 
 export class DatabaseService {
   private static instance: DatabaseService;
-  private client: ReturnType<typeof createClient>;
+  private baseUrl: string;
 
   private constructor() {
-    const url = import.meta.env.VITE_TURSO_DATABASE_URL;
-    const authToken = import.meta.env.VITE_TURSO_AUTH_TOKEN;
-
-    if (!url || !authToken) {
-      throw new Error('Missing Turso database credentials');
-    }
-
-    this.client = createClient({
-      url,
-      authToken,
-    });
+    this.baseUrl = 'https://9984-2800-e2-5e80-815-b1f6-4695-930e-b791.ngrok-free.app/api/db';
   }
 
   public static getInstance(): DatabaseService {
@@ -34,18 +22,26 @@ export class DatabaseService {
     return value.trim();
   }
 
+  private async handleResponse(response: Response) {
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'API request failed');
+    }
+    return response.json();
+  }
+
   // Usuarios
   async createUser(walletAddress: string) {
     try {
       const validatedAddress = this.validateString(walletAddress, 'walletAddress');
-      await this.client.execute({
-        sql: `
-          INSERT INTO users (wallet_address)
-          VALUES (?)
-          ON CONFLICT (wallet_address) DO NOTHING
-        `,
-        args: [validatedAddress]
+      const response = await fetch(`${this.baseUrl}/users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ walletAddress: validatedAddress })
       });
+      return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error creating user:', error);
       throw error;
@@ -55,11 +51,8 @@ export class DatabaseService {
   async getUser(walletAddress: string) {
     try {
       const validatedAddress = this.validateString(walletAddress, 'walletAddress');
-      const result = await this.client.execute({
-        sql: `SELECT * FROM users WHERE wallet_address = ?`,
-        args: [validatedAddress]
-      });
-      return result.rows[0];
+      const response = await fetch(`${this.baseUrl}/users/${validatedAddress}`);
+      return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error getting user:', error);
       throw error;
@@ -72,30 +65,18 @@ export class DatabaseService {
       const validatedAddress = this.validateString(walletAddress, 'walletAddress');
       const validatedName = this.validateString(name, 'name');
 
-      // Primero, asegurarse de que el usuario existe
-      await this.createUser(validatedAddress);
-
-      // Verificar si ya existe una conversación con este ID
-      const existingConversation = await this.client.execute({
-        sql: `SELECT id FROM conversations WHERE user_wallet = ? AND name = ?`,
-        args: [validatedAddress, validatedName]
+      const response = await fetch(`${this.baseUrl}/conversations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          walletAddress: validatedAddress,
+          name: validatedName
+        })
       });
 
-      if (existingConversation.rows.length > 0) {
-        return { id: existingConversation.rows[0].id as string };
-      }
-
-      const id = uuidv4();
-
-      await this.client.execute({
-        sql: `
-          INSERT INTO conversations (id, user_wallet, name)
-          VALUES (?, ?, ?)
-        `,
-        args: [id, validatedAddress, validatedName]
-      });
-      
-      return { id };
+      return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error creating conversation:', error);
       throw error;
@@ -105,15 +86,8 @@ export class DatabaseService {
   async getConversations(walletAddress: string) {
     try {
       const validatedAddress = this.validateString(walletAddress, 'walletAddress');
-      const result = await this.client.execute({
-        sql: `
-          SELECT * FROM conversations 
-          WHERE user_wallet = ?
-          ORDER BY created_at DESC
-        `,
-        args: [validatedAddress]
-      });
-      return result.rows;
+      const response = await fetch(`${this.baseUrl}/conversations/${validatedAddress}`);
+      return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error getting conversations:', error);
       throw error;
@@ -125,26 +99,21 @@ export class DatabaseService {
     try {
       const validatedId = this.validateString(conversationId, 'conversationId');
       const validatedContent = this.validateString(content, 'content');
-      const validatedSender = sender === 'user' || sender === 'ai' ? sender : 'ai';
-      const id = uuidv4();
       
-      await this.client.execute({
-        sql: `
-          INSERT INTO messages (id, conversation_id, content, sender, metadata)
-          VALUES (?, ?, ?, ?, ?)
-        `,
-        args: [id, validatedId, validatedContent, validatedSender, metadata ? JSON.stringify(metadata) : null]
+      const response = await fetch(`${this.baseUrl}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          conversationId: validatedId,
+          content: validatedContent,
+          sender,
+          metadata
+        })
       });
 
-      // Actualizar last_accessed de la conversación
-      await this.client.execute({
-        sql: `
-          UPDATE conversations
-          SET last_accessed = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `,
-        args: [validatedId]
-      });
+      return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error saving message:', error);
       throw error;
@@ -154,15 +123,8 @@ export class DatabaseService {
   async getMessages(conversationId: string) {
     try {
       const validatedId = this.validateString(conversationId, 'conversationId');
-      const result = await this.client.execute({
-        sql: `
-          SELECT * FROM messages 
-          WHERE conversation_id = ?
-          ORDER BY created_at ASC
-        `,
-        args: [validatedId]
-      });
-      return result.rows;
+      const response = await fetch(`${this.baseUrl}/messages/${validatedId}`);
+      return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error getting messages:', error);
       throw error;
@@ -174,29 +136,22 @@ export class DatabaseService {
     try {
       const validatedId = this.validateString(conversationId, 'conversationId');
       const validatedCode = this.validateString(code, 'code');
-      const validatedLanguage = this.validateString(language, 'language');
-      const id = uuidv4();
       
-      await this.client.execute({
-        sql: `
-          INSERT INTO code_history (
-            id,
-            conversation_id,
-            code_content,
-            language,
-            version,
-            metadata
-          ) VALUES (?, ?, ?, ?, ?, ?)
-        `,
-        args: [
-          id,
-          validatedId,
-          validatedCode,
-          validatedLanguage,
-          version || null,
-          metadata ? JSON.stringify(metadata) : null
-        ]
+      const response = await fetch(`${this.baseUrl}/code-history`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          conversationId: validatedId,
+          code: validatedCode,
+          language,
+          version,
+          metadata
+        })
       });
+
+      return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error saving code history:', error);
       throw error;
@@ -206,15 +161,8 @@ export class DatabaseService {
   async getCodeHistory(conversationId: string) {
     try {
       const validatedId = this.validateString(conversationId, 'conversationId');
-      const result = await this.client.execute({
-        sql: `
-          SELECT * FROM code_history 
-          WHERE conversation_id = ?
-          ORDER BY created_at DESC
-        `,
-        args: [validatedId]
-      });
-      return result.rows;
+      const response = await fetch(`${this.baseUrl}/code-history/${validatedId}`);
+      return this.handleResponse(response);
     } catch (error) {
       console.error('[DatabaseService] Error getting code history:', error);
       throw error;
@@ -227,7 +175,7 @@ export class DatabaseService {
     conversationId: string;
     contractAddress: string;
     name: string;
-    abi: string;
+    abi: string | any[];
     bytecode: string;
     sourceCode: string;
     compilerVersion?: string;
@@ -235,85 +183,37 @@ export class DatabaseService {
     networkId?: number;
   }): Promise<void> {
     try {
-      // Safe logging that handles undefined values
-      console.log('[DatabaseService] Saving contract with data:', {
-        walletAddress: contractData.walletAddress,
-        conversationId: contractData.conversationId,
-        contractAddress: contractData.contractAddress,
-        name: contractData.name,
-        abi: contractData.abi ? `[${contractData.abi.length} chars]` : 'undefined',
-        bytecode: contractData.bytecode ? `${contractData.bytecode.slice(0, 20)}...` : 'undefined',
-        sourceCode: contractData.sourceCode ? `${contractData.sourceCode.slice(0, 100)}...` : 'undefined'
-      });
-
-      // Validate all required fields
-      const walletAddress = this.validateString(contractData.walletAddress, 'walletAddress');
-      let conversationId = this.validateString(contractData.conversationId, 'conversationId');
-      const contractAddress = this.validateString(contractData.contractAddress, 'contractAddress');
-      const name = this.validateString(contractData.name, 'name');
-      const abi = this.validateString(contractData.abi, 'abi');
-      const bytecode = this.validateString(contractData.bytecode, 'bytecode');
-      const sourceCode = this.validateString(contractData.sourceCode, 'sourceCode');
-      const id = uuidv4();
-
-      // First, ensure the user exists
-      await this.createUser(walletAddress);
-
-      // Then, ensure the conversation exists
-      const conversationExists = await this.client.execute({
-        sql: `SELECT id FROM conversations WHERE id = ?`,
-        args: [conversationId]
-      });
-
-      if (conversationExists.rows.length === 0) {
-        // Create a new conversation if it doesn't exist
-        const newConversation = await this.createConversation(walletAddress, "Contract Deployment Chat");
-        conversationId = newConversation.id;
-        console.log('[DatabaseService] Created new conversation:', conversationId);
+      // Validate and parse ABI before saving
+      let validatedAbi: string;
+      try {
+        validatedAbi = typeof contractData.abi === 'string' 
+          ? contractData.abi 
+          : JSON.stringify(contractData.abi);
+      } catch (error) {
+        console.error('[DatabaseService] Error validating ABI:', error);
+        throw new Error('Invalid ABI format');
       }
 
-      // Save the code history
-      await this.saveCodeHistory(
-        conversationId,
-        sourceCode,
-        'solidity',
-        contractData.compilerVersion,
-        { contractAddress, deploymentType: 'contract' }
-      );
-
-      const query = `
-        INSERT INTO deployed_contracts (
-          id,
-          user_wallet,
-          conversation_id,
-          contract_address,
-          name,
-          abi,
-          bytecode,
-          source_code,
-          compiler_version,
-          constructor_args,
-          network_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-
-      await this.client.execute({
-        sql: query,
-        args: [
-          id,
-          walletAddress,
-          conversationId,
-          contractAddress,
-          name,
-          abi,
-          bytecode,
-          sourceCode,
-          contractData.compilerVersion || null,
-          contractData.constructorArgs ? JSON.stringify(contractData.constructorArgs) : null,
-          contractData.networkId || 57054
-        ]
+      const response = await fetch(`${this.baseUrl}/contracts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          walletAddress: this.validateString(contractData.walletAddress, 'walletAddress'),
+          conversationId: this.validateString(contractData.conversationId, 'conversationId'),
+          contractAddress: this.validateString(contractData.contractAddress, 'contractAddress'),
+          name: this.validateString(contractData.name, 'name'),
+          abi: validatedAbi,
+          bytecode: this.validateString(contractData.bytecode, 'bytecode'),
+          sourceCode: this.validateString(contractData.sourceCode, 'sourceCode'),
+          compilerVersion: contractData.compilerVersion,
+          constructorArgs: contractData.constructorArgs,
+          networkId: contractData.networkId || 57054
+        })
       });
 
+      await this.handleResponse(response);
       console.log('[DatabaseService] Contract saved successfully');
     } catch (error) {
       console.error('[DatabaseService] Error saving deployed contract:', error);
@@ -324,23 +224,16 @@ export class DatabaseService {
   async getDeployedContracts(walletAddress: string): Promise<DeployedContract[]> {
     try {
       const validatedAddress = this.validateString(walletAddress, 'walletAddress');
-      const result = await this.client.execute({
-        sql: `
-          SELECT * FROM deployed_contracts 
-          WHERE wallet_address = ?
-          ORDER BY deployed_at DESC
-        `,
-        args: [validatedAddress]
-      });
+      const response = await fetch(`${this.baseUrl}/contracts/${validatedAddress}`);
+      const contracts = await this.handleResponse(response);
 
-      // Parse source code JSON for each contract
-      return result.rows.map(contract => ({
+      return contracts.map((contract: any) => ({
         ...contract,
-        sourceCode: contract.source_code ? this.parseSourceCode(contract.source_code as string) : null,
-        abi: contract.abi ? JSON.parse(contract.abi as string) : null,
-        constructorArgs: contract.constructor_args ? JSON.parse(contract.constructor_args as string) : null,
+        sourceCode: contract.source_code ? this.parseSourceCode(contract.source_code) : null,
+        abi: this.parseAbi(contract.abi),
+        constructorArgs: contract.constructor_args ? JSON.parse(contract.constructor_args) : null,
         networkId: contract.network_id ? contract.network_id.toString() : null
-      })) as unknown as DeployedContract[];
+      }));
     } catch (error) {
       console.error('[DatabaseService] Error getting deployed contracts:', error);
       throw error;
@@ -350,23 +243,16 @@ export class DatabaseService {
   async getContractsByConversation(conversationId: string): Promise<DeployedContract[]> {
     try {
       const validatedId = this.validateString(conversationId, 'conversationId');
-      const result = await this.client.execute({
-        sql: `
-          SELECT * FROM deployed_contracts 
-          WHERE conversation_id = ?
-          ORDER BY deployed_at DESC
-        `,
-        args: [validatedId]
-      });
+      const response = await fetch(`${this.baseUrl}/contracts/conversation/${validatedId}`);
+      const contracts = await this.handleResponse(response);
 
-      // Parse source code JSON for each contract
-      return result.rows.map(contract => ({
+      return contracts.map((contract: any) => ({
         ...contract,
-        sourceCode: contract.source_code ? this.parseSourceCode(contract.source_code as string) : null,
-        abi: contract.abi ? JSON.parse(contract.abi as string) : null,
-        constructorArgs: contract.constructor_args ? JSON.parse(contract.constructor_args as string) : null,
+        sourceCode: contract.source_code ? this.parseSourceCode(contract.source_code) : null,
+        abi: this.parseAbi(contract.abi),
+        constructorArgs: contract.constructor_args ? JSON.parse(contract.constructor_args) : null,
         networkId: contract.network_id ? contract.network_id.toString() : null
-      })) as unknown as DeployedContract[];
+      }));
     } catch (error) {
       console.error('[DatabaseService] Error getting contracts by conversation:', error);
       throw error;
@@ -383,9 +269,18 @@ export class DatabaseService {
   } | string {
     try {
       return JSON.parse(sourceCode);
-    } catch (error) {
-      // Si no se puede parsear como JSON, devolver el string original
+    } catch {
       return sourceCode;
+    }
+  }
+
+  private parseAbi(abi: any): any {
+    try {
+      if (!abi) return null;
+      return typeof abi === 'string' ? JSON.parse(abi) : abi;
+    } catch (error) {
+      console.error('[DatabaseService] Error parsing ABI:', error);
+      return null;
     }
   }
 } 

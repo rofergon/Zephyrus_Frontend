@@ -19,10 +19,61 @@ export interface ContractFunction {
 export interface ContractArtifact {
   name: string;
   description: string;
-  functions: ContractFunction[];
-  abi?: any[];
-  bytecode?: string;
+  functions: Array<{
+    name: string;
+    description: string;
+    type: 'function';
+    stateMutability: 'pure' | 'view' | 'nonpayable' | 'payable';
+    inputs: Array<{
+      name: string;
+      type: string;
+      description: string;
+      components?: any[];
+    }>;
+    outputs: Array<{
+      name: string;
+      type: string;
+      components?: any[];
+    }>;
+  }>;
+  events?: Array<{
+    name: string;
+    description: string;
+    type: 'event';
+    inputs: Array<{
+      name: string;
+      type: string;
+      description: string;
+      components?: any[];
+      indexed: boolean;
+    }>;
+  }>;
+  constructor?: {
+    name: string;
+    description: string;
+    type: 'constructor';
+    stateMutability: 'nonpayable' | 'payable';
+    inputs: Array<{
+      name: string;
+      type: string;
+      description: string;
+      components?: any[];
+    }>;
+  } | null;
+  errors?: Array<{
+    name: string;
+    description: string;
+    type: 'error';
+    inputs: Array<{
+      name: string;
+      type: string;
+      description: string;
+      components?: any[];
+    }>;
+  }>;
   address?: string;
+  abi: any[];
+  bytecode?: string;
 }
 
 export interface Message {
