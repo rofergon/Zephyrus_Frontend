@@ -48,169 +48,117 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
   useEffect(() => {
     if (deploymentResult?.success && deploymentResult.contractAddress) {
       setEffectiveAddress(deploymentResult.contractAddress);
-      console.log('[FunctionCard] Updated contract address:', deploymentResult.contractAddress);
+      // Solo log crítico para depuración, el resto se elimina
+      console.log('[FunctionCard] Contract deployed:', deploymentResult.contractAddress);
     }
   }, [deploymentResult]);
 
-  // Actualizar la dirección efectiva cuando cambie contractAddress
+  // Actualizar la dirección efectiva cuando cambie el prop contractAddress
   useEffect(() => {
     if (contractAddress) {
       setEffectiveAddress(contractAddress);
-      console.log('[FunctionCard] Updated contract address from props:', contractAddress);
     }
   }, [contractAddress]);
 
   useEffect(() => {
-    if (abi && func.name) {
-      console.log(`[FunctionCard] Validating function "${func.name}" in ABI...`);
-      console.log('[FunctionCard] Full ABI:', abi);
+    if (!abi || !func) return;
+    
+    // Validar que la función exista en el ABI
+    const abiElement = abi.find((element: any) => {
+      return element.type === func.type && element.name === func.name;
+    });
 
-      // Buscar el elemento en el ABI según su tipo
-      const abiElement = abi.find((item: any) => {
-        if (func.type === 'function' && item.type === 'function') {
-          return item.name === func.name;
-        } else if (func.type === 'event' && item.type === 'event') {
-          return item.name === func.name;
-        } else if (func.type === 'constructor' && item.type === 'constructor') {
-          return true; // Solo puede haber un constructor
-        }
-        return false;
-      });
-
-      if (abiElement) {
-        console.log(`[FunctionCard] Found ${func.type} "${func.name}" in ABI:`, abiElement);
-      } else {
-        const availableFunctions = abi
-          .filter((item: any) => item.type === func.type)
-          .map((item: any) => item.name || 'constructor')
-          .filter(Boolean);
-        console.log(`[FunctionCard] ${func.type} "${func.name}" not found in ABI. Available ${func.type}s:`, availableFunctions);
-      }
+    if (!abiElement) {
+      const availableFunctions = abi
+        .filter((element: any) => element.type === func.type)
+        .map((element: any) => element.name);
     }
-  }, [abi, func.name, func.type]);
+  }, [abi, func]);
 
-  // Actualizar el hash de la transacción cuando se reciba
+  // Gestionar la respuesta de una transacción
   useEffect(() => {
     if (hash) {
       setTxHash(hash);
-      console.log(`[FunctionCard] Transaction hash received:`, hash);
     }
   }, [hash]);
 
-  // Actualizar el resultado cuando la transacción se confirme
+  // Gestionar el recibo de la transacción cuando se confirma
   useEffect(() => {
     if (isConfirmed && receipt) {
-      console.log(`[FunctionCard] Transaction confirmed:`, receipt);
-      setResult(receipt);
-      setError(null);
+      // Solo mantener este log crítico
+      console.log(`[FunctionCard] Transaction confirmed successfully`);
     }
   }, [isConfirmed, receipt]);
 
   const handleInputChange = (name: string, value: string) => {
-    setInputValues(prev => ({
+    setInputValues((prev) => ({
       ...prev,
-      [name]: value
+      [name]: value,
     }));
-    console.log('[FunctionCard] Input changed:', name, value);
   };
 
   const handleExecute = async () => {
-    if (!effectiveAddress || !abi || !func.name) {
-      console.error('[FunctionCard] Missing required parameters:', { effectiveAddress, abi, funcName: func.name });
-      return;
-    }
-
-    if (!isConnected || !address) {
-      setError('Please connect your wallet first');
-      console.error('[FunctionCard] Wallet not connected');
-      return;
-    }
+    setIsLoading(true);
+    setError(null);
+    setResult(null);
 
     try {
-      setIsLoading(true);
-      setError(null);
-      setResult(null); // Clear previous results
-
-      // Procesar los valores de entrada
       const processedInputs = func.inputs.map((input) => {
         const value = inputValues[input.name] || '';
-        console.log(`[FunctionCard] Processing input "${input.name}" (${input.type}):`, value);
         
-        // Convert string inputs to appropriate types
-        if (input.type.startsWith('uint') || input.type.startsWith('int')) {
-          // Handle BigInt conversion
-          try {
-            return value === '' ? '0' : BigInt(value).toString();
-          } catch (e) {
-            throw new Error(`Invalid number format for ${input.name}`);
-          }
+        // Procesar según el tipo de datos
+        if (input.type.includes('int') && value) {
+          return BigInt(value);
         } else if (input.type === 'bool') {
           return value.toLowerCase() === 'true';
-        } else if (input.type === 'address') {
-          if (value && !value.match(/^0x[a-fA-F0-9]{40}$/)) {
-            throw new Error(`Invalid address format for ${input.name}`);
-          }
-          return value || address; // Use connected address as default
         }
+        
         return value;
       });
 
-      // Determinar si es una función de lectura o escritura
-      const isViewFunction = func.stateMutability === 'view' || func.stateMutability === 'pure';
-
-      if (isViewFunction) {
-        // Ejecutar función de lectura
-        console.log(`[FunctionCard] Executing read function "${func.name}" with inputs:`, processedInputs);
-        
-        let retryCount = 0;
-        const maxRetries = 3;
-        let lastError;
-
-        while (retryCount < maxRetries) {
-          try {
-            const response = await executeRead(func.name, processedInputs);
-            console.log(`[FunctionCard] Read function "${func.name}" result:`, response);
-            
-            if (response.success) {
-              // Format the result based on the output type
-              const formattedResult = formatFunctionResult(response.data, func.outputs);
-              setResult(formattedResult);
-              break;
-            } else {
-              lastError = new Error(response.error || 'Unknown error occurred');
-              retryCount++;
-              if (retryCount < maxRetries) {
-                console.log(`[FunctionCard] Retrying read (${retryCount}/${maxRetries})...`);
-                await new Promise(resolve => setTimeout(resolve, 1000 * retryCount)); // Exponential backoff
-                continue;
-              }
-              throw lastError;
+      // Función de lectura (view/pure)
+      if (func.stateMutability === 'view' || func.stateMutability === 'pure') {
+        try {
+          const response = await executeRead(func.name, processedInputs);
+          // Log crítico que se mantiene
+          console.log(`[FunctionCard] Read success: ${func.name}`);
+          setResult(response);
+        } catch (error: any) {
+          const retryCount = 0;
+          const maxRetries = 2;
+          
+          // Reintentar en caso de errores transitorios
+          if (retryCount < maxRetries) {
+            try {
+              const response = await executeRead(func.name, processedInputs);
+              setResult(response);
+            } catch (retryError: any) {
+              setError(`Error: ${retryError.message || 'Unknown error'}`);
             }
-          } catch (error) {
-            lastError = error;
-            retryCount++;
-            if (retryCount < maxRetries) {
-              console.log(`[FunctionCard] Retrying read (${retryCount}/${maxRetries})...`);
-              await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
-              continue;
-            }
-            throw error;
+          } else {
+            setError(`Error: ${error.message || 'Unknown error'}`);
           }
         }
-      } else {
-        // Ejecutar función de escritura
-        console.log(`[FunctionCard] Executing write function "${func.name}" with inputs:`, processedInputs);
-        writeContract?.({
-          address: effectiveAddress as `0x${string}`,
-          abi: abi || [],
-          functionName: func.name,
-          args: processedInputs.length > 0 ? processedInputs : [],
-        });
       }
-    } catch (error) {
-      console.error(`[FunctionCard] Error executing ${func.type} "${func.name}":`, error);
-      setError(error instanceof Error ? error.message : String(error));
-      setResult(null); // Clear any partial results
+      // Función de escritura (non-payable/payable)
+      else {
+        // Solo mantener este log crítico
+        console.log(`[FunctionCard] Writing to contract: ${func.name}`);
+
+        // Usar Wagmi writeContract
+        if (abi) {
+          writeContract({
+            address: effectiveAddress as `0x${string}`,
+            abi: abi as any, // Cast a any para evitar el error de tipo
+            functionName: func.name,
+            args: processedInputs,
+          });
+        } else {
+          throw new Error('ABI is undefined');
+        }
+      }
+    } catch (error: any) {
+      setError(`Error: ${error.message || 'Unknown error'}`);
     } finally {
       setIsLoading(false);
     }

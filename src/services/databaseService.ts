@@ -269,43 +269,82 @@ export class DatabaseService {
   async getDeployedContracts(walletAddress: string): Promise<DeployedContract[]> {
     try {
       const validatedAddress = this.validateString(walletAddress, 'walletAddress');
-      console.log(`[DatabaseService] Fetching contracts for wallet: ${validatedAddress}`);
+      console.log(`[DatabaseService] Fetching deployed contracts for wallet: ${validatedAddress}`);
       
-      const response = await fetch(`${this.baseUrl}/contracts/${validatedAddress}`, {
+      const url = `${this.baseUrl}/contracts/${validatedAddress}`;
+      console.log(`[DatabaseService] API URL: ${url}`);
+      
+      const response = await fetch(url, {
         headers: {
           'ngrok-skip-browser-warning': 'true'
         }
       });
       
-      // Check if response is OK
       if (!response.ok) {
-        console.error(`[DatabaseService] Error fetching contracts: ${response.status} ${response.statusText}`);
-        return []; // Return empty array instead of throwing an error
+        console.error(`[DatabaseService] API response not OK: ${response.status} ${response.statusText}`);
+        throw new Error(`API error: ${response.status} ${response.statusText}`);
       }
       
-      // Check content type to ensure we're getting JSON
+      // Check content type
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
-        console.error(`[DatabaseService] Expected JSON but got ${contentType}`);
-        // Try to get the response text for debugging
+        console.error(`[DatabaseService] Unexpected content type: ${contentType}`);
         const text = await response.text();
-        console.error(`[DatabaseService] Non-JSON response: ${text.substring(0, 200)}...`);
-        return []; // Return empty array
+        console.log(`[DatabaseService] Response text (first 200 chars): ${text.substring(0, 200)}`);
+        throw new Error(`Expected JSON response but got ${contentType}`);
       }
       
-      const contracts = await this.handleResponse(response);
-
-      return contracts.map((contract: any) => ({
-        ...contract,
-        sourceCode: contract.source_code ? this.parseSourceCode(contract.source_code) : null,
-        abi: this.parseAbi(contract.abi),
-        constructorArgs: contract.constructor_args ? JSON.parse(contract.constructor_args) : null,
-        networkId: contract.network_id ? contract.network_id.toString() : null
-      }));
+      const data = await response.json();
+      console.log(`[DatabaseService] Complete API response:`, data);
+      
+      // Procesar la respuesta y transformar formatos
+      const contracts = Array.isArray(data) ? data : [];
+      return contracts.map(contract => {
+        // Procesar timestamp: convertir de string "YYYY-MM-DD HH:MM:SS" a timestamp numérico
+        let timestamp = Date.now(); // Valor por defecto
+        
+        if (contract.deployed_at) {
+          console.log(`[DatabaseService] Processing deployed_at timestamp:`, {
+            original: contract.deployed_at,
+            type: typeof contract.deployed_at
+          });
+          
+          try {
+            // Parse the date string to a Date object and then get timestamp
+            const dateObj = new Date(contract.deployed_at);
+            timestamp = dateObj.getTime();
+            
+            console.log(`[DatabaseService] Parsed timestamp for contract ${contract.contract_address}:`, {
+              dateString: contract.deployed_at,
+              dateObj: dateObj.toString(),
+              timestamp
+            });
+          } catch (error) {
+            console.error(`[DatabaseService] Error parsing date:`, error);
+          }
+        }
+        
+        // Solo registrar detalles del primer contrato para evitar sobrecarga de logs
+        if (contracts.indexOf(contract) === 0) {
+          console.log(`[DatabaseService] Transformed first contract:`, {
+            address: contract.contract_address,
+            timestamp,
+            original_deployed_at: contract.deployed_at
+          });
+        }
+        
+        return {
+          ...contract,
+          deployedAt: timestamp, // Agregar campo numérico para facilitar el procesamiento
+          sourceCode: this.parseSourceCode(contract.source_code),
+          abi: contract.abi ? (typeof contract.abi === 'string' ? JSON.parse(contract.abi) : contract.abi) : null,
+          constructorArgs: contract.constructor_args ? JSON.parse(contract.constructor_args) : null,
+          networkId: contract.network_id ? contract.network_id.toString() : null
+        };
+      });
     } catch (error) {
       console.error('[DatabaseService] Error getting deployed contracts:', error);
-      // Return empty array instead of throwing the error
-      return [];
+      throw error;
     }
   }
 
@@ -356,4 +395,7 @@ export class DatabaseService {
       return null;
     }
   }
-} 
+}
+
+// Exportamos la clase solamente
+export default DatabaseService; 

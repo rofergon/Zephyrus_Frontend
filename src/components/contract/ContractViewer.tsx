@@ -7,6 +7,8 @@ import { ContractArtifact, ConsoleMessage } from '../../types/contracts';
 import { useDeployment } from '../../services/deploymentService';
 import { useAccount, useChainId, useSwitchChain } from 'wagmi';
 import 'react-resizable/css/styles.css';
+import ContractVersionHistory from './ContractVersionHistory';
+import { ConversationContext } from '../../services/conversationService';
 
 interface ContractViewerProps {
   currentArtifact: ContractArtifact | null;
@@ -22,6 +24,8 @@ interface ContractViewerProps {
   monacoRef: React.MutableRefObject<typeof monaco | null>;
   conversationId: string;
   addConsoleMessage: (message: string, type: ConsoleMessage['type']) => void;
+  conversationContexts: ConversationContext[];
+  onViewConversation: (contextId: string) => void;
 }
 
 const ContractViewer: React.FC<ContractViewerProps> = ({
@@ -38,6 +42,8 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   monacoRef,
   conversationId,
   addConsoleMessage,
+  conversationContexts,
+  onViewConversation,
 }) => {
   const compileTimeoutRef = useRef<NodeJS.Timeout>();
   const consoleContainerRef = useRef<HTMLDivElement>(null);
@@ -53,22 +59,45 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     transactionHash?: string;
     error?: string;
     timestamp?: number;
+    constructor: any;
   } | null>(null);
   const [constructorArgs, setConstructorArgs] = useState<any[]>([]);
   const [, setError] = useState<string | null>(null);
   const previousCodeRef = useRef(currentCode);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [isLoadedVersionDeployed, setIsLoadedVersionDeployed] = useState(true);
 
-  // Effect to update deployment result when contract address changes
+  // Actualizar el objeto de despliegue cuando la dirección cambia
+  // o cuando se carga una versión desde el historial
   useEffect(() => {
+    console.log('[ContractViewer] Deployment effect triggered:', {
+      contractAddress: currentArtifact?.address,
+      currentArtifactAddress: currentArtifact?.address,
+      isLoadedVersionDeployed
+    });
+    
     if (currentArtifact?.address) {
-      console.log('[ContractViewer] Contract address detected:', currentArtifact.address);
-      setDeploymentResult({
-        success: true,
-        contractAddress: currentArtifact.address
-      });
+      if (isLoadedVersionDeployed) {
+        // Si la versión cargada es la desplegada actualmente, mostrar su dirección
+        console.log('[ContractViewer] Setting deployment result for currently deployed contract:', currentArtifact.address);
+        setDeploymentResult({
+          contractAddress: currentArtifact.address,
+          // @ts-ignore - estos campos pueden no estar en la definición pero los necesitamos
+          transactionHash: currentArtifact.transactionHash || '',
+          // @ts-ignore - estos campos pueden no estar en la definición pero los necesitamos
+          constructor: currentArtifact.constructor || { inputs: [] }
+        });
+      } else {
+        // Si la versión tiene dirección pero no es la actualmente desplegada (histórica)
+        console.log('[ContractViewer] Loaded historical version with address:', currentArtifact.address);
+        setDeploymentResult(null);
+      }
+    } else {
+      // Sin dirección significa versión no desplegada
+      console.log('[ContractViewer] No address present, clearing deployment result');
+      setDeploymentResult(null);
     }
-  }, [currentArtifact?.address]);
+  }, [currentArtifact, isLoadedVersionDeployed]);
 
   // Efecto para manejar cambios automáticos en el código
   useEffect(() => {
@@ -93,11 +122,17 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
           clearTimeout(compileTimeoutRef.current);
         }
         
-        // Programar nueva compilación
+        // Programar nueva compilación con un debounce más largo
         compileTimeoutRef.current = setTimeout(() => {
+          // Skip empty code or very short code that's unlikely to be a valid contract
+          if (!currentCode || currentCode.trim().length < 10) {
+            console.log('[ContractViewer] Skipping compilation for empty or very short code');
+            return;
+          }
+          
           console.log('[ContractViewer] Compiling after external code change');
           onCompile(currentCode);
-        }, 1000);
+        }, 2000); // Increased from 1000ms to 2000ms for more debouncing
       }
     }
   }, [currentCode, onCompile]);
@@ -243,6 +278,22 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       newArgs[index] = value;
       return newArgs;
     });
+  };
+
+  // Manejar la carga de versión desde el historial
+  const handleLoadVersion = (sourceCode: string, isDeployed: boolean) => {
+    console.log(`[ContractViewer] Loading contract version - isDeployed:`, isDeployed);
+    
+    // Actualizar el estado para saber si la versión cargada está desplegada
+    setIsLoadedVersionDeployed(isDeployed);
+    
+    if (sourceCode) {
+      // Actualizar el modelo del editor con el código fuente
+      if (editorRef.current?.getModel()) {
+        editorRef.current.getModel()?.setValue(sourceCode);
+      }
+      onCodeChange(sourceCode);
+    }
   };
 
   if (!currentArtifact) return null;
@@ -547,10 +598,15 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                       <h2 className="text-xl lg:text-2xl font-bold text-white">{currentArtifact.name}</h2>
                       <p className="text-sm lg:text-base text-gray-400 mt-1">{currentArtifact.description}</p>
                     </div>
-                    {currentArtifact.address && (
+                    {currentArtifact.address && isLoadedVersionDeployed && (
                       <div className="flex-shrink-0 flex items-center space-x-2 px-3 py-1.5 bg-gray-800/50 rounded-lg border border-gray-700/50">
                         <span className="text-sm text-gray-400 whitespace-nowrap">Deployed at:</span>
                         <code className="text-sm text-blue-400 break-all">{currentArtifact.address}</code>
+                      </div>
+                    )}
+                    {!isLoadedVersionDeployed && (
+                      <div className="flex-shrink-0 flex items-center space-x-2 px-3 py-1.5 bg-yellow-800/20 rounded-lg border border-yellow-700/50">
+                        <span className="text-sm text-yellow-400 whitespace-nowrap">Historical Version (Not Deployed)</span>
                       </div>
                     )}
                   </div>
@@ -715,15 +771,15 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                 {consoleMessages.map((msg) => (
                   <div
                     key={msg.id}
-                    className={`flex items-start space-x-2 p-2 rounded-lg transition-all duration-200 animate-fade-in ${
-                      msg.type === 'error' 
-                        ? 'bg-red-500/10 text-red-400' 
-                        : msg.type === 'warning'
-                        ? 'bg-yellow-500/10 text-yellow-400'
-                        : 'bg-gray-700/50 text-gray-300'
-                    }`}
+                    className={`
+                      p-2 text-sm rounded-md mb-1 flex justify-between
+                      ${msg.type === 'error' ? 'bg-red-800/30 text-red-400' : 
+                        msg.type === 'warning' ? 'bg-yellow-800/30 text-yellow-400' : 
+                        msg.type === 'success' ? 'bg-green-800/30 text-green-400' : 
+                        'bg-blue-800/30 text-blue-400'
+                      }`}
                   >
-                    <div className="flex-1 whitespace-pre-wrap">{msg.message}</div>
+                    <div className="flex-1 whitespace-pre-wrap">{msg.content}</div>
                     <div className="flex-none text-xs text-gray-500">
                       {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}
                     </div>
@@ -736,17 +792,28 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
           </div>
         </div>
 
+        {/* Contract Version History */}
+        <div className="mx-4 lg:mx-6 mb-4">
+          <ContractVersionHistory
+            contractAddress={currentArtifact?.address}
+            conversationContexts={conversationContexts}
+            activeContextId={conversationId}
+            onLoadVersion={handleLoadVersion}
+            onViewConversation={onViewConversation}
+          />
+        </div>
+
         {/* Deploy Section */}
         {currentArtifact.bytecode && (
           <div className={`mt-4 p-4 ${
-            currentArtifact.address || deploymentResult?.contractAddress 
+            (currentArtifact.address && isLoadedVersionDeployed) || deploymentResult?.contractAddress 
               ? 'bg-gray-800/70 border-gray-700/30' 
               : 'bg-gray-800/90'
             } backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl`}>
             
             {/* Display different UI based on whether contract is already deployed */}
-            {(currentArtifact.address || deploymentResult?.contractAddress) ? (
-              // Compact version for redeployment
+            {((currentArtifact.address && isLoadedVersionDeployed) || deploymentResult?.contractAddress) ? (
+              // Compact version for redeployment - esta versión actualmente desplegada
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-400">
@@ -770,7 +837,7 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                 </button>
               </div>
             ) : (
-              // Full version for initial deployment
+              // Full version for initial deployment o versión histórica
               <>
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center space-x-3">
@@ -779,7 +846,14 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                     </div>
                     <div>
                       <h3 className="text-lg font-semibold text-white">Deploy Contract</h3>
-                      <p className="text-sm text-gray-400">Deploy this contract to the blockchain</p>
+                      {/* Si es una versión histórica (tiene address pero no es la desplegada) */}
+                      {!isLoadedVersionDeployed && currentArtifact.address && (
+                        <p className="text-sm text-yellow-400">This is a historical version (previously deployed to {currentArtifact.address.substring(0, 6)}...{currentArtifact.address.substring(38)})</p>
+                      )}
+                      {/* Si no tiene address o es la versión actualmente desplegada */}
+                      {(!currentArtifact.address || isLoadedVersionDeployed) && (
+                        <p className="text-sm text-gray-400">Deploy this contract to the blockchain</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -808,13 +882,23 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                 <button
                   onClick={handleDeploy}
                   disabled={isDeploying || !isConnected}
-                  className={`w-full py-2 px-4 rounded-lg ${
+                  className={`w-full py-2 rounded-lg ${
                     isDeploying || !isConnected
                       ? 'bg-gray-700 cursor-not-allowed'
                       : 'bg-blue-600 hover:bg-blue-700'
-                  } text-white transition-colors duration-200`}
+                  } text-white font-medium transition-colors duration-200 flex items-center justify-center space-x-2`}
                 >
-                  {isDeploying ? 'Deploying...' : 'Deploy Contract'}
+                  {isDeploying ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>Deploying...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RocketLaunchIcon className="w-5 h-5" />
+                      <span>Deploy Contract</span>
+                    </>
+                  )}
                 </button>
               </>
             )}
@@ -827,24 +911,27 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                   ? 'bg-green-900/20 border-green-700'
                   : 'bg-red-900/20 border-red-700'
               }`}>
-                <h4 className={`text-sm font-medium mb-1 ${
-                  deploymentResult.success ? 'text-green-400' : 'text-red-400'
-                }`}>
-                  {deploymentResult.success ? 'Deployment Successful' : 'Deployment Failed'}
-                </h4>
                 {deploymentResult.success ? (
-                  <div className="space-y-2">
-                    <div className="text-sm text-gray-300">
-                      <span className="text-gray-400">Contract Address: </span>
-                      <code className="text-blue-400">{deploymentResult.contractAddress}</code>
-                    </div>
-                    <div className="text-sm text-gray-300">
-                      <span className="text-gray-400">Transaction Hash: </span>
-                      <code className="text-blue-400">{deploymentResult.transactionHash}</code>
-                    </div>
+                  <div className="text-green-400">
+                    <p>Contract deployed successfully!</p>
+                    <p className="mt-1 text-sm">
+                      Address: <code className="text-xs">{deploymentResult.contractAddress}</code>
+                    </p>
+                    {deploymentResult.transactionHash && (
+                      <p className="mt-1 text-sm">
+                        TX Hash: <code className="text-xs">{deploymentResult.transactionHash}</code>
+                      </p>
+                    )}
                   </div>
                 ) : (
-                  <div className="text-sm text-red-300">{deploymentResult.error}</div>
+                  <div className="text-red-400">
+                    <p>Deployment failed</p>
+                    {deploymentResult.error && (
+                      <p className="mt-1 text-sm overflow-auto">
+                        Error: <code className="text-xs">{deploymentResult.error}</code>
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             )}

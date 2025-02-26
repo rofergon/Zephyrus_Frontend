@@ -4,7 +4,7 @@ import { CompilationResult } from '../types/contracts';
 export class CompilationHandlerService {
   private static instance: CompilationHandlerService;
 
-  private constructor() {}
+  constructor() {}
 
   public static getInstance(): CompilationHandlerService {
     if (!CompilationHandlerService.instance) {
