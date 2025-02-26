@@ -23,6 +23,14 @@ interface ContextMenuProps {
   canPaste: boolean;
 }
 
+// Define interface for MenuItem props
+interface MenuItemProps {
+  icon: React.ElementType;
+  text: string;
+  onClick: () => void;
+  disabled?: boolean;
+}
+
 const ContextMenu: React.FC<ContextMenuProps> = ({
   x,
   y,
@@ -49,19 +57,23 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
     onClose();
   };
 
-  const MenuItem = ({ icon: Icon, text, onClick, disabled = false }) => (
-    <button
-      className={`w-full px-4 py-2 text-sm text-left flex items-center space-x-2 
+  // Using a more explicit typing approach for the MenuItem component
+  const MenuItem: React.FC<MenuItemProps> = ({ icon, text, onClick, disabled = false }) => {
+    const Icon = icon as React.ComponentType<React.SVGProps<SVGSVGElement>>;
+    return (
+      <button
+        className={`w-full px-4 py-2 text-sm text-left flex items-center space-x-2 
         ${disabled 
           ? 'text-gray-500 cursor-not-allowed' 
           : 'text-gray-300 hover:bg-gray-700'}`}
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-    >
-      <Icon className="w-4 h-4" />
-      <span>{text}</span>
-    </button>
-  );
+        onClick={disabled ? undefined : onClick}
+        disabled={disabled}
+      >
+        <Icon className="w-4 h-4" />
+        <span>{text}</span>
+      </button>
+    );
+  };
 
   return (
     <>

@@ -23,6 +23,21 @@ export class DatabaseService {
     return value.trim();
   }
 
+  // New helper method to preserve wallet address case
+  private normalizeWalletAddress(address: string): string {
+    // We should preserve the original case format for wallet addresses
+    // as some APIs and services might be case-sensitive
+    // Just ensure it's properly trimmed and valid
+    const trimmed = address.trim();
+    
+    // Basic validation that it's an Ethereum address
+    if (!/^0x[0-9a-fA-F]{40}$/.test(trimmed)) {
+      console.warn('[DatabaseService] Invalid wallet address format:', trimmed);
+    }
+    
+    return trimmed;
+  }
+
   private async handleResponse(response: Response): Promise<any> {
     try {
       if (!response.ok) {
@@ -57,7 +72,7 @@ export class DatabaseService {
   // Usuarios
   async createUser(walletAddress: string) {
     try {
-      const validatedAddress = this.validateString(walletAddress, 'walletAddress');
+      const validatedAddress = this.normalizeWalletAddress(walletAddress);
       const response = await fetch(`${this.baseUrl}/users`, {
         method: 'POST',
         headers: {
@@ -75,7 +90,7 @@ export class DatabaseService {
 
   async getUser(walletAddress: string) {
     try {
-      const validatedAddress = this.validateString(walletAddress, 'walletAddress');
+      const validatedAddress = this.normalizeWalletAddress(walletAddress);
       const response = await fetch(`${this.baseUrl}/users/${validatedAddress}`, {
         headers: {
           'ngrok-skip-browser-warning': 'true'
@@ -91,7 +106,7 @@ export class DatabaseService {
   // Conversaciones
   async createConversation(walletAddress: string, name: string): Promise<{ id: string }> {
     try {
-      const validatedAddress = this.validateString(walletAddress, 'walletAddress');
+      const validatedAddress = this.normalizeWalletAddress(walletAddress);
       const validatedName = this.validateString(name, 'name');
 
       const response = await fetch(`${this.baseUrl}/conversations`, {
@@ -115,7 +130,7 @@ export class DatabaseService {
 
   async getConversations(walletAddress: string) {
     try {
-      const validatedAddress = this.validateString(walletAddress, 'walletAddress');
+      const validatedAddress = this.normalizeWalletAddress(walletAddress);
       const response = await fetch(`${this.baseUrl}/conversations/${validatedAddress}`, {
         headers: {
           'ngrok-skip-browser-warning': 'true'
@@ -245,7 +260,7 @@ export class DatabaseService {
           'ngrok-skip-browser-warning': 'true'
         },
         body: JSON.stringify({
-          walletAddress: this.validateString(contractData.walletAddress, 'walletAddress'),
+          walletAddress: this.normalizeWalletAddress(contractData.walletAddress),
           conversationId: this.validateString(contractData.conversationId, 'conversationId'),
           contractAddress: this.validateString(contractData.contractAddress, 'contractAddress'),
           name: this.validateString(contractData.name, 'name'),
@@ -268,7 +283,7 @@ export class DatabaseService {
 
   async getDeployedContracts(walletAddress: string): Promise<DeployedContract[]> {
     try {
-      const validatedAddress = this.validateString(walletAddress, 'walletAddress');
+      const validatedAddress = this.normalizeWalletAddress(walletAddress);
       console.log(`[DatabaseService] Fetching deployed contracts for wallet: ${validatedAddress}`);
       
       const url = `${this.baseUrl}/contracts/${validatedAddress}`;
@@ -295,6 +310,18 @@ export class DatabaseService {
       }
       
       const data = await response.json();
+      
+      // Enhanced logging for empty API responses to help with debugging
+      if (!data || (Array.isArray(data) && data.length === 0)) {
+        console.warn(`[DatabaseService] API returned empty result for address: ${validatedAddress}`);
+        console.log(`[DatabaseService] Original wallet address: ${walletAddress}`);
+        console.log(`[DatabaseService] Normalized wallet address: ${validatedAddress}`);
+        console.log(`[DatabaseService] Request URL: ${url}`);
+        console.log(`[DatabaseService] Response headers:`, Object.fromEntries([...response.headers.entries()]));
+      } else {
+        console.log(`[DatabaseService] API returned ${Array.isArray(data) ? data.length : 'non-array'} results`);
+      }
+      
       console.log(`[DatabaseService] Complete API response:`, data);
       
       // Procesar la respuesta y transformar formatos

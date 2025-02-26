@@ -467,7 +467,7 @@ const AssistedChat: React.FC = () => {
             const lastContract = contracts[0];
             // Create contract artifact from the deployed contract
             const contractArtifact: ContractArtifact = {
-              name: lastContract.name,
+              name: lastContract.name || 'Unnamed Contract',
               description: 'Deployed Smart Contract',
               address: lastContract.contract_address,
               abi: typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [],
@@ -479,8 +479,18 @@ const AssistedChat: React.FC = () => {
                   description: `${item.name}(${(item.inputs || []).map((input: any) => `${input.type} ${input.name}`).join(', ')})`,
                   type: 'function' as 'function',
                   stateMutability: item.stateMutability,
-                  inputs: item.inputs || [],
-                  outputs: item.outputs || []
+                  inputs: (item.inputs || []).map((input: any) => ({
+                    name: input.name || 'value',
+                    type: input.type,
+                    internalType: input.internalType,
+                    components: input.components
+                  })),
+                  outputs: (item.outputs || []).map((output: any) => ({
+                    name: output.name || 'value',
+                    type: output.type,
+                    internalType: output.internalType,
+                    components: output.components
+                  }))
                 })),
               events: [],
               constructor: null,
@@ -573,7 +583,7 @@ const AssistedChat: React.FC = () => {
 
           // Create contract artifact from the deployed contract
           const contractArtifact: ContractArtifact = {
-            name: lastContract.name,
+            name: lastContract.name || 'Unnamed Contract',
             description: 'Deployed Smart Contract',
             address: lastContract.contract_address,
             abi: typeof lastContract.abi === 'string' ? JSON.parse(lastContract.abi) : lastContract.abi || [],
@@ -588,12 +598,13 @@ const AssistedChat: React.FC = () => {
                 inputs: (item.inputs || []).map((input: any) => ({
                   name: input.name || 'value',
                   type: input.type,
-                  description: `Input parameter of type ${input.type}`,
+                  internalType: input.internalType,
                   components: input.components
                 })),
                 outputs: (item.outputs || []).map((output: any) => ({
                   name: output.name || 'value',
                   type: output.type,
+                  internalType: output.internalType,
                   components: output.components
                 }))
               })),

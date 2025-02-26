@@ -1,22 +1,16 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   FolderIcon, 
-  DocumentIcon, 
   PlusIcon, 
-  TrashIcon,
-  PencilIcon,
   FolderPlusIcon,
   DocumentPlusIcon,
   FolderOpenIcon,
   MagnifyingGlassIcon,
-  DocumentTextIcon,
-  CodeBracketIcon,
-  PhotoIcon
+  CodeBracketIcon
 } from '@heroicons/react/24/outline';
 import { virtualFS } from '../services/virtual-fs';
 import { Dialog, Transition } from '@headlessui/react';
 import { Fragment } from 'react';
-import { Tooltip } from 'react-tooltip';
 import ContextMenu from './ContextMenu';
 
 interface FileExplorerProps {
@@ -48,15 +42,15 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
   const [files, setFiles] = useState<FileSystemItem[]>([]);
   const [expandedFolders, setExpandedFolders] = useState<string[]>(['contracts']);
   const [showNewItemMenu, setShowNewItemMenu] = useState(false);
-  const [isRenaming, setIsRenaming] = useState<string | null>(null);
-  const [newName, setNewName] = useState('');
+  const [, setIsRenaming] = useState<string | null>(null);
+  const [, setNewName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [itemToDelete, setItemToDelete] = useState<string | null>(null);
+  const [, setShowDeleteModal] = useState(false);
+  const [, setItemToDelete] = useState<string | null>(null);
   const [showNewFileModal, setShowNewFileModal] = useState(false);
-  const [showNewFolderModal, setShowNewFolderModal] = useState(false);
+  const [, setShowNewFolderModal] = useState(false);
   const [operationSuccess, setOperationSuccess] = useState<string | null>(null);
   const [draggedItem, setDraggedItem] = useState<DragItem | null>(null);
   const [dragOverItem, setDragOverItem] = useState<string | null>(null);
@@ -181,11 +175,11 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
 
       let result;
       if (draggedItem.type === 'directory') {
-        result = await virtualFS.moveDirectory(sourcePath, newPath, {
+        result = await virtualFS.moveDirectory(sourcePath, newPath || '', {
           autoRename: true
         });
       } else {
-        result = await virtualFS.moveFile(sourcePath, newPath, {
+        result = await virtualFS.moveFile(sourcePath, newPath || '', {
           autoRename: true
         });
       }
@@ -229,36 +223,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
     }
   };
 
-  const handleNewFolder = async (folderName: string) => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      await virtualFS.writeFile(`${folderName}/.gitkeep`, '');
-      await loadFiles();
-      showSuccess('Folder created successfully');
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Error creating folder');
-    } finally {
-      setIsLoading(false);
-      setShowNewFolderModal(false);
-    }
-  };
 
-  const handleDelete = async (path: string) => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      await virtualFS.deleteFile(path);
-      await loadFiles();
-      showSuccess('Item deleted successfully');
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Error deleting item');
-    } finally {
-      setIsLoading(false);
-      setShowDeleteModal(false);
-      setItemToDelete(null);
-    }
-  };
 
   const toggleFolder = (path: string) => {
     setExpandedFolders(prev => 
@@ -301,9 +266,9 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
       const newPath = targetPath ? `${targetPath}/${fileName}` : fileName;
 
       if (clipboard.type === 'directory') {
-        await virtualFS.moveDirectory(sourcePath, newPath, { autoRename: true });
+        await virtualFS.moveDirectory(sourcePath, newPath || '', { autoRename: true });
       } else {
-        await virtualFS.moveFile(sourcePath, newPath, { autoRename: true });
+        await virtualFS.moveFile(sourcePath, newPath || '', { autoRename: true });
       }
 
       await forceReload();
@@ -545,10 +510,12 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
           }}
           onCopy={handleCopy}
           onPaste={handlePaste}
-          onNewFile={(path) => {
+          onNewFile={() => {
+            // Path from context menu is available but not used in this implementation
             setShowNewFileModal(true);
           }}
-          onNewFolder={(path) => {
+          onNewFolder={() => {
+            // Path from context menu is available but not used in this implementation
             setShowNewFolderModal(true);
           }}
           canPaste={!!clipboard}

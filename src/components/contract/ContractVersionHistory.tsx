@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
+import { useAccount } from 'wagmi';
 import { 
   ClockIcon, 
   DocumentDuplicateIcon, 
@@ -53,6 +54,7 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const databaseService = DatabaseService.getInstance();
+  const { address } = useAccount();
 
   // Obtener los contratos de la base de datos
   useEffect(() => {
@@ -62,24 +64,18 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
       try {
         const allVersions: ContractVersion[] = [];
         
-        // Obtener dirección de la wallet conectada
-        // Usando type assertion para evitar conflictos con la declaración existente
-        let walletAddress = '';
-        if (typeof window !== 'undefined' && window.hasOwnProperty('ethereum')) {
-          // Safe access with type assertion
-          const ethereum = window['ethereum' as keyof Window] as { selectedAddress?: string } | undefined;
-          walletAddress = ethereum?.selectedAddress || '';
-        }
-        
-        if (!walletAddress) {
+        // Use the wallet address from wagmi's useAccount hook
+        if (!address) {
           console.log('[ContractVersionHistory] No wallet address available');
           setIsLoading(false);
           return;
         }
         
+        console.log('[ContractVersionHistory] Using wallet address:', address);
+        
         // Obtener todos los contratos desplegados para esta dirección de wallet
         try {
-          const deployedContracts = await databaseService.getDeployedContracts(walletAddress);
+          const deployedContracts = await databaseService.getDeployedContracts(address);
           console.log('[ContractVersionHistory] Deployed contracts:', deployedContracts);
           console.log('[ContractVersionHistory] Current contract address prop:', contractAddress);
           
@@ -98,39 +94,73 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
             const isActiveDeployment = !!(contractAddress && 
               contract.contract_address?.toLowerCase() === contractAddress?.toLowerCase());
             
-            // Utilizar preferentemente el campo deployedAt ya procesado, o caer en el procesamiento normal
-            const timestamp = contract.deployedAt || (() => {
-              try {
-                return new Date(contract.deployed_at || Date.now()).getTime();
-              } catch (e) {
-                console.error('[ContractVersionHistory] Error parsing date:', e);
-                return Date.now();
+            // Process the timestamp properly
+            let timestamp: number;
+            try {
+              // First try to use the deployedAt field if available
+              if (contract.deployedAt && typeof contract.deployedAt === 'number') {
+                timestamp = contract.deployedAt;
+              } 
+              // Next try to parse the deployed_at string
+              else if (contract.deployed_at) {
+                // Check if deployed_at format is yyyy-MM-dd HH:mm:ss
+                if (typeof contract.deployed_at === 'string' && contract.deployed_at.includes('-')) {
+                  timestamp = new Date(contract.deployed_at).getTime();
+                } else {
+                  timestamp = Number(contract.deployed_at);
+                }
+              } else {
+                timestamp = Date.now();
               }
-            })();
+            } catch (e) {
+              console.error('[ContractVersionHistory] Error parsing timestamp:', e);
+              timestamp = Date.now();
+            }
             
+            // Log for debugging
             console.log(`[ContractVersionHistory] Processing contract ${contract.contract_address}:`, {
               isActiveDeployment,
               timestamp,
+              deployed_at: contract.deployed_at,
               address: contract.contract_address,
               currentAddress: contractAddress
             });
             
-            // Todos los contratos de la base de datos tienen dirección, 
-            // pero solo uno es el despliegue activo
+            // Extract source code properly
+            let sourceCodeContent = '';
+            try {
+              if (typeof contract.sourceCode === 'string') {
+                sourceCodeContent = contract.sourceCode;
+              } else if (typeof contract.source_code === 'string') {
+                // Try to parse source_code as JSON if it looks like JSON
+                if (contract.source_code.trim().startsWith('{')) {
+                  const parsedSource = JSON.parse(contract.source_code);
+                  sourceCodeContent = parsedSource.content || contract.source_code;
+                } else {
+                  sourceCodeContent = contract.source_code;
+                }
+              } else if (contract.sourceCode && typeof contract.sourceCode === 'object' && contract.sourceCode.content) {
+                sourceCodeContent = contract.sourceCode.content;
+              } else {
+                sourceCodeContent = JSON.stringify(contract.sourceCode || contract.source_code || '');
+              }
+            } catch (e) {
+              console.error('[ContractVersionHistory] Error parsing source code:', e);
+              sourceCodeContent = typeof contract.source_code === 'string' ? contract.source_code : '';
+            }
+            
+            // All contracts from the database have an address and should be marked as deployed
+            // But only one is the currently active deployment
             allVersions.push({
               id: contract.id || `contract-${Math.random().toString(36).substring(2, 9)}`,
-              name: contract.name || 'Unnamed Contract',
+              name: contract.name || 'Smart Contract',
               address: contract.contract_address,
-              timestamp: timestamp,
-              sourceCode: typeof contract.sourceCode === 'string' 
-                ? contract.sourceCode 
-                : (typeof contract.source_code === 'string' 
-                  ? contract.source_code 
-                  : JSON.stringify(contract.sourceCode || contract.source_code || '')),
+              timestamp,
+              sourceCode: sourceCodeContent,
               conversationId: contract.conversation_id || '',
               conversationName: conversationContexts.find(ctx => ctx.id === (contract.conversation_id || ''))?.name || 'Unknown Conversation',
-              txHash: contract.tx_hash || contract.transactionHash || '', // Usar el hash de transacción real si está disponible
-              isDeployed: isActiveDeployment // Active deployment = currently deployed
+              txHash: contract.tx_hash || contract.transactionHash || '',
+              isDeployed: isActiveDeployment // Only the current address is marked as actively deployed
             });
           });
         } catch (error) {
@@ -163,7 +193,7 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
               if (!isAlreadyIncluded) {
                 allVersions.push({
                   id: `${context.id}_${path}`,
-                  name: path.split('/').pop() || 'Unnamed Contract',
+                  name: path.split('/').pop() || 'Contract.sol',
                   timestamp: (file as VirtualFile).timestamp,
                   sourceCode: (file as VirtualFile).content,
                   conversationId: context.id,
@@ -187,7 +217,7 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
     };
     
     loadVersions();
-  }, [conversationContexts, contractAddress, databaseService]);
+  }, [conversationContexts, contractAddress, databaseService, address]);
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
