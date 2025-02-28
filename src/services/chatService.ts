@@ -56,6 +56,14 @@ export class ChatService {
   private messageHandler: ((message: AgentResponse) => void) | null = null;
   private connectionChangeHandler: ((connected: boolean) => void) | null = null;
   private chatsLoadedHandler: ((chats: ChatInfo[]) => void) | null = null;
+  
+  // Message buffering system
+  private messageBuffer: string = '';
+  private messageBufferTimeout: NodeJS.Timeout | null = null;
+  private bufferTimeWindow: number = 500; // Time in ms to wait before processing buffered messages (no longer readonly)
+  private messageMetadata: any = null; // Store metadata from first message
+  private readonly paragraphThreshold: number = 500; // Minimum length to consider processing paragraphs separately
+  private debugBuffering: boolean = false; // Debug option to log buffering decisions
 
   constructor() {
     this.messageHandler = null;
@@ -118,7 +126,11 @@ export class ChatService {
             return;
           }
 
-          if (this.messageHandler) {
+          // Buffer AI messages to combine fragments into coherent paragraphs
+          if (data.type === 'message' && this.messageHandler) {
+            this.bufferMessage(data);
+          } else if (this.messageHandler) {
+            // For non-message types, process normally
             this.messageHandler(data as AgentResponse);
           }
         } catch (error) {
@@ -399,5 +411,130 @@ export class ChatService {
 
     console.log('[ChatService] Deleting context:', message);
     this.ws.send(JSON.stringify(message));
+  }
+
+  // New method to buffer messages
+  private bufferMessage(data: AgentResponse): void {
+    // Clear any existing timeout
+    if (this.messageBufferTimeout) {
+      clearTimeout(this.messageBufferTimeout);
+    }
+    
+    // Add to buffer
+    this.messageBuffer += data.content;
+    
+    // Store metadata from the first fragment if it exists
+    if (data.metadata && !this.messageMetadata) {
+      this.messageMetadata = data.metadata;
+    }
+    
+    // Set a new timeout to process the buffer
+    this.messageBufferTimeout = setTimeout(() => {
+      if (this.messageBuffer && this.messageHandler) {
+        // Check if we should process the buffer as paragraphs
+        if (this.messageBuffer.length > this.paragraphThreshold) {
+          this.processMessageBuffer();
+        } else {
+          // Create a new response with the buffered content
+          const bufferedResponse: AgentResponse = {
+            type: 'message',
+            content: this.messageBuffer,
+            metadata: this.messageMetadata
+          };
+          
+          // Send the combined message to the handler
+          this.messageHandler(bufferedResponse);
+          
+          // Clear the buffer and metadata
+          this.messageBuffer = '';
+          this.messageMetadata = null;
+        }
+      }
+    }, this.bufferTimeWindow);
+  }
+
+  // Process the message buffer intelligently
+  private processMessageBuffer(): void {
+    if (!this.messageBuffer || !this.messageHandler) {
+      return;
+    }
+
+    if (this.debugBuffering) {
+      console.log('[ChatService] Processing message buffer:', this.messageBuffer.substring(0, 100) + '...');
+    }
+
+    // For messages containing code blocks, send the entire message as one unit
+    if (this.messageBuffer.includes('```')) {
+      if (this.debugBuffering) {
+        console.log('[ChatService] Message contains code blocks, sending as single message');
+      }
+      
+      const bufferedResponse: AgentResponse = {
+        type: 'message',
+        content: this.messageBuffer,
+        metadata: this.messageMetadata
+      };
+      
+      this.messageHandler(bufferedResponse);
+    } 
+    // For messages with markdown headings, preserve the formatting
+    else if (/^#{1,6} .*$/m.test(this.messageBuffer)) {
+      if (this.debugBuffering) {
+        console.log('[ChatService] Message contains markdown headings, preserving format');
+      }
+      
+      // Clean up the text by removing excessive newlines and normalizing spacing
+      let cleanedText = this.messageBuffer
+        .replace(/\n{3,}/g, '\n\n') // Replace 3+ newlines with double newlines
+        .trim();
+      
+      const bufferedResponse: AgentResponse = {
+        type: 'message',
+        content: cleanedText,
+        metadata: this.messageMetadata
+      };
+      
+      this.messageHandler(bufferedResponse);
+    }
+    // For normal text, combine into a single well-formed message
+    else {
+      if (this.debugBuffering) {
+        console.log('[ChatService] Processing as regular text message');
+      }
+      
+      // Clean up the text by removing excessive newlines and normalizing spacing
+      let cleanedText = this.messageBuffer
+        .replace(/\n{3,}/g, '\n\n') // Replace 3+ newlines with double newlines
+        .trim();
+      
+      const bufferedResponse: AgentResponse = {
+        type: 'message',
+        content: cleanedText,
+        metadata: this.messageMetadata
+      };
+      
+      this.messageHandler(bufferedResponse);
+    }
+    
+    // Clear the buffer
+    this.messageBuffer = '';
+    this.messageMetadata = null;
+  }
+
+  // Enable/disable debug logging for message buffering
+  public setDebugBuffering(enabled: boolean): void {
+    this.debugBuffering = enabled;
+  }
+  
+  // Customize the buffer time window
+  public setBufferTimeWindow(timeMs: number): void {
+    if (timeMs >= 100 && timeMs <= 2000) {
+      if (this.debugBuffering) {
+        console.log(`[ChatService] Setting buffer time window to ${timeMs}ms`);
+      }
+      this.bufferTimeWindow = timeMs;
+    } else {
+      console.warn('[ChatService] Invalid buffer time window. Must be between 100ms and 2000ms');
+    }
   }
 } 

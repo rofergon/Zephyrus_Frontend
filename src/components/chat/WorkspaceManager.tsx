@@ -4,10 +4,9 @@ import {
   PlusIcon, 
   CheckIcon,
   XMarkIcon, 
-  PencilIcon,
   FolderArrowDownIcon
 } from '@heroicons/react/24/outline';
-import { Workspace, conversationService } from '../../services/conversationService';
+import { Workspace } from '../../services/conversationService';
 
 interface WorkspaceManagerProps {
   contextId: string;
@@ -18,7 +17,6 @@ interface WorkspaceManagerProps {
 }
 
 const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
-  contextId,
   workspaces,
   activeWorkspaceId,
   onWorkspaceSwitch,

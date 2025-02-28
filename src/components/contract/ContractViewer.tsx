@@ -66,6 +66,7 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   const previousCodeRef = useRef(currentCode);
   const [autoScroll, setAutoScroll] = useState(true);
   const [isLoadedVersionDeployed, setIsLoadedVersionDeployed] = useState(true);
+  const [isDeploymentCollapsed, setIsDeploymentCollapsed] = useState(false);
 
   // Actualizar el objeto de despliegue cuando la dirección cambia
   // o cuando se carga una versión desde el historial
@@ -601,7 +602,14 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                     {currentArtifact.address && isLoadedVersionDeployed && (
                       <div className="flex-shrink-0 flex items-center space-x-2 px-3 py-1.5 bg-gray-800/50 rounded-lg border border-gray-700/50">
                         <span className="text-sm text-gray-400 whitespace-nowrap">Deployed at:</span>
-                        <code className="text-sm text-blue-400 break-all">{currentArtifact.address}</code>
+                        <a 
+                          href={`https://testnet.sonicscan.org/address/${currentArtifact.address}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-blue-400 break-all hover:text-blue-300 hover:underline transition-colors"
+                        >
+                          {currentArtifact.address}
+                        </a>
                       </div>
                     )}
                     {!isLoadedVersionDeployed && (
@@ -821,7 +829,14 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                   </div>
                   <div className="text-sm">
                     <span className="text-gray-400">Deployed at: </span>
-                    <code className="text-blue-400 text-xs">{currentArtifact.address || deploymentResult?.contractAddress}</code>
+                    <a 
+                      href={`https://testnet.sonicscan.org/address/${currentArtifact.address || deploymentResult?.contractAddress}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+                    >
+                      {currentArtifact.address || deploymentResult?.contractAddress}
+                    </a>
                   </div>
                 </div>
                 <button
@@ -856,29 +871,49 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                       )}
                     </div>
                   </div>
+                  {/* Toggle button for collapsing the deployment section */}
+                  <button
+                    onClick={() => setIsDeploymentCollapsed(!isDeploymentCollapsed)}
+                    className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+                    title={isDeploymentCollapsed ? "Expand" : "Collapse"}
+                  >
+                    <svg 
+                      className={`w-5 h-5 transition-transform ${isDeploymentCollapsed ? 'rotate-180' : ''}`} 
+                      fill="none" 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
                 </div>
 
-                {/* Constructor Arguments */}
-                {constructor && constructor.inputs && constructor.inputs.length > 0 && (
-                  <div className="space-y-4 mb-4">
-                    <h4 className="text-sm font-medium text-gray-400">Constructor Arguments</h4>
-                    {constructor.inputs.map((input: { name: string; type: string }, index: number) => (
-                      <div key={index} className="space-y-1">
-                        <label className="text-sm text-gray-400">
-                          {input.name} ({input.type})
-                        </label>
-                        <input
-                          type="text"
-                          onChange={(e) => handleConstructorArgChange(index, e.target.value)}
-                          placeholder={`Enter ${input.type}`}
-                          className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
+                {/* Content only shown when not collapsed */}
+                {!isDeploymentCollapsed && (
+                  <>
+                    {/* Constructor Arguments */}
+                    {constructor && constructor.inputs && constructor.inputs.length > 0 && (
+                      <div className="space-y-4 mb-4">
+                        <h4 className="text-sm font-medium text-gray-400">Constructor Arguments</h4>
+                        {constructor.inputs.map((input: { name: string; type: string }, index: number) => (
+                          <div key={index} className="space-y-1">
+                            <label className="text-sm text-gray-400">
+                              {input.name} ({input.type})
+                            </label>
+                            <input
+                              type="text"
+                              onChange={(e) => handleConstructorArgChange(index, e.target.value)}
+                              placeholder={`Enter ${input.type}`}
+                              className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    )}
+                  </>
                 )}
 
-                {/* Deploy Button for initial deployment */}
+                {/* Deploy Button for initial deployment - always visible */}
                 <button
                   onClick={handleDeploy}
                   disabled={isDeploying || !isConnected}
@@ -915,11 +950,27 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                   <div className="text-green-400">
                     <p>Contract deployed successfully!</p>
                     <p className="mt-1 text-sm">
-                      Address: <code className="text-xs">{deploymentResult.contractAddress}</code>
+                      Address: {' '}
+                      <a 
+                        href={`https://testnet.sonicscan.org/address/${deploymentResult.contractAddress}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs underline hover:text-blue-400 transition-colors"
+                      >
+                        {deploymentResult.contractAddress}
+                      </a>
                     </p>
                     {deploymentResult.transactionHash && (
                       <p className="mt-1 text-sm">
-                        TX Hash: <code className="text-xs">{deploymentResult.transactionHash}</code>
+                        TX Hash: {' '}
+                        <a 
+                          href={`https://testnet.sonicscan.org/tx/${deploymentResult.transactionHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs underline hover:text-blue-400 transition-colors"
+                        >
+                          {deploymentResult.transactionHash}
+                        </a>
                       </p>
                     )}
                   </div>

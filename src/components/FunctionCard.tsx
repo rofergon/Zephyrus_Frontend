@@ -24,7 +24,7 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
   const [isLoading, setIsLoading] = useState(false);
   const [effectiveAddress, setEffectiveAddress] = useState<string>(contractAddress || '');
   const [txHash, setTxHash] = useState<Hash | undefined>();
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
   const { executeRead } = useContractInteraction(effectiveAddress, abi || []);
 
   // Configurar useWriteContract para funciones de escritura
@@ -69,9 +69,6 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
     });
 
     if (!abiElement) {
-      const availableFunctions = abi
-        .filter((element: any) => element.type === func.type)
-        .map((element: any) => element.name);
     }
   }, [abi, func]);
 
@@ -165,31 +162,6 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
   };
 
   // Helper function to format function results
-  const formatFunctionResult = (result: any, outputs?: { type: string; name: string }[]) => {
-    if (!outputs || outputs.length === 0) return result;
-
-    // Handle single output
-    if (outputs.length === 1) {
-      const output = outputs[0];
-      if (output.type.startsWith('uint') || output.type.startsWith('int')) {
-        return result.toString();
-      }
-      return result;
-    }
-
-    // Handle multiple outputs
-    if (Array.isArray(result)) {
-      return result.map((value, index) => {
-        const output = outputs[index];
-        if (output.type.startsWith('uint') || output.type.startsWith('int')) {
-          return value.toString();
-        }
-        return value;
-      });
-    }
-
-    return result;
-  };
 
   return (
     <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-700/50 p-4 hover:border-blue-500/50 transition-colors">

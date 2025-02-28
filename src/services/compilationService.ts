@@ -1,12 +1,10 @@
 import { ContractArtifact } from '../types/contracts';
 import * as monaco from 'monaco-editor';
-import { CompilationHandlerService } from './compilationHandlerService';
 import { ConsoleMessage } from '../types/contracts';
 
 export class CompilationService {
   private static instance: CompilationService;
   private apiUrl: string;
-  private compilationHandler: CompilationHandlerService;
   private lastCompiledCode: string = '';
   private lastCompilationTimestamp: number = 0;
   private compilationInProgress: boolean = false;
@@ -27,7 +25,6 @@ export class CompilationService {
     this.apiUrl = `${cleanBaseUrl}/api/compile`;
     
     console.log('[CompilationService] Initialized with API URL:', this.apiUrl);
-    this.compilationHandler = new CompilationHandlerService();
   }
 
   public static getInstance(): CompilationService {
@@ -144,7 +141,6 @@ export class CompilationService {
       });
 
       // Optimized with better error handling for CORS issues
-      const corsProxyPrefix = ''; // Can be filled with a CORS proxy URL if needed
       
       console.log(`[CompilationService] Sending compile request to: ${this.apiUrl}`);
       
@@ -162,26 +158,59 @@ export class CompilationService {
 
         console.log('[CompilationService] Response status:', response.status);
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error('[CompilationService] API error response:', errorText);
-          throw new Error(`Compilation failed: ${response.status} ${response.statusText}`);
+        const responseText = await response.text();
+        console.log('[CompilationService] API response:', responseText);
+
+        let compilationResult;
+        try {
+          // Try to parse as JSON first
+          compilationResult = JSON.parse(responseText);
+        } catch (e) {
+          // If it's not JSON, assume it's a compilation error message
+          // Format the error message to match the expected structure
+          const errorLines = responseText.split('\n');
+          const formattedMessage = errorLines.join('\n');
+          
+          compilationResult = {
+            success: false,
+            error: {
+              formattedMessage: formattedMessage,
+              severity: 'error',
+              errorCode: 'ParserError'
+            }
+          };
         }
 
-        const compilationResult = await response.json();
-        console.log('[CompilationService] Compilation result:', compilationResult);
+        console.log('[CompilationService] Parsed compilation result:', compilationResult);
         
         let result;
-        if (compilationResult.error) {
+        if (!response.ok || compilationResult.error) {
+          // Handle both JSON errors and plain text compilation errors
+          const errorInfo = typeof compilationResult.error === 'string' 
+            ? { formattedMessage: compilationResult.error, severity: 'error' }
+            : compilationResult.error;
+
           result = {
             success: false,
-            markers: this.convertErrorsToMarkers([{ 
-              formattedMessage: compilationResult.error,
-              severity: 'error'
-            }], monaco),
-            error: compilationResult.error,
+            markers: this.convertErrorsToMarkers([errorInfo], monaco),
+            error: errorInfo.formattedMessage,
             output: null
           };
+
+          // Don't clear the current artifact on compilation errors
+          // This prevents the Contract Viewer from disappearing
+          this.handleCompilationResult(
+            result,
+            monaco,
+            model,
+            addConsoleMessage,
+            (artifact) => {
+              // Only update the artifact if we're setting a new one
+              if (artifact !== null) {
+                setCurrentArtifact(artifact);
+              }
+            }
+          );
         } else {
           // Handle successful compilation with new format
           result = {
@@ -189,18 +218,18 @@ export class CompilationService {
             markers: [],
             output: compilationResult
           };
+          
+          this.handleCompilationResult(
+            result,
+            monaco,
+            model,
+            addConsoleMessage,
+            setCurrentArtifact
+          );
         }
         
         // Cache the result for future use
         this.compilationResults.set(code, result);
-        
-        this.handleCompilationResult(
-          result,
-          monaco,
-          model,
-          addConsoleMessage,
-          setCurrentArtifact
-        );
 
       } catch (networkError: unknown) {
         console.error('[CompilationService] Network or CORS error:', networkError);

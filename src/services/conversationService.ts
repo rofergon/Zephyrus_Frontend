@@ -19,6 +19,7 @@ export interface Message {
   sender: 'user' | 'ai';
   timestamp: number;
   isTyping?: boolean;
+  showAnimation?: boolean;
 }
 
 export interface ConversationContext {
@@ -39,7 +40,6 @@ export class ConversationService {
   private contexts: ConversationContext[] = [];
   private activeContextId: string | null = null;
   private storageKey = 'zephyrus_conversation_contexts';
-  private workspaceStorageKey = 'zephyrus_workspaces';
 
   constructor() {
     this.loadFromStorage();
@@ -153,9 +153,6 @@ export class ConversationService {
 
   private subscribers: ((contexts: ConversationContext[]) => void)[] = [];
 
-  private notifySubscribers(): void {
-    this.subscribers.forEach(subscriber => subscriber([...this.contexts]));
-  }
 
   public subscribe(callback: (contexts: ConversationContext[]) => void): () => void {
     this.subscribers.push(callback);

@@ -69,6 +69,8 @@ export interface Message {
     label: string;
     onClick: () => void;
   }>;
+  isTyping?: boolean;
+  showAnimation?: boolean;
 }
 
 export interface ConsoleMessage {
