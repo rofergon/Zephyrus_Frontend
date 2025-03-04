@@ -21,6 +21,9 @@ async def handle_websocket_connection(
         return
 
     try:
+        logger.info(f"Attempting connection - Wallet: {wallet_address}")
+        
+        # Permitir la conexión inicial sin chat_id
         await manager.connect(websocket, wallet_address)
         
         while True:
@@ -31,6 +34,44 @@ async def handle_websocket_connection(
                 context = message_data.get("context", {})
                 message_type = message_data.get("type", "message")
                 chat_id = message_data.get("chat_id")
+
+                # Solo verificar chat_id para mensajes que lo requieran
+                if message_type not in ["create_context", "contexts_loaded", "sync_contexts"] and not chat_id:
+                    logger.error(f"No chat_id provided for message type: {message_type}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": "No chat_id provided"
+                    })
+                    continue
+
+                # Manejar la creación de un nuevo chat
+                if message_type == "create_context":
+                    try:
+                        # Verificar si ya existe un chat con este ID
+                        existing_chat = manager.chat_manager.get_chat(wallet_address, chat_id) if chat_id else None
+                        
+                        if existing_chat:
+                            logger.info(f"Chat {chat_id} already exists for wallet {wallet_address}")
+                            await websocket.send_json({
+                                "type": "context_created",
+                                "content": existing_chat.to_dict()
+                            })
+                        else:
+                            # Crear nuevo chat
+                            new_chat = manager.chat_manager.create_chat(wallet_address, content or "New Chat")
+                            logger.info(f"Created new chat: {new_chat.chat_id} for wallet: {wallet_address}")
+                            await websocket.send_json({
+                                "type": "context_created",
+                                "content": new_chat.to_dict()
+                            })
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error creating chat: {str(e)}")
+                        await websocket.send_json({
+                            "type": "error",
+                            "content": f"Error creating chat: {str(e)}"
+                        })
+                        continue
 
                 if message_type == "save_file":
                     try:

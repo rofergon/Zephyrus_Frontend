@@ -58,6 +58,7 @@ export interface ContractArtifact {
   events?: ContractEvent[];
   errors?: ContractError[];
   constructor: ContractConstructor | null;
+  transactionHash?: string;
 }
 
 export interface Message {

@@ -36,7 +36,11 @@ export class DeploymentService {
     sourceCode: string = ''
   ): Promise<DeploymentResult> {
     try {
-      console.log('[DeploymentService] Starting contract deployment...');
+      console.log('[DeploymentService] Starting contract deployment with params:', {
+        walletAddress,
+        conversationId,
+        contractName
+      });
       
       // Validate conversation ID
       if (!conversationId) {
@@ -111,19 +115,10 @@ export class DeploymentService {
       };
 
       try {
-        // Primero intentar crear la conversación si no existe
-        const { id: conversationId } = await this.dbService.createConversation(
-          walletAddress,
-          `Contract Deployment - ${contractName}`
-        );
-
-        // Actualizar el ID de conversación en los datos del contrato
-        contractData.conversationId = conversationId;
-
-        // Save the deployed contract in the database
+        // Save the deployed contract in the database using the existing conversation ID
         await this.dbService.saveDeployedContract(contractData);
 
-        // Save deployment message in conversation
+        // Save deployment message in the same conversation
         await this.dbService.saveMessage(
           conversationId,
           `Contract deployed successfully at ${receipt.contractAddress}`,

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import Editor from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import {   MagnifyingGlassIcon,  BoltIcon,  RocketLaunchIcon,} from '@heroicons/react/24/outline';
@@ -9,6 +9,7 @@ import { useAccount, useChainId, useSwitchChain } from 'wagmi';
 import 'react-resizable/css/styles.css';
 import ContractVersionHistory from './ContractVersionHistory';
 import { ConversationContext } from '../../services/conversationService';
+import DatabaseService from '../../services/databaseService';
 
 interface ContractViewerProps {
   currentArtifact: ContractArtifact | null;
@@ -26,13 +27,14 @@ interface ContractViewerProps {
   addConsoleMessage: (message: string, type: ConsoleMessage['type']) => void;
   conversationContexts: ConversationContext[];
   onViewConversation: (contextId: string) => void;
+  onArtifactUpdated: (artifact: ContractArtifact) => void;
 }
 
 const ContractViewer: React.FC<ContractViewerProps> = ({
   currentArtifact,
   currentCode,
   showCodeEditor,
-  isMaximized,
+  isMaximized: isMaximizedProp,
   consoleHeight,
   consoleMessages,
   onCodeChange,
@@ -44,29 +46,254 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   addConsoleMessage,
   conversationContexts,
   onViewConversation,
+  onArtifactUpdated,
 }) => {
   const compileTimeoutRef = useRef<NodeJS.Timeout>();
   const consoleContainerRef = useRef<HTMLDivElement>(null);
   const consoleContentRef = useRef<HTMLDivElement>(null);
   const { deployContract } = useDeployment();
-  const { isConnected } = useAccount();
+  const { isConnected, address } = useAccount();
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
-  const [isDeploying, setIsDeploying] = useState(false);
-  const [deploymentResult, setDeploymentResult] = useState<{
-    success?: boolean;
-    contractAddress?: string;
-    transactionHash?: string;
-    error?: string;
-    timestamp?: number;
-    constructor: any;
-  } | null>(null);
+  const [isMaximized] = useState(isMaximizedProp);
+  const [] = useState(consoleHeight);
+  const [deploymentResult, setDeploymentResult] = useState<any>(null);
+  const [isLoadedVersionDeployed, setIsLoadedVersionDeployed] = useState(false);
+  const [isNewlyDeployed, setIsNewlyDeployed] = useState(false);
+  const [] = useState(false);
   const [constructorArgs, setConstructorArgs] = useState<any[]>([]);
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [] = useState(true);
+  const [] = useState<'functions' | 'events' | 'demo'>('functions');
   const [, setError] = useState<string | null>(null);
   const previousCodeRef = useRef(currentCode);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [isLoadedVersionDeployed, setIsLoadedVersionDeployed] = useState(true);
   const [isDeploymentCollapsed, setIsDeploymentCollapsed] = useState(false);
+
+  // Función para resetear el estado de despliegue
+  const resetDeploymentState = useCallback(() => {
+    console.log('[ContractViewer] Resetting deployment state');
+    setDeploymentResult(null);
+    setIsLoadedVersionDeployed(false);
+    setIsNewlyDeployed(false);
+    
+    // Si el artefacto actual tiene una dirección, la eliminamos
+    if (currentArtifact?.address) {
+      const updatedArtifact = {
+        ...currentArtifact,
+        address: undefined
+      };
+      onArtifactUpdated(updatedArtifact);
+    }
+  }, [currentArtifact, onArtifactUpdated]);
+
+  // Función para generar un hash del código
+  const generateCodeHash = (code: any): string => {
+    // Asegurarse de que el código sea un string
+    let codeString = '';
+    if (typeof code === 'string') {
+      codeString = code;
+    } else if (typeof code === 'object' && code !== null) {
+      // Si es un objeto, intentar obtener el contenido
+      codeString = code.content || code.sourceCode || JSON.stringify(code);
+    } else {
+      codeString = String(code || '');
+    }
+    return codeString.replace(/\s+/g, '').trim();
+  };
+
+  // Efecto para sincronizar la dirección del contrato con la versión actual del código
+  useEffect(() => {
+    const syncContractAddress = async () => {
+      if (!currentCode || !conversationContexts || !address) return;
+      
+      console.log('[ContractViewer] Syncing contract address for current code');
+      
+      try {
+        // Generar un hash del código actual
+        const newCodeHash = generateCodeHash(currentCode);
+        
+        const databaseService = DatabaseService.getInstance();
+        const deployedContracts = await databaseService.getDeployedContracts(address);
+        
+        console.log('[ContractViewer] Found deployed contracts:', deployedContracts);
+        
+        // Buscar el contrato desplegado que coincida con este código
+        const matchingContract = deployedContracts.find((contract: any) => {
+          const contractHash = generateCodeHash(contract.sourceCode || contract.source_code);
+          const matches = contractHash === newCodeHash;
+          console.log('[ContractViewer] Comparing hashes:', {
+            contractHash,
+            newCodeHash,
+            matches,
+            address: contract.contract_address
+          });
+          return matches;
+        });
+        
+        if (matchingContract?.contract_address) {
+          console.log('[ContractViewer] Found matching deployed contract:', matchingContract);
+          // Si encontramos el contrato desplegado, actualizar el estado
+          setDeploymentResult({
+            success: true,
+            contractAddress: matchingContract.contract_address,
+            transactionHash: matchingContract.tx_hash || matchingContract.transactionHash || '',
+            constructor: matchingContract.constructor || { inputs: [] },
+            timestamp: Date.now(),
+            conversationId: matchingContract.conversation_id || conversationId
+          });
+          setIsLoadedVersionDeployed(true);
+        } else {
+          console.log('[ContractViewer] No matching deployed contract found');
+          // Si no encontramos coincidencia, limpiar el estado de despliegue
+          setDeploymentResult(null);
+          setIsLoadedVersionDeployed(false);
+        }
+      } catch (error) {
+        console.error('Error syncing contract address:', error);
+      }
+    };
+
+    syncContractAddress();
+  }, [currentCode, conversationContexts, address]);
+
+  // Efecto para escuchar eventos de carga de versiones
+  useEffect(() => {
+    const handleVersionLoaded = (event: CustomEvent) => {
+      const deploymentData = event.detail;
+      console.log('[ContractViewer] Version loaded event received:', deploymentData);
+      
+      // Actualizar el estado del resultado de despliegue
+      setDeploymentResult(deploymentData);
+      
+      // Actualizar explícitamente el estado de despliegue basado en los datos recibidos
+      setIsLoadedVersionDeployed(deploymentData.isDeployed || false);
+      setIsNewlyDeployed(false); // Esto es una versión cargada, no recién desplegada
+      
+      // Lo más importante: si el currentArtifact existe, actualizamos su dirección
+      if (currentArtifact && deploymentData.contractAddress) {
+        console.log('[ContractViewer] Updating contract artifact address:', deploymentData.contractAddress);
+        // Clonar el artefacto para evitar mutaciones directas del estado
+        const updatedArtifact = {
+          ...currentArtifact,
+          address: deploymentData.contractAddress,
+          // Agregar explícitamente información adicional que pueda ser útil
+          transactionHash: deploymentData.transactionHash || '',
+          isDeployed: deploymentData.isDeployed || false
+        };
+        
+        // Actualizar el artefacto con la nueva dirección
+        onArtifactUpdated(updatedArtifact);
+        
+        // Guardar los datos para posible restauración después de compilación
+        const addressToPreserve = deploymentData.contractAddress;
+        
+        // Programar una comprobación posterior para asegurar que la dirección permanezca 
+        // después de cualquier posible compilación
+        setTimeout(() => {
+          // Verificar si la dirección sigue siendo la misma
+          if (currentArtifact && (!currentArtifact.address || currentArtifact.address !== addressToPreserve)) {
+            console.log('[ContractViewer] Post-check: Restoring contract address that was lost:', addressToPreserve);
+            const restoredArtifact = {
+              ...currentArtifact,
+              address: addressToPreserve,
+              isDeployed: deploymentData.isDeployed || false
+            };
+            onArtifactUpdated(restoredArtifact);
+            
+            // También actualizar el estado de despliegue nuevamente
+            setIsLoadedVersionDeployed(deploymentData.isDeployed || false);
+          }
+        }, 1500); // Esperar un tiempo suficiente para que ocurra cualquier compilación
+      }
+    };
+
+    // Añadir el listener
+    window.addEventListener('contract-version-loaded', handleVersionLoaded as EventListener);
+
+    // Limpiar el listener
+    return () => {
+      window.removeEventListener('contract-version-loaded', handleVersionLoaded as EventListener);
+    };
+  }, [currentArtifact]);
+
+  // Efecto para detectar cuando se registra una nueva versión del contrato
+  useEffect(() => {
+    const handleNewVersion = (event: CustomEvent) => {
+      console.log('[ContractViewer] New contract version registered:', event.detail);
+      
+      // Cuando se registra una nueva versión, debemos resetear el estado de despliegue
+      // ya que esta versión acaba de crearse y no puede estar desplegada
+      resetDeploymentState();
+    };
+
+    // Añadir el listener para nuevas versiones
+    window.addEventListener('contract-version-registered', handleNewVersion as EventListener);
+
+    // Limpiar el listener
+    return () => {
+      window.removeEventListener('contract-version-registered', handleNewVersion as EventListener);
+    };
+  }, [resetDeploymentState]);
+
+  // Nuevo efecto para cargar el estado inicial del contrato
+  useEffect(() => {
+    const loadInitialContractState = async () => {
+      if (!currentArtifact?.address || !address || !conversationId) return;
+      
+      console.log('[ContractViewer] Loading initial contract state:', {
+        address: currentArtifact.address,
+        isLoadedVersionDeployed,
+        conversationId,
+        currentArtifact
+      });
+
+      try {
+        // Obtener el contrato de la base de datos para asegurar que tenemos toda la información
+        const databaseService = DatabaseService.getInstance();
+        const deployedContracts = await databaseService.getDeployedContracts(address);
+        
+        // Buscar el contrato actual en los desplegados
+        const currentContract = deployedContracts.find(
+          (contract: any) => currentArtifact?.address && 
+            contract.contract_address?.toLowerCase() === currentArtifact.address.toLowerCase()
+        );
+
+        if (currentContract) {
+          console.log('[ContractViewer] Found current contract in database:', currentContract);
+          // Establecer el estado inicial del deployment result
+          setDeploymentResult({
+            success: true,
+            contractAddress: currentContract.contract_address,
+            transactionHash: currentContract.tx_hash || currentContract.transactionHash || '',
+            constructor: currentContract.constructor || { inputs: [] },
+            timestamp: Date.now(),
+            conversationId: currentContract.conversation_id || conversationId
+          });
+          setIsLoadedVersionDeployed(true);
+        }
+      } catch (error) {
+        console.error('[ContractViewer] Error loading initial contract state:', error);
+      }
+    };
+
+    loadInitialContractState();
+  }, [currentArtifact, address, conversationId]);
+
+  // Efecto adicional para sincronizar el estado cuando cambia el conversationId
+  useEffect(() => {
+    if (!conversationId) return;
+    
+    console.log('[ContractViewer] Conversation ID changed:', conversationId);
+    
+    // Si tenemos un resultado de despliegue, actualizamos su conversationId
+    if (deploymentResult?.contractAddress) {
+      setDeploymentResult((prev: any) => ({
+        ...prev,
+        conversationId
+      }));
+    }
+  }, [conversationId]);
 
   // Actualizar el objeto de despliegue cuando la dirección cambia
   // o cuando se carga una versión desde el historial
@@ -77,28 +304,60 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       isLoadedVersionDeployed
     });
     
+    // Guarda el estado anterior para poder restaurarlo si es necesario
+    const prevDeploymentResult = deploymentResult;
+    
     if (currentArtifact?.address) {
       if (isLoadedVersionDeployed) {
         // Si la versión cargada es la desplegada actualmente, mostrar su dirección
         console.log('[ContractViewer] Setting deployment result for currently deployed contract:', currentArtifact.address);
-        setDeploymentResult({
-          contractAddress: currentArtifact.address,
-          // @ts-ignore - estos campos pueden no estar en la definición pero los necesitamos
-          transactionHash: currentArtifact.transactionHash || '',
-          // @ts-ignore - estos campos pueden no estar en la definición pero los necesitamos
-          constructor: currentArtifact.constructor || { inputs: [] }
+        
+        // Preservar los datos existentes para evitar sobreescribirlos
+        setDeploymentResult((prev: any) => {
+          const newResult = {
+            success: true,
+            contractAddress: currentArtifact.address,
+            // @ts-ignore - estos campos pueden no estar en la definición pero los necesitamos
+            transactionHash: currentArtifact.transactionHash || (prev?.transactionHash || ''),
+            // @ts-ignore - estos campos pueden no estar en la definición pero los necesitamos
+            constructor: currentArtifact.constructor || (prev?.constructor || { inputs: [] }),
+            conversationId,
+            timestamp: Date.now(),
+            isDeployed: true
+          };
+          console.log('[ContractViewer] Updated deployment result:', newResult);
+          return newResult;
         });
+      } else if (prevDeploymentResult?.contractAddress === currentArtifact.address) {
+        // Esta condición es para evitar el cambio a versión histórica cuando en realidad
+        // debería seguir considerándose como desplegada
+        console.log('[ContractViewer] Preserving deployment status for address:', currentArtifact.address);
+        setIsLoadedVersionDeployed(true);
       } else {
         // Si la versión tiene dirección pero no es la actualmente desplegada (histórica)
         console.log('[ContractViewer] Loaded historical version with address:', currentArtifact.address);
-        setDeploymentResult(null);
+        // No anular el resultado de despliegue si la dirección coincide
+        if (prevDeploymentResult?.contractAddress !== currentArtifact.address) {
+          setDeploymentResult(null);
+        }
+      }
+    } else if (prevDeploymentResult && isLoadedVersionDeployed) {
+      // Si tenemos un resultado de despliegue pero el artefacto perdió su dirección
+      // (probablemente durante compilación), restaurar la dirección
+      console.log('[ContractViewer] Restoring address from deployment result:', prevDeploymentResult.contractAddress);
+      if (currentArtifact) {
+        const updatedArtifact = {
+          ...currentArtifact,
+          address: prevDeploymentResult.contractAddress
+        };
+        onArtifactUpdated(updatedArtifact);
       }
     } else {
-      // Sin dirección significa versión no desplegada
-      console.log('[ContractViewer] No address present, clearing deployment result');
+      // Sin dirección y sin previo despliegue significa versión no desplegada
+      console.log('[ContractViewer] No address present and no previous deployment, clearing deployment result');
       setDeploymentResult(null);
     }
-  }, [currentArtifact, isLoadedVersionDeployed]);
+  }, [currentArtifact, isLoadedVersionDeployed, conversationId]);
 
   // Efecto para manejar cambios automáticos en el código
   useEffect(() => {
@@ -242,13 +501,19 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       // Add timestamp to deployment result
       const resultWithTimestamp = {
         ...result,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        constructor: result.constructor || { inputs: [] },
+        conversationId
       };
       
       setDeploymentResult(resultWithTimestamp);
       
       // Add a success message to the console
       if (result.success) {
+        // Set as newly deployed
+        setIsNewlyDeployed(true);
+        setIsLoadedVersionDeployed(true);
+        
         const successMessage = `Deployment Successful! Contract address: ${result.contractAddress}`;
         // Use the addConsoleMessage prop to add message to console
         addConsoleMessage(successMessage, 'info');
@@ -259,7 +524,9 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       setDeploymentResult({
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        constructor: { inputs: [] },
+        conversationId
       });
       
       // Add error message to console
@@ -281,21 +548,54 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     });
   };
 
-  // Manejar la carga de versión desde el historial
+  // Function to handle loading a specific version
   const handleLoadVersion = (sourceCode: string, isDeployed: boolean) => {
-    console.log(`[ContractViewer] Loading contract version - isDeployed:`, isDeployed);
+    console.log('[ContractViewer] Loading version:', { 
+      isDeployed, 
+      currentCodeLength: currentCode?.length, 
+      newCodeLength: sourceCode?.length,
+      isSameCode: sourceCode === currentCode
+    });
     
-    // Actualizar el estado para saber si la versión cargada está desplegada
+    // Primero actualizamos el estado de si la versión está desplegada
     setIsLoadedVersionDeployed(isDeployed);
     
-    if (sourceCode) {
-      // Actualizar el modelo del editor con el código fuente
-      if (editorRef.current?.getModel()) {
-        editorRef.current.getModel()?.setValue(sourceCode);
-      }
+    // Solo actualizar el código si es diferente
+    if (sourceCode !== currentCode) {
+      // Actualizar el código
       onCodeChange(sourceCode);
+      
+      // Compilar el nuevo código
+      onCompile(sourceCode);
+      
+      // Resetear el estado de despliegue
+      resetDeploymentState();
+      
+      // Disparar evento para notificar a otros componentes
+      const codeUpdateEvent = new CustomEvent('code_updated', { 
+        detail: { content: sourceCode, isDeployed } 
+      });
+      window.dispatchEvent(codeUpdateEvent);
+      
+      console.log('[ContractViewer] Code updated and event dispatched');
+    } else {
+      console.log('[ContractViewer] Code unchanged, skipping update');
     }
   };
+
+  // Add a specific effect to handle code updates from WebSocket
+  useEffect(() => {
+    if (currentCode && currentCode !== previousCodeRef.current) {
+      console.log('[ContractViewer] Code updated from WebSocket:', currentCode.substring(0, 100) + '...');
+      previousCodeRef.current = currentCode;
+      
+      // Reset deployment state when code changes
+      resetDeploymentState();
+      
+      // Force a re-render by updating a state value
+      setAutoScroll(true);
+    }
+  }, [currentCode, resetDeploymentState]);
 
   if (!currentArtifact) return null;
 
@@ -822,35 +1122,74 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
             {/* Display different UI based on whether contract is already deployed */}
             {((currentArtifact.address && isLoadedVersionDeployed) || deploymentResult?.contractAddress) ? (
               // Compact version for redeployment - esta versión actualmente desplegada
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-400">
-                    <RocketLaunchIcon className="w-4 h-4" />
+              <>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-400">
+                      <RocketLaunchIcon className="w-4 h-4" />
+                    </div>
+                    <div className="text-sm">
+                      <span className="text-gray-400">Deployed at: </span>
+                      <a 
+                        href={`https://testnet.sonicscan.org/address/${currentArtifact.address || deploymentResult?.contractAddress}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+                      >
+                        {currentArtifact.address || deploymentResult?.contractAddress}
+                      </a>
+                    </div>
                   </div>
-                  <div className="text-sm">
-                    <span className="text-gray-400">Deployed at: </span>
-                    <a 
-                      href={`https://testnet.sonicscan.org/address/${currentArtifact.address || deploymentResult?.contractAddress}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+                  <div className="flex items-center gap-2">
+                    {/* Toggle button for constructor arguments */}
+                    <button
+                      onClick={() => setIsDeploymentCollapsed(!isDeploymentCollapsed)}
+                      className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+                      title={isDeploymentCollapsed ? "Show constructor arguments" : "Hide constructor arguments"}
                     >
-                      {currentArtifact.address || deploymentResult?.contractAddress}
-                    </a>
+                      <svg 
+                        className={`w-5 h-5 transition-transform ${isDeploymentCollapsed ? 'rotate-180' : ''}`} 
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={handleDeploy}
+                      disabled={isDeploying || !isConnected}
+                      className={`px-3 py-1.5 text-sm rounded-md ${
+                        isDeploying || !isConnected
+                          ? 'bg-gray-700 cursor-not-allowed'
+                          : 'bg-yellow-600 hover:bg-yellow-700'
+                      } text-white transition-colors duration-200`}
+                    >
+                      {isDeploying ? 'Deploying...' : 'Redeploy'}
+                    </button>
                   </div>
                 </div>
-                <button
-                  onClick={handleDeploy}
-                  disabled={isDeploying || !isConnected}
-                  className={`px-3 py-1.5 text-sm rounded-md ${
-                    isDeploying || !isConnected
-                      ? 'bg-gray-700 cursor-not-allowed'
-                      : 'bg-yellow-600 hover:bg-yellow-700'
-                  } text-white transition-colors duration-200`}
-                >
-                  {isDeploying ? 'Deploying...' : 'Redeploy'}
-                </button>
-              </div>
+                
+                {/* Constructor Arguments in compact view */}
+                {!isDeploymentCollapsed && constructor && constructor.inputs && constructor.inputs.length > 0 && (
+                  <div className="mt-4 space-y-4">
+                    <h4 className="text-sm font-medium text-gray-400">Constructor Arguments</h4>
+                    {constructor.inputs.map((input: { name: string; type: string }, index: number) => (
+                      <div key={index} className="space-y-1">
+                        <label className="text-sm text-gray-400">
+                          {input.name} ({input.type})
+                        </label>
+                        <input
+                          type="text"
+                          onChange={(e) => handleConstructorArgChange(index, e.target.value)}
+                          placeholder={`Enter ${input.type}`}
+                          className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             ) : (
               // Full version for initial deployment o versión histórica
               <>
@@ -940,7 +1279,8 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
 
             {/* Show deployment result only temporarily after a deployment */}
             {deploymentResult && deploymentResult.timestamp && 
-             Date.now() - deploymentResult.timestamp < 10000 && (
+             Date.now() - deploymentResult.timestamp < 10000 && 
+             isNewlyDeployed && (
               <div className={`mt-4 p-3 rounded-lg border animate-fade-in ${
                 deploymentResult.success
                   ? 'bg-green-900/20 border-green-700'

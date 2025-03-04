@@ -48,7 +48,6 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
   useEffect(() => {
     if (deploymentResult?.success && deploymentResult.contractAddress) {
       setEffectiveAddress(deploymentResult.contractAddress);
-      // Solo log crítico para depuración, el resto se elimina
       console.log('[FunctionCard] Contract deployed:', deploymentResult.contractAddress);
     }
   }, [deploymentResult]);
@@ -57,8 +56,34 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
   useEffect(() => {
     if (contractAddress) {
       setEffectiveAddress(contractAddress);
+      console.log('[FunctionCard] Contract address updated:', contractAddress);
     }
   }, [contractAddress]);
+
+  // Validar la dirección del contrato al iniciar
+  useEffect(() => {
+    const validateContractAddress = async () => {
+      const address = contractAddress || deploymentResult?.contractAddress;
+      if (address) {
+        try {
+          // Verificar que la dirección es válida
+          const isValid = /^0x[a-fA-F0-9]{40}$/.test(address);
+          if (isValid) {
+            setEffectiveAddress(address);
+            console.log('[FunctionCard] Valid contract address set:', address);
+          } else {
+            console.error('[FunctionCard] Invalid contract address format:', address);
+            setError('Invalid contract address format');
+          }
+        } catch (error) {
+          console.error('[FunctionCard] Error validating contract address:', error);
+          setError('Error validating contract address');
+        }
+      }
+    };
+
+    validateContractAddress();
+  }, []); // Solo se ejecuta una vez al montar el componente
 
   useEffect(() => {
     if (!abi || !func) return;

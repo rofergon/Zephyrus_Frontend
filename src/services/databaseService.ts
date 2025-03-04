@@ -3,6 +3,7 @@ import { DeployedContract } from '../types/contracts';
 export class DatabaseService {
   private static instance: DatabaseService;
   private baseUrl: string;
+  private currentWalletAddress: string | null = null;
 
   private constructor() {
     // Use environment variable for API URL with fallback
@@ -14,6 +15,12 @@ export class DatabaseService {
       DatabaseService.instance = new DatabaseService();
     }
     return DatabaseService.instance;
+  }
+
+  // Método para establecer la dirección de wallet actual
+  public setCurrentWalletAddress(address: string | null): void {
+    this.currentWalletAddress = address;
+    console.log(`[DatabaseService] Current wallet address set to: ${address}`);
   }
 
   private validateString(value: any, fieldName: string): string {
@@ -420,6 +427,95 @@ export class DatabaseService {
     } catch (error) {
       console.error('[DatabaseService] Error parsing ABI:', error);
       return null;
+    }
+  }
+
+  /**
+   * Verifica si una conversación existe en la base de datos
+   * @param conversationId ID de la conversación a verificar
+   * @returns true si la conversación existe, false en caso contrario
+   */
+  public async checkConversationExists(conversationId: string): Promise<boolean> {
+    try {
+      if (!conversationId) {
+        return false;
+      }
+
+      const validatedId = this.validateString(conversationId, 'conversationId');
+      console.log(`[DatabaseService] Checking if conversation exists: ${validatedId}`);
+      
+      // Como no tenemos un endpoint específico, intentaremos obtener los mensajes de esta conversación
+      const response = await fetch(`${this.baseUrl}/messages/${validatedId}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
+
+      if (response.status === 404 || response.status === 500) {
+        console.log(`[DatabaseService] Conversation ${validatedId} does not exist (status: ${response.status})`);
+        return false;
+      }
+
+      // Si llegamos aquí, la conversación existe
+      console.log(`[DatabaseService] Conversation ${validatedId} exists`);
+      return true;
+    } catch (error) {
+      console.error('[DatabaseService] Error checking conversation existence:', error);
+      // En caso de error, asumimos que no existe para ser conservadores
+      return false;
+    }
+  }
+
+  /**
+   * Actualiza el ID de conversación de un contrato en la base de datos
+   * @param contractId ID del contrato a actualizar
+   * @param conversationId Nuevo ID de conversación
+   */
+  public async updateContractConversationId(contractId: string, conversationId: string): Promise<void> {
+    try {
+      if (!contractId || !conversationId) {
+        console.warn('[DatabaseService] Missing contractId or conversationId for update');
+        return;
+      }
+
+      // Verificar primero si la conversación existe
+      const conversationExists = await this.checkConversationExists(conversationId);
+      if (!conversationExists) {
+        console.warn(`[DatabaseService] Conversation ${conversationId} does not exist. Creating it first.`);
+        
+        // Si la conversación no existe y tenemos una wallet activa, intentar crearla
+        if (this.currentWalletAddress) {
+          try {
+            await this.createConversation(this.currentWalletAddress, "Auto-created for contract");
+            console.log(`[DatabaseService] Created conversation for contract: ${conversationId}`);
+          } catch (createError) {
+            console.error('[DatabaseService] Failed to create conversation:', createError);
+            throw new Error(`Conversation ${conversationId} does not exist and could not be created`);
+          }
+        } else {
+          throw new Error(`Conversation ${conversationId} does not exist and no wallet is available to create it`);
+        }
+      }
+
+      console.log(`[DatabaseService] Updating contract ${contractId} with conversation ${conversationId}`);
+      
+      const url = `${this.baseUrl}/contracts/${contractId}/conversation`;
+      const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ conversationId: conversationId })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to update contract conversation: ${response.status} ${response.statusText}`);
+      }
+
+      console.log(`[DatabaseService] Successfully updated contract ${contractId} with conversation ${conversationId}`);
+    } catch (error) {
+      console.error('[DatabaseService] Error updating contract conversation ID:', error);
+      throw error;
     }
   }
 }

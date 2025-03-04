@@ -383,6 +383,13 @@ export class CompilationService {
     // Handle successful compilation
     addConsoleMessage('Compilation successful!', 'success');
 
+    try {
+      // Registrar la versión compilada exitosamente en el historial
+      this.registerCompiledVersion(model.getValue());
+    } catch (error) {
+      console.warn('[CompilationService] Error registering compiled version:', error);
+    }
+
     if (result.output) {
       const { artifact } = result.output;
       if (artifact) {
@@ -481,6 +488,59 @@ export class CompilationService {
           'success'
         );
       }
+    }
+  }
+
+  /**
+   * Registra una versión compilada exitosamente en el historial de versiones
+   * @param sourceCode Código fuente compilado
+   */
+  private async registerCompiledVersion(sourceCode: string): Promise<void> {
+    try {
+      // Si el código es el mismo que la última compilación, no registramos una nueva versión
+      if (sourceCode === this.lastCompiledCode) {
+        console.log('[CompilationService] Skipping version registration - code unchanged');
+        return;
+      }
+      
+      // Intentar obtener el nombre del contrato
+      const contractNameMatch = sourceCode.match(/contract\s+(\w+)/);
+      const contractName = contractNameMatch ? contractNameMatch[1] : 'Contract';
+      
+      console.log('[CompilationService] Registering successful compilation of contract:', contractName);
+      
+      // Actualizar el último código compilado
+      this.lastCompiledCode = sourceCode;
+      this.lastCompilationTimestamp = Date.now();
+      
+      // Emitir evento de versión registrada directamente
+      // Esto es útil cuando no tenemos acceso directo al chatContextService
+      window.dispatchEvent(new CustomEvent('contract-version-registered', {
+        detail: {
+          sourceCode,
+          name: contractName,
+          timestamp: this.lastCompilationTimestamp
+          // No asignamos conversationId aquí, lo tomará del contexto activo
+        }
+      }));
+      
+      // Intentar usar el chatContextService si está disponible
+      try {
+        // Importar dinámicamente para evitar dependencias circulares
+        const { ChatContextService } = await import('./chatContextService');
+        
+        // Buscar una instancia existente en window.__chatContextService (podría no existir)
+        const chatContextService = (window as any).__chatContextService;
+        
+        if (chatContextService && typeof chatContextService.registerContractVersion === 'function') {
+          await chatContextService.registerContractVersion(sourceCode, contractName);
+        }
+      } catch (error) {
+        console.warn('[CompilationService] ChatContextService not available:', error);
+        // No es un error crítico, ya que el evento ya se emitió
+      }
+    } catch (error) {
+      console.error('[CompilationService] Error in registerCompiledVersion:', error);
     }
   }
 } 

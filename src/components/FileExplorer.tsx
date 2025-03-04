@@ -6,7 +6,10 @@ import {
   DocumentPlusIcon,
   FolderOpenIcon,
   MagnifyingGlassIcon,
-  CodeBracketIcon
+  CodeBracketIcon,
+  ExclamationTriangleIcon,
+  CheckCircleIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 import { virtualFS } from '../services/virtual-fs';
 import { Dialog, Transition } from '@headlessui/react';
@@ -57,6 +60,10 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
   const fileExplorerRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [clipboard, setClipboard] = useState<{ type: 'file' | 'directory'; path: string } | null>(null);
+  const [fileNotFoundError, setFileNotFoundError] = useState<string | null>(null);
+
+  // Constants for localStorage
+  const SELECTED_FILE_KEY = 'fileExplorer_selectedFile';
 
   // Función para mostrar mensajes de éxito temporalmente
   const showSuccess = (message: string) => {
@@ -76,6 +83,62 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
     };
     return stringify(oldFiles) !== stringify(newFiles);
   };
+
+  // Store selected file in localStorage
+  const saveSelectedFile = useCallback((filePath: string | null) => {
+    if (filePath) {
+      try {
+        localStorage.setItem(SELECTED_FILE_KEY, filePath);
+        console.log(`[FileExplorer] Saved selected file to localStorage: ${filePath}`);
+      } catch (error) {
+        console.error('[FileExplorer] Error saving selected file to localStorage:', error);
+      }
+    } else {
+      localStorage.removeItem(SELECTED_FILE_KEY);
+    }
+  }, []);
+
+  // Verify if a file exists and reset selection if not
+  const verifyFileExists = useCallback(async (filePath: string | null) => {
+    if (!filePath) return null;
+    
+    try {
+      const exists = await virtualFS.exists(filePath);
+      if (!exists) {
+        console.warn(`[FileExplorer] Selected file not found: ${filePath}`);
+        setFileNotFoundError(`The file "${filePath}" no longer exists.`);
+        setTimeout(() => setFileNotFoundError(null), 5000);
+        onFileSelect(null);
+        localStorage.removeItem(SELECTED_FILE_KEY);
+        return null;
+      }
+      return filePath;
+    } catch (error) {
+      console.error(`[FileExplorer] Error verifying file existence: ${filePath}`, error);
+      setFileNotFoundError(`Error accessing file "${filePath}".`);
+      setTimeout(() => setFileNotFoundError(null), 5000);
+      onFileSelect(null);
+      localStorage.removeItem(SELECTED_FILE_KEY);
+      return null;
+    }
+  }, [onFileSelect]);
+
+  // Load stored selection from localStorage
+  const loadStoredSelection = useCallback(async () => {
+    try {
+      const storedFile = localStorage.getItem(SELECTED_FILE_KEY);
+      
+      if (storedFile && (!selectedFile || selectedFile !== storedFile)) {
+        console.log(`[FileExplorer] Restoring selected file from localStorage: ${storedFile}`);
+        const validFile = await verifyFileExists(storedFile);
+        if (validFile) {
+          onFileSelect(validFile);
+        }
+      }
+    } catch (error) {
+      console.error('[FileExplorer] Error loading stored file selection:', error);
+    }
+  }, [selectedFile, verifyFileExists, onFileSelect]);
 
   const loadFiles = useCallback(async () => {
     try {
@@ -114,23 +177,68 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
       }
 
       setFiles(fileList);
+      
+      // Verify if the currently selected file still exists after updating file list
+      if (selectedFile) {
+        const itemPaths = new Set<string>();
+        const collectPaths = (items: FileSystemItem[]) => {
+          items.forEach(item => {
+            itemPaths.add(item.path);
+            if (item.children) {
+              collectPaths(item.children);
+            }
+          });
+        };
+        collectPaths(fileList);
+        
+        if (!itemPaths.has(selectedFile)) {
+          console.warn(`[FileExplorer] Selected file no longer in file system: ${selectedFile}`);
+          setFileNotFoundError(`The file "${selectedFile}" no longer exists.`);
+          setTimeout(() => setFileNotFoundError(null), 5000);
+          onFileSelect(null);
+          localStorage.removeItem(SELECTED_FILE_KEY);
+        }
+      }
     } catch (error) {
       console.error('Error loading files:', error);
       setError(error instanceof Error ? error.message : 'Error loading files');
     } finally {
       setIsLoading(false);
     }
-  }, [files, expandedFolders]);
+  }, [files, expandedFolders, selectedFile, onFileSelect]);
+
+  // Effect to watch for changes in the selected file and persist to localStorage
+  useEffect(() => {
+    if (selectedFile) {
+      saveSelectedFile(selectedFile);
+    }
+  }, [selectedFile, saveSelectedFile]);
 
   // Efecto para la carga inicial y después de operaciones
   useEffect(() => {
     // Carga inicial
     loadFiles();
+    
+    // Intentar restaurar la selección guardada si no hay una selección activa
+    if (!selectedFile) {
+      loadStoredSelection();
+    } else {
+      // Verify if the current selection exists
+      verifyFileExists(selectedFile);
+    }
 
     // Suscribirse a eventos de visibilidad del documento
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        console.log('[FileExplorer] Document became visible, refreshing files');
         loadFiles();
+        
+        // Verify the selected file still exists when the page becomes visible again
+        if (selectedFile) {
+          verifyFileExists(selectedFile);
+        } else {
+          loadStoredSelection();
+        }
       }
     };
 
@@ -139,12 +247,17 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [loadFiles]);
+  }, [loadFiles, selectedFile, verifyFileExists, loadStoredSelection]);
 
   // Función para forzar la recarga después de operaciones
   const forceReload = useCallback(async () => {
     await loadFiles();
-  }, [loadFiles]);
+    
+    // Verify selected file still exists after operations
+    if (selectedFile) {
+      verifyFileExists(selectedFile);
+    }
+  }, [loadFiles, selectedFile, verifyFileExists]);
 
   const handleDrop = async (e: React.DragEvent, targetPath: string) => {
     e.preventDefault();
@@ -222,8 +335,6 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
       setShowNewFileModal(false);
     }
   };
-
-
 
   const toggleFolder = (path: string) => {
     setExpandedFolders(prev => 
@@ -409,6 +520,13 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileSelect, selectedFile 
       {error && (
         <div className="p-2 m-2 bg-red-900/50 text-red-200 text-sm rounded">
           {error}
+        </div>
+      )}
+
+      {fileNotFoundError && (
+        <div className="p-2 m-2 bg-amber-900/50 text-amber-200 text-sm rounded flex items-center">
+          <ExclamationTriangleIcon className="w-4 h-4 mr-2 flex-shrink-0" />
+          {fileNotFoundError}
         </div>
       )}
 

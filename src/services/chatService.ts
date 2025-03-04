@@ -22,6 +22,22 @@ export interface ChatInfo {
       timestamp: number;
     }
   };
+  workspaces?: {
+    [id: string]: {
+      id: string;
+      name: string;
+      description?: string;
+      files: {
+        [path: string]: {
+          content: string;
+          language: string;
+          timestamp: number;
+        }
+      };
+      createdAt: number;
+      updatedAt: number;
+    }
+  };
 }
 
 export interface AgentResponse {
@@ -71,14 +87,17 @@ export class ChatService {
     this.chatsLoadedHandler = null;
   }
 
-  public connect(walletAddress?: string, _p0?: string): void {
+  public connect(walletAddress?: string, chatId?: string): void {
     if (!walletAddress || !walletAddress.startsWith('0x')) {
       console.log('[ChatService] No valid wallet address provided, connection aborted');
       return;
     }
 
-    if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
-      console.log('[ChatService] WebSocket connection already exists');
+    // Si ya hay una conexión activa y es la misma wallet, no reconectar
+    if (this.ws && 
+        (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN) &&
+        this.walletAddress === walletAddress) {
+      console.log('[ChatService] Active connection exists for this wallet');
       return;
     }
     
@@ -89,12 +108,27 @@ export class ChatService {
       
       // Construir la URL del WebSocket
       let url = 'ws://localhost:8000/ws/agent';
-      
-      // Añadir la dirección de la billetera como parámetro de consulta
       const wsUrl = new URL(url.replace('ws://', 'http://'));
       wsUrl.searchParams.append('wallet_address', this.walletAddress);
+      
+      // Solo añadir chat_id si está disponible y es válido
+      if (chatId && chatId.length > 0) {
+        this.currentChatId = chatId;
+        wsUrl.searchParams.append('chat_id', chatId);
+        console.log(`[ChatService] Including chat_id in WebSocket URL: ${chatId}`);
+      } else {
+        console.log('[ChatService] Connecting without chat_id, will load existing chats');
+      }
+      
       url = wsUrl.toString().replace('http://', 'ws://');
+      console.log(`[ChatService] Connecting to WebSocket URL: ${url}`);
         
+      // Cerrar cualquier conexión existente antes de crear una nueva
+      if (this.ws) {
+        this.ws.close();
+        this.ws = null;
+      }
+
       this.ws = new WebSocket(url);
 
       this.ws.onopen = () => {
@@ -106,11 +140,32 @@ export class ChatService {
       this.ws.onmessage = (event: MessageEvent) => {
         console.log('[ChatService] Received message:', event.data);
         try {
-          const data = JSON.parse(event.data);
+          let data;
+          try {
+            data = JSON.parse(event.data);
+          } catch (parseError) {
+            console.error('[ChatService] Error parsing WebSocket message:', parseError);
+            return;
+          }
 
           // Manejar la carga de chats
           if (data.type === 'contexts_loaded') {
             this.handleChatsLoaded(data.content);
+            
+            // Si no hay chat_id actual pero hay chats cargados, usar el más reciente
+            if (!this.currentChatId && data.content && data.content.length > 0) {
+              const mostRecentChat = data.content[data.content.length - 1];
+              this.currentChatId = mostRecentChat.id;
+              console.log(`[ChatService] Setting current chat to most recent: ${this.currentChatId}`);
+              
+              // Notificar el cambio de chat
+              if (this.messageHandler) {
+                this.messageHandler({
+                  type: 'context_switched',
+                  content: mostRecentChat
+                });
+              }
+            }
             return;
           }
 
@@ -125,12 +180,41 @@ export class ChatService {
             this.handleChatSwitched(data.content);
             return;
           }
+          
+          // Handle context synchronization response
+          if (data.type === 'contexts_synced') {
+            console.log('[ChatService] Contexts synced with server:', data.content);
+            if (this.messageHandler) {
+              this.messageHandler({
+                type: 'contexts_synced',
+                content: data.content
+              });
+            }
+            return;
+          }
 
-          // Buffer AI messages to combine fragments into coherent paragraphs
-          if (data.type === 'message' && this.messageHandler) {
-            this.bufferMessage(data);
-          } else if (this.messageHandler) {
-            // For non-message types, process normally
+          // Solo procesar mensajes que sean respuestas a mensajes del usuario
+          if (data.type === 'message') {
+            // For all message types, regardless of isUserResponse flag
+            if (this.messageHandler) {
+              console.log(`[ChatService] Processing message:`, data.content.substring(0, 50) + (data.content.length > 50 ? '...' : ''));
+              
+              // If explicitly marked as a user response, use buffering
+              if (data.isUserResponse) {
+                this.bufferMessage(data);
+              } else {
+                // Otherwise process immediately for better responsiveness
+                this.messageHandler(data as AgentResponse);
+              }
+            }
+          } else if (data.type === 'code_edit' || data.type === 'file_create') {
+            // Process code edits and file creations immediately (no buffering)
+            if (this.messageHandler) {
+              console.log(`[ChatService] Immediate processing of ${data.type} message`);
+              this.messageHandler(data as AgentResponse);
+            }
+          } else if (data.type !== 'message' && this.messageHandler) {
+            // Other non-message types are processed immediately 
             this.messageHandler(data as AgentResponse);
           }
         } catch (error) {
@@ -165,7 +249,7 @@ export class ChatService {
       }
       
       this.reconnectTimeout = setTimeout(() => {
-        this.connect(this.walletAddress || undefined);
+        this.connect(this.walletAddress || undefined, this.currentChatId || undefined);
       }, delay);
     } else {
       console.log('[ChatService] Max reconnection attempts reached');
@@ -173,14 +257,29 @@ export class ChatService {
   }
 
   public disconnect(): void {
-    if (this.ws) {
+    if (!this.ws) return;
+    
+    if (this.ws.readyState === WebSocket.OPEN) {
+      console.log('[ChatService] Disconnecting from chat agent');
       this.ws.close();
-      this.ws = null;
     }
+    
+    // Limpiar el temporizador si existe
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
+    
+    this.ws = null;
+    this.handleConnectionChange(false);
+  }
+
+  /**
+   * Verifica si el WebSocket está actualmente conectado
+   * @returns true si está conectado, false en caso contrario
+   */
+  public isConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
 
   public sendMessage(content: string, context: any = {}, chatId?: string): void {
@@ -199,22 +298,39 @@ export class ChatService {
       console.log('[ChatService] Skipping empty message');
       return;
     }
+    
+    // Usar el chatId proporcionado, o el actual, o generar un error si ninguno está disponible
+    const effectiveChatId = chatId || this.currentChatId;
+    
+    if (!effectiveChatId) {
+      console.error('[ChatService] Cannot send message without a chat ID');
+      return;
+    }
+    
+    console.log(`[ChatService] Sending message with chat ID: ${effectiveChatId}, current chat ID: ${this.currentChatId}`);
+    
+    // Si el chatId proporcionado es diferente al actual, actualizarlo
+    if (chatId && chatId !== this.currentChatId) {
+      console.log(`[ChatService] Updating current chat ID from ${this.currentChatId} to ${chatId}`);
+      this.currentChatId = chatId;
+    }
 
     const message = {
       type: context.type || 'message',
       content,
-      chat_id: chatId || this.currentChatId,
+      chat_id: effectiveChatId,
+      isUserResponse: true, // Marcar que este es un mensaje del usuario
       context: {
         ...context,
         wallet_address: this.walletAddress
       }
     };
 
-    console.log('[ChatService] Sending message:', message);
+    console.log(`[ChatService] Sending message to agent with ID ${effectiveChatId}:`, { messageType: message.type });
     this.ws.send(JSON.stringify(message));
   }
 
-  public createNewChat(name?: string): void {
+  public createNewChat(name?: string, customChatId?: string): void {
     if (!this.walletAddress || !this.walletAddress.startsWith('0x')) {
       console.error('[ChatService] Cannot create chat without a valid wallet address');
       return;
@@ -224,10 +340,17 @@ export class ChatService {
       console.error('[ChatService] WebSocket is not connected');
       return;
     }
+    
+    // Si se proporciona un ID personalizado, usarlo
+    if (customChatId) {
+      this.currentChatId = customChatId;
+      console.log(`[ChatService] Using custom chat ID: ${customChatId}`);
+    }
 
     const message = {
       type: 'create_context',
       content: name || '',
+      chat_id: customChatId || this.currentChatId, // Incluir el chat_id si está disponible
       context: {
         wallet_address: this.walletAddress
       }
@@ -251,6 +374,19 @@ export class ChatService {
     // Update current chat ID
     this.currentChatId = chatId;
     console.log('[ChatService] Switched to chat:', chatId);
+    
+    // Enviar mensaje de cambio de chat al servidor
+    const message = {
+      type: 'switch_context',
+      chat_id: chatId,
+      content: '',
+      context: {
+        wallet_address: this.walletAddress
+      }
+    };
+
+    console.log('[ChatService] Sending switch context message:', message);
+    this.ws.send(JSON.stringify(message));
   }
 
   public onMessage(handler: (message: AgentResponse) => void): void {
@@ -283,64 +419,87 @@ export class ChatService {
   private async handleChatsLoaded(chats: ChatInfo[]) {
     console.log('[ChatService] Chats loaded:', chats);
     
-    // Asegurarse de que los chats tengan la estructura correcta
-    const processedChats = chats.map((chat, index) => ({
-        ...chat,
-        messages: Array.isArray(chat.messages) ? chat.messages : [],
-        active: index === chats.length - 1,
-        generatedCode: chat.generatedCode || null,
-        virtualFiles: chat.virtualFiles || {}
-    }));
+    // Check for null before processing
+    if (!chats || !Array.isArray(chats)) {
+      console.error('[ChatService] Received null or invalid chats from server:', chats);
+      return;
+    }
     
-    // Actualizar el chat ID actual
-    if (processedChats.length > 0) {
-        this.currentChatId = processedChats[processedChats.length - 1].id;
+    // Si no hay chat activo pero hay chats disponibles, usar el más reciente
+    if (!this.currentChatId && chats.length > 0) {
+      const mostRecentChat = chats[chats.length - 1];
+      this.currentChatId = mostRecentChat.id;
+      console.log(`[ChatService] Setting current chat to most recent: ${this.currentChatId}`);
+    }
+    
+    // Buscar el chat activo explícitamente por ID
+    let activeChat = chats.find(chat => chat.id === this.currentChatId);
+    if (!activeChat && chats.length > 0) {
+      // Si no se encuentra el chat activo, usar el último chat
+      activeChat = chats[chats.length - 1];
+      this.currentChatId = activeChat.id;
+      console.log(`[ChatService] No active chat found with ID ${this.currentChatId}, using last chat: ${activeChat.id}`);
+    }
+    
+    // Procesar los archivos del chat activo
+    if (activeChat && activeChat.virtualFiles) {
+      console.log('[ChatService] Active chat virtual files:', activeChat.virtualFiles);
+      try {
+        console.log('[ChatService] Clearing virtual file system...');
+        await virtualFS.clear();
+        console.log('[ChatService] Virtual file system cleared');
         
-        // Restaurar archivos virtuales del chat activo
-        const activeChat = processedChats[processedChats.length - 1];
-        console.log('[ChatService] Active chat virtual files:', activeChat.virtualFiles);
-        
-        try {
-            // Limpiar el sistema de archivos virtual antes de cargar los nuevos archivos
-            console.log('[ChatService] Clearing virtual file system...');
-            await virtualFS.clear();
-            console.log('[ChatService] Virtual file system cleared');
+        // Restore files from the active chat
+        console.log('[ChatService] Restoring active files');
+        const filePromises = Object.entries(activeChat.virtualFiles).map(
+          async ([path, file]) => {
+            const fileData = file as {
+              content: string;
+              language: string;
+              timestamp: number;
+            };
             
-            if (activeChat.virtualFiles) {
-                // Los archivos ya vienen normalizados del backend (solo versiones activas)
-                console.log('[ChatService] Restoring active files');
-                await Promise.all(
-                    Object.entries(activeChat.virtualFiles).map(async ([path, file]) => {
-                        console.log(`[ChatService] Writing file: ${path}`);
-                        try {
-                            await virtualFS.writeFile(path, file.content);
-                            console.log(`[ChatService] Successfully wrote file: ${path}`);
-                        } catch (error) {
-                            console.error(`[ChatService] Error writing file: ${path}`, error);
-                        }
-                    })
-                );
+            if (path && fileData && fileData.content) {
+              try {
+                console.log(`[ChatService] Restoring file: ${path}`);
+                await virtualFS.writeFile(path, fileData.content);
+                console.log(`[ChatService] Successfully restored file: ${path}`);
+              } catch (error) {
+                console.error(`[ChatService] Failed to restore file ${path}:`, error);
+              }
+            } else {
+              console.warn(`[ChatService] Invalid file data for path ${path}:`, fileData);
             }
-        } catch (error) {
-            console.error('[ChatService] Error handling virtual files:', error);
-        }
+          }
+        );
+        
+        await Promise.all(filePromises);
+        console.log('[ChatService] All files restored successfully');
+      } catch (error) {
+        console.error('[ChatService] Error processing virtual files:', error);
+      }
+    } else {
+      console.warn('[ChatService] No active chat or virtual files found');
     }
     
-    // Notificar a los handlers
+    // Notificar a todos los handlers de forma sincrónica
     if (this.chatsLoadedHandler) {
-        this.chatsLoadedHandler(processedChats.map(chat => ({
-            ...chat,
-            generatedCode: chat.generatedCode || undefined
-        })));
+      console.log('[ChatService] Notifying chats loaded handler with chats:', chats);
+      this.chatsLoadedHandler(chats);
+    } else {
+      console.warn('[ChatService] No chats loaded handler registered');
     }
-    if (this.messageHandler) {
-        this.messageHandler({
-            type: 'contexts_loaded',
-            content: JSON.stringify(processedChats)
-        });
+
+    // Notificar explícitamente sobre el cambio de contexto
+    if (activeChat && this.messageHandler) {
+      console.log('[ChatService] Sending context_switched event for chat:', activeChat.id);
+      this.messageHandler({
+        type: 'context_switched',
+        content: JSON.stringify(activeChat)
+      });
+    } else {
+      console.warn('[ChatService] Cannot send context_switched event (no active chat or message handler)');
     }
-    
-    console.log('[ChatService] Processed chats:', processedChats);
   }
 
   private handleChatCreated(chat: ChatInfo) {
@@ -404,6 +563,7 @@ export class ChatService {
     const message = {
       type: 'delete_context',
       chat_id: contextId,
+      content: '',
       context: {
         wallet_address: this.walletAddress
       }
@@ -411,10 +571,23 @@ export class ChatService {
 
     console.log('[ChatService] Deleting context:', message);
     this.ws.send(JSON.stringify(message));
+    
+    // Si el contexto actual es el que se está eliminando, limpiar la referencia
+    if (this.currentChatId === contextId) {
+      console.log('[ChatService] Clearing current chat ID as it was deleted');
+      this.currentChatId = null;
+    }
   }
 
   // New method to buffer messages
   private bufferMessage(data: AgentResponse): void {
+    // Special handling for code_edit - these should be processed immediately
+    if (data.type === 'code_edit' && this.messageHandler) {
+      console.log('[ChatService] Immediate processing of code_edit message');
+      this.messageHandler(data);
+      return;
+    }
+    
     // Clear any existing timeout
     if (this.messageBufferTimeout) {
       clearTimeout(this.messageBufferTimeout);
@@ -428,7 +601,11 @@ export class ChatService {
       this.messageMetadata = data.metadata;
     }
     
-    // Set a new timeout to process the buffer
+    // Set a new timeout to process the buffer - use shorter time window for certain message types
+    const timeWindow = (data.type === 'file_create' || data.content.includes('```') || data.type === 'message') 
+      ? 200  // Shorter window for code blocks, file_create, and regular messages
+      : this.bufferTimeWindow;
+    
     this.messageBufferTimeout = setTimeout(() => {
       if (this.messageBuffer && this.messageHandler) {
         // Check if we should process the buffer as paragraphs
@@ -450,7 +627,7 @@ export class ChatService {
           this.messageMetadata = null;
         }
       }
-    }, this.bufferTimeWindow);
+    }, timeWindow);
   }
 
   // Process the message buffer intelligently
@@ -535,6 +712,85 @@ export class ChatService {
       this.bufferTimeWindow = timeMs;
     } else {
       console.warn('[ChatService] Invalid buffer time window. Must be between 100ms and 2000ms');
+    }
+  }
+
+  // New method to sync contexts with database
+  public syncContextsWithDatabase(dbContexts: ChatInfo[]): void {
+    // Verificar que tengamos contextos de la base de datos para sincronizar
+    if (!dbContexts || dbContexts.length === 0) {
+      console.warn('[ChatService] No database contexts to sync');
+      return;
+    }
+
+    // Verificar que el WebSocket esté abierto
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.error('[ChatService] Cannot sync contexts with database - WebSocket not connected');
+      return;
+    }
+
+    try {
+      console.log('[ChatService] Syncing database contexts with WebSocket:', dbContexts);
+      
+      // Si el chatId actual no está establecido, usar el ID del primer contexto
+      if (!this.currentChatId && dbContexts.length > 0) {
+        this.currentChatId = dbContexts[0].id;
+        console.log('[ChatService] Setting current chat ID to first database context:', this.currentChatId);
+      }
+      
+      // Convertir los contextos al formato esperado por el WebSocket
+      const serializedContexts = dbContexts.map(ctx => ({
+        id: ctx.id,
+        name: ctx.name,
+        messages: ctx.messages || [],
+        virtualFiles: ctx.virtualFiles || {},
+        type: 'chat',
+        wallet_address: ctx.wallet_address
+      }));
+      
+      // Enviar mensaje de sincronización de contextos al WebSocket
+      const message = {
+        type: 'sync_contexts',
+        content: JSON.stringify(serializedContexts)
+      };
+      
+      this.ws.send(JSON.stringify(message));
+      console.log('[ChatService] Sent sync_contexts message to WebSocket');
+    } catch (error) {
+      console.error('[ChatService] Error syncing contexts with database:', error);
+    }
+  }
+
+  private detectLanguage(path: string): string {
+    const extension = path.split('.').pop()?.toLowerCase();
+    
+    switch (extension) {
+      case 'sol':
+        return 'solidity';
+      case 'js':
+        return 'javascript';
+      case 'ts':
+        return 'typescript';
+      case 'jsx':
+        return 'javascriptreact';
+      case 'tsx':
+        return 'typescriptreact';
+      case 'json':
+        return 'json';
+      case 'md':
+        return 'markdown';
+      case 'py':
+        return 'python';
+      case 'go':
+        return 'go';
+      case 'rs':
+        return 'rust';
+      case 'html':
+        return 'html';
+      case 'css':
+        return 'css';
+      default:
+        return 'plaintext';
     }
   }
 } 
