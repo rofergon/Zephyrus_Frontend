@@ -106,9 +106,19 @@ export class ChatService {
       
       this.walletAddress = walletAddress;
       
-      // Construir la URL del WebSocket
-      let url = 'ws://localhost:8000/ws/agent';
-      const wsUrl = new URL(url.replace('ws://', 'http://'));
+      // Construir la URL del WebSocket basada en el entorno
+      let url = import.meta.env.MODE === 'production' 
+        ? import.meta.env.VITE_WS_URL_PROD 
+        : import.meta.env.VITE_WS_URL_DEV;
+
+      // Si no hay URL configurada, usar la URL por defecto
+      if (!url) {
+        console.warn('[ChatService] No WebSocket URL configured for environment, using default');
+        url = 'ws://localhost:8000/ws/agent';
+      }
+
+      // Asegurarse de que la URL use el protocolo WebSocket correcto
+      const wsUrl = new URL(url.replace(/^(ws|wss):\/\//, 'http://'));
       wsUrl.searchParams.append('wallet_address', this.walletAddress);
       
       // Solo añadir chat_id si está disponible y es válido
@@ -120,7 +130,8 @@ export class ChatService {
         console.log('[ChatService] Connecting without chat_id, will load existing chats');
       }
       
-      url = wsUrl.toString().replace('http://', 'ws://');
+      // Restaurar el protocolo WebSocket
+      url = wsUrl.toString().replace(/^http:\/\//, url.startsWith('wss://') ? 'wss://' : 'ws://');
       console.log(`[ChatService] Connecting to WebSocket URL: ${url}`);
         
       // Cerrar cualquier conexión existente antes de crear una nueva
