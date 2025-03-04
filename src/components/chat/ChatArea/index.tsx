@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import { Message } from '../../MessageComponent';
@@ -19,6 +20,21 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   onInputChange,
   onSubmit
 }) => {
+  // Event listener for suggestion messages
+  useEffect(() => {
+    const handleSuggestion = (event: CustomEvent<string>) => {
+      if (event.detail) {
+        onSubmit(event.detail);
+      }
+    };
+
+    window.addEventListener('suggest-message', handleSuggestion as EventListener);
+    
+    return () => {
+      window.removeEventListener('suggest-message', handleSuggestion as EventListener);
+    };
+  }, [onSubmit]);
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto">

@@ -359,6 +359,61 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     }
   }, [currentArtifact, isLoadedVersionDeployed, conversationId]);
 
+  // Efecto adicional para asegurar que el código se cargue después de recargar la página
+  useEffect(() => {
+    // Este efecto se ejecuta cuando el componente se monta o cuando editorRef.current cambia
+    if (editorRef.current && currentCode) {
+      console.log('[ContractViewer] Ensuring code is loaded in editor after page reload');
+      const model = editorRef.current.getModel();
+      if (model) {
+        // Verificar si el modelo está vacío o tiene un contenido diferente
+        const currentModelValue = model.getValue();
+        if (!currentModelValue || currentModelValue !== currentCode) {
+          console.log('[ContractViewer] Updating editor model with current code');
+          model.setValue(currentCode);
+          
+          // También compilar el código si es necesario
+          onCompile(currentCode);
+        }
+      }
+    }
+  }, [editorRef.current, currentCode, onCompile]);
+
+  // Efecto para escuchar eventos de código actualizado desde otros componentes
+  useEffect(() => {
+    const handleCodeUpdated = (event: CustomEvent) => {
+      if (event.detail && event.detail.content && editorRef.current) {
+        console.log('[ContractViewer] Received code_updated event');
+        const model = editorRef.current.getModel();
+        if (model) {
+          const newCode = event.detail.content;
+          // Solo actualizar si el código es diferente
+          if (model.getValue() !== newCode) {
+            console.log('[ContractViewer] Updating editor with code from event');
+            model.setValue(newCode);
+            
+            // Programar compilación
+            if (compileTimeoutRef.current) {
+              clearTimeout(compileTimeoutRef.current);
+            }
+            
+            compileTimeoutRef.current = setTimeout(() => {
+              onCompile(newCode);
+            }, 500);
+          }
+        }
+      }
+    };
+    
+    // Añadir listener para el evento personalizado
+    window.addEventListener('code_updated', handleCodeUpdated as EventListener);
+    
+    // Limpiar al desmontar
+    return () => {
+      window.removeEventListener('code_updated', handleCodeUpdated as EventListener);
+    };
+  }, [onCompile]);
+
   // Efecto para manejar cambios automáticos en el código
   useEffect(() => {
     if (currentCode !== previousCodeRef.current) {
@@ -658,7 +713,17 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                 // Establecer el valor inicial
                 const model = editor.getModel();
                 if (model) {
+                  console.log('[ContractViewer] Editor mounted, setting initial code:', 
+                    currentCode ? `${currentCode.substring(0, 50)}...` : 'No code available');
                   model.setValue(currentCode);
+                  
+                  // Si hay código, programar una compilación
+                  if (currentCode && currentCode.trim().length > 10) {
+                    console.log('[ContractViewer] Scheduling initial compilation after editor mount');
+                    setTimeout(() => {
+                      onCompile(currentCode);
+                    }, 500);
+                  }
                 }
 
                 // Registrar el lenguaje Solidity

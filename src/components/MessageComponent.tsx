@@ -16,6 +16,7 @@ export interface Message {
   }>;
   isTyping?: boolean;
   showAnimation?: boolean;
+  customContent?: React.ReactNode;
 }
 
 interface MessageComponentProps {
@@ -177,6 +178,79 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
               <div className="w-2 h-2 bg-blue-400/80 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
               <div className="w-2 h-2 bg-blue-400/80 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
+          ) : message.customContent ? (
+            <>
+              {/* Render markdown text if present */}
+              {message.text && (
+                <div className="markdown-content mb-4">
+                  <ReactMarkdown
+                    components={{
+                      code({className, children, ...props}) {
+                        const match = /language-(\w+)/.exec(className || '');
+                        const isInline = !match;
+                        return !isInline && match ? (
+                          <SyntaxHighlighter
+                            {...props}
+                            style={vscDarkPlus as any}
+                            language={match[1]}
+                            PreTag="div"
+                            ref={undefined}
+                            showLineNumbers={true}
+                            wrapLines={true}
+                          >
+                            {String(children).replace(/\n$/, '')}
+                          </SyntaxHighlighter>
+                        ) : (
+                          <code className={`${className} bg-gray-800 rounded px-1`} {...props}>
+                            {children}
+                          </code>
+                        );
+                      },
+                      h1({children, ...props}) {
+                        return <h1 {...props}>{children}</h1>;
+                      },
+                      h2({children, ...props}) {
+                        return <h2 {...props}>{children}</h2>;
+                      },
+                      h3({children, ...props}) {
+                        return <h3 {...props}>{children}</h3>;
+                      },
+                      h4({children, ...props}) {
+                        return <h4 {...props}>{children}</h4>;
+                      },
+                      p({children, ...props}) {
+                        return <p {...props}>{children}</p>;
+                      },
+                      ul({children, ...props}) {
+                        return <ul {...props}>{children}</ul>;
+                      },
+                      ol({children, ...props}) {
+                        return <ol {...props}>{children}</ol>;
+                      },
+                      li({children, ...props}) {
+                        return <li {...props}>{children}</li>;
+                      },
+                      blockquote({children, ...props}) {
+                        return <blockquote {...props}>{children}</blockquote>;
+                      },
+                      table({children, ...props}) {
+                        return <table {...props}>{children}</table>;
+                      },
+                      a({children, ...props}) {
+                        return <a {...props} target="_blank" rel="noopener noreferrer">{children}</a>;
+                      }
+                    }}
+                  >
+                    {isAI && message.showAnimation ? displayedText : message.text}
+                  </ReactMarkdown>
+                </div>
+              )}
+              
+              {/* Render custom content */}
+              <div className="custom-content">
+                {message.customContent}
+              </div>
+            </>
           ) : (
             <div className="markdown-content">
               <ReactMarkdown
