@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { ChatBubbleLeftRightIcon, XMarkIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { ConversationContext } from '../../services/conversationService';
 
@@ -14,13 +15,30 @@ const ChatContexts: React.FC<ChatContextsProps> = ({
   onContextDelete,
   onCreateNewChat
 }) => {
+  // Debug log cuando los contextos cambian
+  useEffect(() => {
+    console.log('[ChatContexts] Contexts updated:', contexts.length);
+    contexts.forEach(ctx => {
+      console.log(`[ChatContexts] Context: ${ctx.id}, Name: ${ctx.name}, Active: ${ctx.active}`);
+    });
+  }, [contexts]);
+
   return (
     <div className="flex-none border-b border-gray-700 bg-gray-800/80 backdrop-blur-sm">
       <div className="flex overflow-x-auto pb-2 px-4">
+        {contexts.length === 0 && (
+          <div className="text-sm text-gray-400 py-2">
+            No chats available. Create a new chat to get started.
+          </div>
+        )}
+        
         {contexts.map((context) => (
           <div key={context.id} className="flex items-center mr-2">
             <button
-              onClick={() => onContextSwitch(context.id)}
+              onClick={() => {
+                console.log(`[ChatContexts] Switching to context: ${context.id}`);
+                onContextSwitch(context.id);
+              }}
               className={`group flex items-center px-4 py-2 space-x-2 border-b-2 transition-colors whitespace-nowrap rounded-t-lg ${
                 context.active
                   ? 'border-blue-500 text-blue-400 bg-gray-800'
@@ -38,6 +56,7 @@ const ChatContexts: React.FC<ChatContextsProps> = ({
             <button
               onClick={() => {
                 if (window.confirm('Are you sure you want to delete this chat? This action cannot be undone.')) {
+                  console.log(`[ChatContexts] Deleting context: ${context.id}`);
                   onContextDelete(context.id);
                 }
               }}
@@ -49,7 +68,10 @@ const ChatContexts: React.FC<ChatContextsProps> = ({
           </div>
         ))}
         <button
-          onClick={onCreateNewChat}
+          onClick={() => {
+            console.log('[ChatContexts] Creating new chat');
+            onCreateNewChat();
+          }}
           className="p-2 text-gray-400 hover:text-gray-300 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors border border-gray-700/50 ml-2 flex-shrink-0"
           title="New Chat"
         >

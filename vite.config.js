@@ -16,22 +16,6 @@ export default defineConfig({
   define: {
     'process.env': process.env ?? {},
   },
-  worker: {
-    format: 'es',
-    plugins: [
-      NodeGlobalsPolyfillPlugin({
-        buffer: true,
-        process: true
-      }),
-      NodeModulesPolyfillPlugin()
-    ],
-    rollupOptions: {
-      output: {
-        format: 'es',
-        inlineDynamicImports: true
-      }
-    }
-  },
   build: {
     target: 'esnext',
     commonjsOptions: {
@@ -52,10 +36,6 @@ export default defineConfig({
           ],
           'web3': [
             'web3'
-          ],
-          'solc': [
-            'solc',
-            'memfs'
           ]
         },
         format: 'es',
@@ -85,9 +65,7 @@ export default defineConfig({
       buffer: 'buffer',
       '@openzeppelin/contracts': './node_modules/@openzeppelin/contracts',
       '@safe-global/safe-apps-sdk': '@safe-global/safe-apps-sdk',
-      '@safe-global/safe-apps-provider': '@safe-global/safe-apps-provider',
-      'solc-browserify': './src/services/solc-browserify',
-      'fs': 'memfs'
+      '@safe-global/safe-apps-provider': '@safe-global/safe-apps-provider'
     }
   },
   optimizeDeps: {
@@ -107,9 +85,7 @@ export default defineConfig({
     include: [
       'process/browser',
       '@safe-global/safe-apps-sdk',
-      '@safe-global/safe-apps-provider',
-      'solc',
-      'memfs'
+      '@safe-global/safe-apps-provider'
     ]
   },
   server: {

@@ -9,38 +9,18 @@ if (typeof window !== 'undefined') {
 
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { WagmiProvider } from 'wagmi'
-import { http } from 'viem'
+import { WagmiProvider, http } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createAppKit } from '@reown/appkit/react'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { safe } from 'wagmi/connectors'
+import { sonicBlaze } from './config/chains'
 
 import App from './App'
 import './index.css'
 
 // Create react-query client
 const queryClient = new QueryClient()
-
-// Configurar la red Sonic Blaze Testnet según la documentación oficial
-const sonicBlaze = {
-  id: 57054,
-  name: 'Sonic Blaze Testnet',
-  network: 'sonic-testnet',
-  nativeCurrency: {
-    decimals: 18,
-    name: 'Sonic',
-    symbol: 'S',
-  },
-  rpcUrls: {
-    public: { http: ['https://rpc.blaze.soniclabs.com'] },
-    default: { http: ['https://rpc.blaze.soniclabs.com'] },
-  },
-  blockExplorers: {
-    default: { name: 'SonicScan', url: 'https://testnet.sonicscan.org' },
-  },
-  testnet: true,
-}
 
 if (!import.meta.env.VITE_WALLET_CONNECT_PROJECT_ID) {
   throw new Error('Missing VITE_WALLET_CONNECT_PROJECT_ID environment variable')

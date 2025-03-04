@@ -20,25 +20,30 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   onSubmit
 }) => {
   return (
-    <>
-      <ChatMessages 
-        messages={messages}
-        isTyping={isTyping}
-      />
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto">
+        <ChatMessages 
+          messages={messages}
+          isTyping={isTyping}
+        />
+      </div>
 
       {/* Visual Separator */}
       <div className="h-px bg-gradient-to-r from-transparent via-gray-700/50 to-transparent"></div>
 
-      <ChatInput
-        input={input}
-        isChatMaximized={isChatMaximized}
-        onInputChange={onInputChange}
-        onSubmit={(text) => {
-          onSubmit(text);
-          onInputChange('');
-        }}
-      />
-    </>
+      {/* Fixed Input Area */}
+      <div className="flex-none">
+        <ChatInput
+          input={input}
+          isChatMaximized={isChatMaximized}
+          onInputChange={onInputChange}
+          onSubmit={(text) => {
+            onSubmit(text);
+            onInputChange('');
+          }}
+        />
+      </div>
+    </div>
   );
 };
 

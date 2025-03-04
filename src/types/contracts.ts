@@ -1,33 +1,64 @@
 export interface ContractFunction {
   name: string;
   description: string;
-  type: 'function' | 'constructor' | 'event';
-  stateMutability?: 'pure' | 'view' | 'nonpayable' | 'payable';
-  inputs: Array<{
+  type: 'function';
+  stateMutability: string;
+  inputs: {
     name: string;
     type: string;
-    description?: string;
-    components?: Array<{
-      name: string;
-      type: string;
-    }>;
-  }>;
-  outputs?: Array<{
+    internalType?: string;
+    components?: any[];
+  }[];
+  outputs: {
     name: string;
     type: string;
-    components?: Array<{
-      name: string;
-      type: string;
-    }>;
-  }>;
+    internalType?: string;
+    components?: any[];
+  }[];
+}
+
+export interface ContractEvent {
+  name: string;
+  description: string;
+  type: 'event';
+  inputs: {
+    name: string;
+    type: string;
+    indexed: boolean;
+  }[];
+}
+
+export interface ContractError {
+  name: string;
+  description: string;
+  type: 'error';
+  inputs: {
+    name: string;
+    type: string;
+  }[];
+}
+
+export interface ContractConstructor {
+  description: string;
+  type: 'constructor';
+  inputs: {
+    name: string;
+    type: string;
+    internalType?: string;
+  }[];
 }
 
 export interface ContractArtifact {
   name: string;
   description: string;
-  functions: ContractFunction[];
   address?: string;
-  abi?: any[];
+  bytecode?: string;
+  abi: any[];
+  functions: ContractFunction[];
+  events?: ContractEvent[];
+  errors?: ContractError[];
+  constructor: ContractConstructor | null;
+  transactionHash?: string;
 }
 
 export interface Message {
@@ -39,25 +70,45 @@ export interface Message {
     label: string;
     onClick: () => void;
   }>;
+  isTyping?: boolean;
+  showAnimation?: boolean;
 }
 
 export interface ConsoleMessage {
   id: string;
-  type: 'error' | 'warning' | 'success' | 'info';
-  message: string;
+  type: 'info' | 'error' | 'warning' | 'success';
+  content: string;
   timestamp: number;
 }
 
 export interface CompilationResult {
   success: boolean;
-  markers?: Array<{
-    startLineNumber: number;
-    startColumn: number;
-    endLineNumber: number;
-    endColumn: number;
-    message: string;
-    severity: number;
-  }>;
-  output?: any;
+  markers?: any[];
+  output?: {
+    artifact?: ContractArtifact;
+    [key: string]: any;
+  };
   error?: string;
+}
+
+export interface DeployedContract {
+  id: string;
+  user_wallet?: string;
+  contract_address?: string;
+  name?: string;
+  conversation_id?: string;
+  deployed_at?: string;
+  deployedAt?: number;
+  source_code?: string | any;
+  sourceCode?: string | any;
+  abi?: any;
+  bytecode?: string;
+  constructor_args?: string;
+  constructorArgs?: any[];
+  network_id?: number;
+  networkId?: string;
+  compiler_version?: string;
+  compilerVersion?: string;
+  tx_hash?: string;
+  transactionHash?: string;
 } 
