@@ -191,9 +191,7 @@ export class CompilationService {
                   const missingFile = missingFileMatch[1];
                   
                   // Add installation instructions for common packages
-                  if (missingFile.includes('@openzeppelin')) {
-                    errorMessage = `${errorMessage}\n\nTo fix this error, install OpenZeppelin contracts:\nnpm install @openzeppelin/contracts`;
-                  }
+                  
                 }
               }
             }
@@ -572,9 +570,7 @@ export class CompilationService {
           const missingFile = missingFileMatch[1];
           
           // Add installation instructions for common packages
-          if (missingFile.includes('@openzeppelin')) {
-            errorMessage = `${errorMessage}\n\nTo fix this error, install OpenZeppelin contracts:\nnpm install @openzeppelin/contracts`;
-          }
+          
         }
       }
       
