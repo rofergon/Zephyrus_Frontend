@@ -92,23 +92,45 @@ export interface CompilationResult {
 }
 
 export interface DeployedContract {
-  id: string;
-  user_wallet?: string;
+  address: string;
+  name: string;
+  network: string;
+  deployedAt: string;
+  type: string;
+  abi: any[];
   contract_address?: string;
-  name?: string;
   conversation_id?: string;
   deployed_at?: string;
-  deployedAt?: number;
-  source_code?: string | any;
-  sourceCode?: string | any;
-  abi?: any;
-  bytecode?: string;
-  constructor_args?: string;
-  constructorArgs?: any[];
-  network_id?: number;
-  networkId?: string;
-  compiler_version?: string;
-  compilerVersion?: string;
   tx_hash?: string;
   transactionHash?: string;
+  source_code?: string;
+  bytecode?: string;
+  stats: {
+    totalSupply?: string;
+    holders?: string;
+    transactions?: string;
+    volume?: string;
+    [key: string]: string | undefined;
+  };
+  contractState: ContractState[];
+}
+
+export interface ContractState {
+  label: string;
+  value: string | any[];
+  type: 'status' | 'address' | 'number' | 'string';
+}
+
+export interface AdminAction {
+  name: string;
+  label: string;
+  description: string;
+  params: AdminActionParam[];
+}
+
+export interface AdminActionParam {
+  name: string;
+  type: string;
+  placeholder: string;
+  value?: string;
 } 

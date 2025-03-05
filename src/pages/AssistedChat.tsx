@@ -248,7 +248,12 @@ const AssistedChat: React.FC = (): JSX.Element => {
   }, [address]);
 
   // Handle file selection from FileExplorer
-  const handleFileSelect = useCallback((path: string) => {
+  const handleFileSelect = useCallback((path: string | null) => {
+    if (!path) {
+      setSelectedFile(null);
+      return;
+    }
+    
     setSelectedFile(path);
     
     // Read file content and set appropriate state
