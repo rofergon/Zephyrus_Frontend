@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAccount } from 'wagmi';
 import { 
   ClockIcon, 
@@ -113,8 +113,18 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [lastLoadParams, setLastLoadParams] = useState<{
+    contractAddress?: string;
+    activeContextId?: string;
+    contextHash?: string;
+  }>();
   const databaseService = DatabaseService.getInstance();
   const { address } = useAccount();
+
+  // Compute a hash of conversation contexts for comparison
+  const computeContextHash = useCallback((contexts: ConversationContext[]) => {
+    return contexts.map(c => `${c.id}-${c.name}`).join('|');
+  }, []);
 
   // Manejadores de eventos
   const handleToggleExpand = () => {
@@ -138,170 +148,51 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
     onViewConversation(conversationId);
   };
 
-  // Obtener los contratos de la base de datos
+  // Optimized version loading
   useEffect(() => {
     const loadVersions = async () => {
+      // Skip if no wallet address
+      if (!address) {
+        console.log('[ContractVersionHistory] No wallet address available');
+        return;
+      }
+
+      // Check if we need to reload based on params
+      const currentContextHash = computeContextHash(conversationContexts);
+      if (
+        lastLoadParams?.contractAddress === contractAddress &&
+        lastLoadParams?.activeContextId === activeContextId &&
+        lastLoadParams?.contextHash === currentContextHash
+      ) {
+        console.log('[ContractVersionHistory] Skipping reload - params unchanged');
+        return;
+      }
+
       setIsLoading(true);
       
       try {
-        const allVersions: ContractVersion[] = [];
-        
-        if (!address) {
-          console.log('[ContractVersionHistory] No wallet address available');
-          setIsLoading(false);
-          return;
-        }
-        
         console.log('[ContractVersionHistory] Loading versions with params:', {
           contractAddress,
           activeContextId,
           conversationContexts
         });
         
-        try {
-          const deployedContracts = await databaseService.getDeployedContracts(address);
-          console.log('[ContractVersionHistory] Loaded deployed contracts:', deployedContracts);
-          
-          // Identificar el contrato actualmente desplegado
-          const currentlyDeployedContract = contractAddress && 
-            deployedContracts.find((contract: DeployedContract) => 
-              contract.contract_address?.toLowerCase() === contractAddress?.toLowerCase()
-            );
-            
-          console.log('[ContractVersionHistory] Currently deployed contract:', currentlyDeployedContract);
-          
-          // Filtrar los contratos que pertenecen al contexto actual o que están activamente desplegados
-          const relevantContracts = deployedContracts.filter((contract: DeployedContract) => {
-            // Si el contrato está desplegado activamente, incluirlo
-            const isActiveDeployment = contractAddress && 
-              contract.contract_address?.toLowerCase() === contractAddress?.toLowerCase();
-              
-            // Si el contrato pertenece al contexto actual, incluirlo
-            const belongsToCurrentContext = contract.conversation_id === activeContextId;
-            
-            // Incluir si cumple alguna de las condiciones
-            return isActiveDeployment || belongsToCurrentContext;
-          });
-          
-          console.log('[ContractVersionHistory] Filtered contracts for current context:', {
-            total: deployedContracts.length,
-            filtered: relevantContracts.length,
-            activeContextId
-          });
-          
-          // Procesar solo los contratos relevantes
-          relevantContracts.forEach((contract: DeployedContract) => {
-            const isActiveDeployment = !!(contractAddress && 
-              contract.contract_address?.toLowerCase() === contractAddress?.toLowerCase());
-            
-            // CORRECCIÓN: Verificar si el ID de conversación del contrato coincide con el
-            // ID del contexto actual, o si debe asignarse al contexto actual
-            let isCurrentContext = contract.conversation_id === activeContextId;
-            
-            // Si el contrato no tiene un ID de conversación pero está desplegado en el contexto actual,
-            // o si es el contrato activo y estamos en el contexto activo, asignarle el contexto actual
-            if ((!contract.conversation_id && isActiveDeployment && activeContextId) || 
-                (isActiveDeployment && activeContextId && !isCurrentContext)) {
-              console.log('[ContractVersionHistory] Assigning current context to deployed contract:', contractAddress);
-              contract.conversation_id = activeContextId;
-              isCurrentContext = true;
-              
-              // Intentar actualizar la base de datos (esta función se implementará después)
-              try {
-                databaseService.updateContractConversationId?.(contract.id || '', activeContextId);
-              } catch (error) {
-                console.warn('[ContractVersionHistory] Could not update contract conversation ID in database:', error);
-              }
-            }
-            
-            // Encontrar el contexto de la conversación
-            const conversationContext = conversationContexts.find(ctx => 
-              ctx.id === contract.conversation_id
-            );
-            
-            console.log(`[ContractVersionHistory] Processing contract:`, {
-              address: contract.contract_address,
-              isActiveDeployment,
-              isCurrentContext,
-              conversationId: contract.conversation_id,
-              activeContextId,
-              foundContext: !!conversationContext
-            });
-            
-            let timestamp = parseTimestamp(contract.deployedAt || contract.deployed_at);
-            let sourceCodeContent = parseSourceCode(contract);
-            
-            // Determinar el nombre de la conversación
-            let conversationName = 'Unknown Conversation';
-            if (conversationContext) {
-              conversationName = conversationContext.name;
-            } else if (isCurrentContext) {
-              // Si pertenece al contexto actual pero no encontramos el contexto
-              conversationName = 'Current Conversation';
-            }
-            
-            allVersions.push({
-              id: contract.id || generateUUID(),
-              name: contract.name || `Contract in ${conversationName}`,
-              address: contract.contract_address,
-              timestamp,
-              sourceCode: sourceCodeContent,
-              conversationId: contract.conversation_id || '',
-              conversationName,
-              txHash: contract.tx_hash || contract.transactionHash || '',
-              isDeployed: isActiveDeployment,
-              isCurrentContext
-            });
-          });
-        } catch (error) {
-          console.error('[ContractVersionHistory] Error fetching deployed contracts:', error);
-        }
+        const deployedContracts = await databaseService.getDeployedContracts(address);
         
-        // Procesar versiones no desplegadas de los contextos
-        conversationContexts.forEach(context => {
-          // Solo procesar el contexto actual
-          if (context.id !== activeContextId) {
-            console.log('[ContractVersionHistory] Skipping non-active context:', context.id);
-            return;
-          }
-          
-          const hasSolidityFiles = context.virtualFiles && 
-            Object.entries(context.virtualFiles).some(([_, file]) => 
-              (file as VirtualFile).language === 'solidity'
-            );
-            
-          if (hasSolidityFiles) {
-            console.log('[ContractVersionHistory] Processing Solidity files from current context:', context.id);
-            const solidityFiles = Object.entries(context.virtualFiles)
-              .filter(([_, file]) => (file as VirtualFile).language === 'solidity');
-              
-            solidityFiles.forEach(([path, file]) => {
-              const isAlreadyIncluded = allVersions.some(
-                (version) => 
-                  version.conversationId === context.id && 
-                  version.sourceCode === (file as VirtualFile).content
-              );
-              
-              if (!isAlreadyIncluded) {
-                allVersions.push({
-                  id: `${context.id}_${generateUUID()}`,
-                  name: path.split('/').pop() || `Draft in ${context.name || 'Current Chat'}`,
-                  timestamp: (file as VirtualFile).timestamp,
-                  sourceCode: (file as VirtualFile).content,
-                  conversationId: context.id,
-                  conversationName: context.name || 'Unnamed Conversation',
-                  isDeployed: false,
-                  isCurrentContext: context.id === activeContextId
-                });
-              }
-            });
-          }
-        });
-        
-        allVersions.sort((a, b) => b.timestamp - a.timestamp);
-        console.log('[ContractVersionHistory] Final versions:', allVersions);
+        // Process contracts and update state
+        const allVersions = await processVersions(
+          deployedContracts,
+          contractAddress,
+          activeContextId,
+          conversationContexts
+        );
         
         setVersions(allVersions);
+        setLastLoadParams({
+          contractAddress,
+          activeContextId,
+          contextHash: currentContextHash
+        });
       } catch (error) {
         console.error('[ContractVersionHistory] Error loading versions:', error);
       } finally {
@@ -310,7 +201,123 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
     };
     
     loadVersions();
-  }, [conversationContexts, contractAddress, databaseService, address, activeContextId]);
+  }, [address, contractAddress, activeContextId, conversationContexts, computeContextHash, lastLoadParams]);
+
+  // Separate processing logic for better organization
+  const processVersions = async (
+    deployedContracts: DeployedContract[],
+    currentAddress?: string,
+    contextId?: string,
+    contexts: ConversationContext[] = []
+  ): Promise<ContractVersion[]> => {
+    const allVersions: ContractVersion[] = [];
+    
+    // Process deployed contracts
+    const relevantContracts = deployedContracts.filter((contract: DeployedContract) => {
+      const isActiveDeployment = currentAddress && 
+        contract.contract_address?.toLowerCase() === currentAddress.toLowerCase();
+      const belongsToCurrentContext = contract.conversation_id === contextId;
+      return isActiveDeployment || belongsToCurrentContext;
+    });
+
+    // Process each contract
+    for (const contract of relevantContracts) {
+      try {
+        const version = await processContractToVersion(
+          contract,
+          currentAddress,
+          contextId,
+          contexts
+        );
+        if (version) {
+          allVersions.push(version);
+        }
+      } catch (error) {
+        console.error('[ContractVersionHistory] Error processing contract:', error);
+      }
+    }
+
+    // Process non-deployed versions from current context
+    if (contextId) {
+      const currentContext = contexts.find(ctx => ctx.id === contextId);
+      if (currentContext?.virtualFiles) {
+        const solidityFiles = Object.entries(currentContext.virtualFiles)
+          .filter(([_, file]) => (file as VirtualFile).language === 'solidity');
+
+        for (const [path, file] of solidityFiles) {
+          const isAlreadyIncluded = allVersions.some(
+            version => 
+              version.conversationId === contextId && 
+              version.sourceCode === (file as VirtualFile).content
+          );
+
+          if (!isAlreadyIncluded) {
+            allVersions.push({
+              id: `${contextId}_${generateUUID()}`,
+              name: path.split('/').pop() || `Draft in ${currentContext.name || 'Current Chat'}`,
+              timestamp: (file as VirtualFile).timestamp,
+              sourceCode: (file as VirtualFile).content,
+              conversationId: contextId,
+              conversationName: currentContext.name || 'Unnamed Conversation',
+              isDeployed: false,
+              isCurrentContext: true
+            });
+          }
+        }
+      }
+    }
+
+    // Sort by timestamp descending
+    return allVersions.sort((a, b) => b.timestamp - a.timestamp);
+  };
+
+  const processContractToVersion = async (
+    contract: DeployedContract,
+    currentAddress?: string,
+    contextId?: string,
+    contexts: ConversationContext[] = []
+  ): Promise<ContractVersion | null> => {
+    try {
+      const isActiveDeployment = !!(currentAddress && 
+        contract.contract_address?.toLowerCase() === currentAddress.toLowerCase());
+      
+      let isCurrentContext = contract.conversation_id === contextId;
+      
+      if ((!contract.conversation_id && isActiveDeployment && contextId) || 
+          (isActiveDeployment && contextId && !isCurrentContext)) {
+        contract.conversation_id = contextId;
+        isCurrentContext = true;
+        
+        try {
+          await databaseService.updateContractConversationId?.(
+            contract.id || '', 
+            contextId
+          );
+        } catch (error) {
+          console.warn('[ContractVersionHistory] Could not update contract conversation ID:', error);
+        }
+      }
+      
+      const context = contexts.find(ctx => ctx.id === contract.conversation_id);
+      const conversationName = context?.name || (isCurrentContext ? 'Current Conversation' : 'Unknown Conversation');
+      
+      return {
+        id: contract.id || generateUUID(),
+        name: contract.name || `Contract in ${conversationName}`,
+        address: contract.contract_address,
+        timestamp: parseTimestamp(contract.deployed_at || contract.created_at),
+        sourceCode: parseSourceCode(contract),
+        conversationId: contract.conversation_id || '',
+        conversationName,
+        txHash: contract.tx_hash || contract.transactionHash || '',
+        isDeployed: isActiveDeployment,
+        isCurrentContext
+      };
+    } catch (error) {
+      console.error('[ContractVersionHistory] Error processing contract to version:', error);
+      return null;
+    }
+  };
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleString();
@@ -319,71 +326,6 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
   const handleLoadVersion = (version: ContractVersion) => {
     setSelectedVersion(version.id);
     onLoadVersion(version.sourceCode, version.isDeployed);
-  };
-
-  // Helper function to process deployed contracts into contract versions
-  const processDeployedContractsToVersions = (
-    deployedContracts: DeployedContract[],
-    currentContractAddress?: string,
-    contexts: ConversationContext[] = [],
-    currentContextId?: string
-  ): ContractVersion[] => {
-    const allVersions: ContractVersion[] = [];
-    
-    // Find currently deployed contract
-      
-    // Filter contracts relevant to the current context
-    const relevantContracts = deployedContracts.filter((contract: DeployedContract) => {
-      // If the contract is currently deployed, include it
-      const isActiveDeployment = currentContractAddress && 
-        contract.contract_address?.toLowerCase() === currentContractAddress?.toLowerCase();
-        
-      // If the contract belongs to the current context, include it
-      const belongsToCurrentContext = contract.conversation_id === currentContextId;
-      
-      return isActiveDeployment || belongsToCurrentContext;
-    });
-    
-    console.log('[ContractVersionHistory] Filtered contracts for current context:', {
-      total: deployedContracts.length,
-      filtered: relevantContracts.length,
-      activeContextId: currentContextId
-    });
-    
-    // Convert contracts to versions
-    relevantContracts.forEach((contract: DeployedContract) => {
-      try {
-        const sourceCode = parseSourceCode(contract);
-        const timestamp = parseTimestamp(contract.deployed_at || contract.created_at);
-        
-        // Find context name
-        const conversationContext = contexts.find(
-          context => context.id === contract.conversation_id
-        );
-        const conversationName = conversationContext?.name || 'Unknown Context';
-        
-        // Create version object
-        const version: ContractVersion = {
-          id: contract.id || generateUUID(),
-          name: contract.contract_name || 'Unnamed Contract',
-          address: contract.contract_address,
-          timestamp: timestamp,
-          sourceCode: sourceCode,
-          conversationId: contract.conversation_id || '',
-          conversationName: conversationName,
-          txHash: contract.tx_hash,
-          isDeployed: !!contract.contract_address,
-          isCurrentContext: contract.conversation_id === currentContextId
-        };
-        
-        allVersions.push(version);
-      } catch (error) {
-        console.error('[ContractVersionHistory] Error processing contract:', error, contract);
-      }
-    });
-    
-    // Sort versions by timestamp (newest first)
-    return allVersions.sort((a, b) => b.timestamp - a.timestamp);
   };
 
   // Efecto para actualizar las versiones cuando cambia el contexto activo
@@ -474,11 +416,11 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
           
           // Procesar las versiones como en el useEffect original
           // Implementación simplificada para la actualización
-          const processedVersions = processDeployedContractsToVersions(
+          const processedVersions = await processVersions(
             deployedContracts, 
             contractAddress, 
-            conversationContexts, 
-            activeContextId
+            activeContextId,
+            conversationContexts
           );
           
           setVersions(processedVersions);

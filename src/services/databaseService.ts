@@ -4,6 +4,8 @@ export class DatabaseService {
   private static instance: DatabaseService;
   private baseUrl: string;
   private currentWalletAddress: string | null = null;
+  private deployedContractsCache: Map<string, {data: DeployedContract[], timestamp: number}> = new Map();
+  private readonly CACHE_TTL = 5000; // 5 seconds cache TTL
 
   private constructor() {
     // Use environment variable for API URL with fallback
@@ -291,6 +293,15 @@ export class DatabaseService {
   async getDeployedContracts(walletAddress: string): Promise<DeployedContract[]> {
     try {
       const validatedAddress = this.normalizeWalletAddress(walletAddress);
+      
+      // Check cache first
+      const cached = this.deployedContractsCache.get(validatedAddress);
+      const now = Date.now();
+      if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
+        console.log('[DatabaseService] Using cached deployed contracts');
+        return cached.data;
+      }
+
       console.log(`[DatabaseService] Fetching deployed contracts for wallet: ${validatedAddress}`);
       
       const url = `${this.baseUrl}/contracts/${validatedAddress}`;
@@ -330,52 +341,14 @@ export class DatabaseService {
       }
       
       console.log(`[DatabaseService] Complete API response:`, data);
-      
-      // Procesar la respuesta y transformar formatos
-      const contracts = Array.isArray(data) ? data : [];
-      return contracts.map(contract => {
-        // Procesar timestamp: convertir de string "YYYY-MM-DD HH:MM:SS" a timestamp numérico
-        let timestamp = Date.now(); // Valor por defecto
-        
-        if (contract.deployed_at) {
-          console.log(`[DatabaseService] Processing deployed_at timestamp:`, {
-            original: contract.deployed_at,
-            type: typeof contract.deployed_at
-          });
-          
-          try {
-            // Parse the date string to a Date object and then get timestamp
-            const dateObj = new Date(contract.deployed_at);
-            timestamp = dateObj.getTime();
-            
-            console.log(`[DatabaseService] Parsed timestamp for contract ${contract.contract_address}:`, {
-              dateString: contract.deployed_at,
-              dateObj: dateObj.toString(),
-              timestamp
-            });
-          } catch (error) {
-            console.error(`[DatabaseService] Error parsing date:`, error);
-          }
-        }
-        
-        // Solo registrar detalles del primer contrato para evitar sobrecarga de logs
-        if (contracts.indexOf(contract) === 0) {
-          console.log(`[DatabaseService] Transformed first contract:`, {
-            address: contract.contract_address,
-            timestamp,
-            original_deployed_at: contract.deployed_at
-          });
-        }
-        
-        return {
-          ...contract,
-          deployedAt: timestamp, // Agregar campo numérico para facilitar el procesamiento
-          sourceCode: this.parseSourceCode(contract.source_code),
-          abi: contract.abi ? (typeof contract.abi === 'string' ? JSON.parse(contract.abi) : contract.abi) : null,
-          constructorArgs: contract.constructor_args ? JSON.parse(contract.constructor_args) : null,
-          networkId: contract.network_id ? contract.network_id.toString() : null
-        };
+
+      // Update cache
+      this.deployedContractsCache.set(validatedAddress, {
+        data: Array.isArray(data) ? data : [],
+        timestamp: now
       });
+      
+      return Array.isArray(data) ? data : [];
     } catch (error) {
       console.error('[DatabaseService] Error getting deployed contracts:', error);
       throw error;
