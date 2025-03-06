@@ -204,19 +204,19 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ contract, onSave, onC
                 name="description"
                 value={config.description}
                 onChange={handleInputChange}
-                className="w-full p-3 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 min-h-[120px] resize-none"
+                className="w-full p-3 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 min-h-[500px] max-h-[600px] custom-scrollbar overflow-y-auto resize-none"
                 placeholder="Describe what this agent will do"
               />
             </div>
             
-            <div className="flex items-center mt-6">
+            <div className="flex items-center mt-2">
               <input
                 type="checkbox"
                 id="isActive"
                 name="isActive"
                 checked={config.isActive}
                 onChange={handleCheckboxChange}
-                className="h-4 w-4 bg-gray-900 border-gray-700 rounded focus:ring-blue-500"
+                className="h-6 w-4 bg-gray-900 border-gray-700 rounded focus:ring-blue-500"
               />
               <label htmlFor="isActive" className="ml-2 block text-sm text-gray-400">
                 Activate agent immediately after creation
@@ -227,7 +227,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ contract, onSave, onC
       
       case 2:
         return (
-          <div className="space-y-4">
+          <div className="flex flex-col h-full">
             <h3 className="text-lg font-semibold text-gray-200 mb-4">Select Allowed Functions</h3>
             
             <div className="flex space-x-2 mb-4">
@@ -266,7 +266,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ contract, onSave, onC
               </button>
             </div>
             
-            <div className="bg-gray-900/30 rounded-lg p-4 max-h-96 overflow-y-auto">
+            <div className="flex-1 bg-gray-900/30 rounded-lg p-4 min-h-0 overflow-y-auto custom-scrollbar">
               {filteredFunctions.length === 0 ? (
                 <p className="text-gray-400 text-center py-4">No functions found in this category</p>
               ) : (

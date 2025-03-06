@@ -157,7 +157,7 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({ contract, agent
   const allowedFunctions = agentConfig.allowedFunctions.filter(func => func.isAllowed);
 
   return (
-    <div className="bg-gray-900 text-white rounded-xl p-6 shadow-xl w-full max-w-4xl mx-auto">
+    <div className="flex flex-col h-full bg-gray-900 text-white rounded-xl p-6 shadow-xl">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold text-indigo-400">
           Agent: {agentConfig.name}
@@ -171,7 +171,7 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({ contract, agent
       </div>
 
       {/* Sección de descripción del comportamiento */}
-      <div className="bg-gray-800 rounded-lg p-4 mb-6 relative">
+      <div className="bg-gray-800 rounded-lg p-4 mb-6">
         <div 
           className="flex justify-between items-center cursor-pointer"
           onClick={toggleDescriptionEdit}
@@ -390,9 +390,10 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({ contract, agent
         </div>
       </div>
 
-      <div className="bg-gray-800 rounded-lg p-4">
+      {/* Sección de logs con altura flexible */}
+      <div className="flex-1 min-h-0 bg-gray-800 rounded-lg p-4">
         <h3 className="text-lg font-semibold mb-2 text-indigo-300">Execution Logs</h3>
-        <div className="h-96 overflow-y-auto custom-scrollbar bg-gray-900 rounded p-4 font-mono text-sm">
+        <div className="h-full overflow-y-auto custom-scrollbar bg-gray-900 rounded p-4 font-mono text-sm">
           {logs.length === 0 ? (
             <p className="text-gray-500 italic">No logs yet...</p>
           ) : (
@@ -433,4 +434,4 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({ contract, agent
   );
 };
 
-export default AgentExecutionLogs; 
+export default AgentExecutionLogs;

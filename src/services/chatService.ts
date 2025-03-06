@@ -772,36 +772,4 @@ export class ChatService {
     }
   }
 
-  private detectLanguage(path: string): string {
-    const extension = path.split('.').pop()?.toLowerCase();
-    
-    switch (extension) {
-      case 'sol':
-        return 'solidity';
-      case 'js':
-        return 'javascript';
-      case 'ts':
-        return 'typescript';
-      case 'jsx':
-        return 'javascriptreact';
-      case 'tsx':
-        return 'typescriptreact';
-      case 'json':
-        return 'json';
-      case 'md':
-        return 'markdown';
-      case 'py':
-        return 'python';
-      case 'go':
-        return 'go';
-      case 'rs':
-        return 'rust';
-      case 'html':
-        return 'html';
-      case 'css':
-        return 'css';
-      default:
-        return 'plaintext';
-    }
-  }
 } 
