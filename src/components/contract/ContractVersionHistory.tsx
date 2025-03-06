@@ -40,20 +40,30 @@ const parseTimestamp = (input: any): number => {
   }
 };
 
+// Definir interfaz para el objeto de código fuente
+interface SourceCodeObject {
+  content: string;
+  [key: string]: any;
+}
+
 // Función de utilidad para procesar código fuente
 const parseSourceCode = (contract: DeployedContract): string => {
   try {
-    // Caso 1: sourceCode es un string directo
-    if (typeof contract.sourceCode === 'string') {
-      return contract.sourceCode;
-    }
+    const sourceCode = contract.source_code;
     
-    // Caso 2: source_code es un string JSON
-    if (typeof contract.source_code === 'string') {
-      const trimmed = contract.source_code.trim();
+    // Si no hay código fuente, retornar string vacío
+    if (!sourceCode) {
+      return '';
+    }
+
+    // Caso 1: source_code es un string directo
+    if (typeof sourceCode === 'string') {
+      const trimmed = sourceCode.trim();
+      // Caso 2: source_code es un string JSON
       if (trimmed.startsWith('{')) {
         try {
-          return JSON.parse(trimmed).content || trimmed;
+          const parsed = JSON.parse(trimmed) as SourceCodeObject;
+          return parsed.content || trimmed;
         } catch {
           return trimmed;
         }
@@ -61,9 +71,11 @@ const parseSourceCode = (contract: DeployedContract): string => {
       return trimmed;
     }
     
-    // Caso 3: sourceCode es un objeto con content
-    if (contract.sourceCode?.content) {
-      return contract.sourceCode.content;
+    // Caso 3: source_code es un objeto con content (este caso no debería ocurrir según el tipo,
+    // pero lo mantenemos por compatibilidad)
+    const sourceCodeAsAny = sourceCode as any;
+    if (sourceCodeAsAny && typeof sourceCodeAsAny === 'object' && 'content' in sourceCodeAsAny) {
+      return sourceCodeAsAny.content;
     }
     
     return '';
@@ -290,7 +302,7 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
         
         try {
           await databaseService.updateContractConversationId?.(
-            contract.id || '', 
+            contract.contract_address || '', 
             contextId
           );
         } catch (error) {
@@ -302,10 +314,10 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
       const conversationName = context?.name || (isCurrentContext ? 'Current Conversation' : 'Unknown Conversation');
       
       return {
-        id: contract.id || generateUUID(),
+        id: contract.contract_address || generateUUID(),
         name: contract.name || `Contract in ${conversationName}`,
         address: contract.contract_address,
-        timestamp: parseTimestamp(contract.deployed_at || contract.created_at),
+        timestamp: parseTimestamp(contract.deployed_at || contract.deployedAt),
         sourceCode: parseSourceCode(contract),
         conversationId: contract.conversation_id || '',
         conversationName,
@@ -452,154 +464,163 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
   }, [address, activeContextId, contractAddress, conversationContexts, databaseService]);
 
   return (
-    <div className={`bg-gray-800/90 backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl overflow-hidden transition-all duration-300 ${
-      isExpanded ? 'h-80' : 'h-12'
-    }`}>
-      {/* Header with toggle */}
+    <div className={`flex flex-col ${isExpanded ? 'h-80' : 'h-10'} transition-all duration-300 ease-in-out overflow-hidden`}>
+      {/* Header with toggle button */}
       <div 
-        className="h-12 px-4 flex items-center justify-between bg-gray-800/95 cursor-pointer"
+        className="flex-none h-10 border-b border-gray-700/70 px-4 flex items-center justify-between bg-gradient-to-r from-gray-800/95 to-gray-850/95 backdrop-blur-sm sticky top-0 z-10 shadow-sm cursor-pointer transition-colors hover:bg-gray-750/90"
         onClick={handleToggleExpand}
       >
-        <div className="flex items-center space-x-3">
-          <ClockIcon className="w-5 h-5 text-blue-400" />
-          <h3 className="text-sm font-medium text-white">Contract Version History</h3>
+        <div className="flex items-center gap-3">
+          <div className="p-1.5 rounded-full bg-gray-700/70 text-blue-400">
+            <ClockIcon className="w-4 h-4" />
+          </div>
+          <h3 className="text-sm font-medium text-gray-300">Contract Version History</h3>
+          {versions.length > 0 && (
+            <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded-full text-xs ml-2">
+              {versions.length}
+            </span>
+          )}
         </div>
-        <div className="flex items-center space-x-2">
-          <span className="text-xs text-gray-400">{versions.length} versions</span>
+        <button
+          className="p-1.5 rounded-full text-gray-400 hover:text-white hover:bg-gray-700/70 transition-all duration-200"
+          title={isExpanded ? "Collapse" : "Expand"}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleToggleExpand();
+          }}
+        >
           <svg 
-            className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} 
+            className={`w-5 h-5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : 'rotate-0'}`} 
             fill="none" 
             stroke="currentColor" 
             viewBox="0 0 24 24"
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
-        </div>
+        </button>
       </div>
 
-      {/* Content when expanded */}
-      {isExpanded && (
-        <div className="h-[calc(100%-3rem)] flex flex-col">
-          {/* Loading state */}
-          {isLoading && (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-            </div>
-          )}
+      {/* Loading state */}
+      {isLoading && (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500"></div>
+        </div>
+      )}
 
-          {/* No versions state */}
-          {!isLoading && versions.length === 0 && (
-            <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-6">
-              <DocumentDuplicateIcon className="w-12 h-12 mb-4 text-gray-600" />
-              <p className="text-center">No version history available for this contract.</p>
-              <p className="text-sm text-gray-500 mt-2">
-                Contract versions will appear here when you deploy or save different versions.
-              </p>
-            </div>
-          )}
+      {/* No versions state */}
+      {!isLoading && versions.length === 0 && (
+        <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-6">
+          <div className="p-4 rounded-full bg-gray-800/80 mb-4">
+            <DocumentDuplicateIcon className="w-10 h-10 text-gray-600" />
+          </div>
+          <p className="text-center font-medium text-gray-300">No version history available</p>
+          <p className="text-sm text-gray-500 mt-2 text-center max-w-xs">
+            Contract versions will appear here when you deploy or save different versions of your contract.
+          </p>
+        </div>
+      )}
 
-          {/* Versions list */}
-          {!isLoading && versions.length > 0 && (
-            <div className="flex-1 overflow-y-auto p-4">
-              <div className="space-y-3">
-                {versions.map((version) => (
-                  <div 
-                    key={version.id}
-                    className={`p-3 rounded-lg border transition-colors ${
-                      selectedVersion === version.id
-                        ? 'bg-blue-500/10 border-blue-500/30'
-                        : 'bg-gray-700/40 border-gray-700 hover:bg-gray-700/60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col">
-                        <span className="font-medium text-white">{version.name}</span>
-                        {version.conversationId !== activeContextId && (
-                          <span className="text-xs text-yellow-400 mt-1">
-                            From: {version.conversationName}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={(e) => handleLoadVersionClick(e, version)}
-                          className="p-1.5 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/20 transition-colors"
-                          title="Load this version into editor"
-                        >
-                          <ArrowPathIcon className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={(e) => handleViewConversationClick(e, version.conversationId)}
-                          className="p-1.5 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/20 transition-colors"
-                          title="View conversation"
-                        >
-                          <ChatBubbleLeftRightIcon className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-2 text-sm">
-                      <div className="flex items-center text-gray-500">
-                        <ClockIcon className="w-3.5 h-3.5 mr-1 inline" />
-                        <span>{formatDate(version.timestamp)}</span>
-                      </div>
-                      
-                      <div className="flex items-center text-gray-500 mt-1">
-                        <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 mr-1 inline" />
-                        <span>{version.conversationName}</span>
-                      </div>
-                      
-                      {version.address && (
-                        <div className="flex items-center text-gray-400 mt-1">
-                          <LinkIcon className="w-3.5 h-3.5 mr-1 inline" />
-                          <span className={`${
-                            version.isDeployed 
-                              ? 'text-green-400' 
-                              : 'text-yellow-400'
-                          }`}>
-                            {version.address.substring(0, 6)}...{version.address.substring(38)}
-                          </span>
-                        </div>
-                      )}
-                      
-                      {version.txHash && (
-                        <div className="flex items-center text-gray-400 mt-1 text-xs">
-                          <span className="text-gray-500">TX: </span>
-                          <span className="ml-1 text-blue-400">{version.txHash}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {version.conversationId === activeContextId && (
-                      <div className="mt-2 px-2 py-1 text-xs bg-blue-500/20 text-blue-400 rounded inline-block">
-                        Current Context
-                      </div>
+      {/* Versions list */}
+      {!isLoading && versions.length > 0 && (
+        <div className="flex-1 overflow-y-auto p-4 bg-gray-900/40 backdrop-blur-sm">
+          <div className="space-y-3">
+            {versions.map((version) => (
+              <div 
+                key={version.id}
+                className={`p-3.5 rounded-lg border shadow-sm transition-all duration-200 ${
+                  selectedVersion === version.id
+                    ? 'bg-gradient-to-br from-blue-900/20 to-blue-800/20 border-blue-500/40 shadow-blue-900/20'
+                    : 'bg-gray-800/60 border-gray-700/60 hover:bg-gray-750/70 hover:border-gray-600/70 hover:shadow-md'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="font-medium text-white">{version.name}</span>
+                    {version.conversationId !== activeContextId && (
+                      <span className="text-xs text-yellow-400 mt-1">
+                        From: {version.conversationName}
+                      </span>
                     )}
-                    
-                    {/* Status Indicator - Combined version */}
-                    <div className="mt-2 flex items-center gap-2">
-                      {version.isDeployed ? (
-                        <div className="flex items-center gap-2 px-2 py-1 text-xs bg-green-500/20 text-green-400 rounded">
-                          <div className="w-2 h-2 rounded-full bg-green-400"></div>
-                          Currently Deployed
-                        </div>
-                      ) : version.address ? (
-                        <div className="flex items-center gap-2 px-2 py-1 text-xs bg-yellow-500/20 text-yellow-400 rounded">
-                          <div className="w-2 h-2 rounded-full bg-yellow-400"></div>
-                          Previously Deployed
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 px-2 py-1 text-xs bg-gray-500/20 text-gray-400 rounded">
-                          <div className="w-2 h-2 rounded-full bg-gray-400"></div>
-                          Not Deployed
-                        </div>
-                      )}
-                    </div>
                   </div>
-                ))}
+                  <div className="flex space-x-1">
+                    <button
+                      onClick={(e) => handleLoadVersionClick(e, version)}
+                      className="p-1.5 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/20 transition-all duration-200 hover:shadow-inner"
+                      title="Load this version into editor"
+                    >
+                      <ArrowPathIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={(e) => handleViewConversationClick(e, version.conversationId)}
+                      className="p-1.5 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/20 transition-all duration-200 hover:shadow-inner"
+                      title="View conversation"
+                    >
+                      <ChatBubbleLeftRightIcon className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="mt-2.5 text-sm grid grid-cols-2 gap-2">
+                  <div className="flex items-center text-gray-500">
+                    <ClockIcon className="w-3.5 h-3.5 mr-1.5 inline text-gray-400" />
+                    <span className="truncate">{formatDate(version.timestamp)}</span>
+                  </div>
+                  
+                  <div className="flex items-center text-gray-500">
+                    <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 mr-1.5 inline text-gray-400" />
+                    <span className="truncate">{version.conversationName}</span>
+                  </div>
+                  
+                  {version.address && (
+                    <div className="flex items-center text-gray-400 col-span-2 mt-0.5">
+                      <LinkIcon className="w-3.5 h-3.5 mr-1.5 inline" />
+                      <span className={`truncate ${
+                        version.isDeployed 
+                          ? 'text-green-400' 
+                          : 'text-yellow-400'
+                      }`}>
+                        {version.address.substring(0, 6)}...{version.address.substring(38)}
+                      </span>
+                    </div>
+                  )}
+                  
+                  {version.txHash && (
+                    <div className="flex items-center text-gray-400 mt-0.5 text-xs col-span-2">
+                      <span className="text-gray-500">TX: </span>
+                      <span className="ml-1 text-blue-400 truncate">{version.txHash}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {version.conversationId === activeContextId && (
+                    <div className="px-2.5 py-1 text-xs bg-blue-500/20 text-blue-400 rounded-full inline-flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-400"></div>
+                      Current Context
+                    </div>
+                  )}
+                  
+                  {/* Status Indicator - Combined version */}
+                  {version.isDeployed ? (
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-green-500/20 text-green-400 rounded-full">
+                      <div className="w-1.5 h-1.5 rounded-full bg-green-400"></div>
+                      Deployed
+                    </div>
+                  ) : version.address ? (
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-yellow-500/20 text-yellow-400 rounded-full">
+                      <div className="w-1.5 h-1.5 rounded-full bg-yellow-400"></div>
+                      Draft
+                    </div>
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-gray-500/20 text-gray-400 rounded-full">
+                      <div className="w-1.5 h-1.5 rounded-full bg-gray-400"></div>
+                      Not Deployed
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
     </div>

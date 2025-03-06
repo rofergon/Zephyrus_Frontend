@@ -62,39 +62,37 @@ const ContractAdmin: React.FC = () => {
     }
   }, [isSuccess, isConfirming, userAddress]);
 
-  // Hook personalizado para leer datos del contrato
-  const useContractReadWithArgs = (address: string, abi: any[], functionName: string, args: any[] = []) => {
-    const { data, isError, error, refetch } = useContractRead({
-      chainId: sonicBlazeTestnet.id, // Sonic Blaze Testnet
-      address: address as `0x${string}`,
-      abi,
-      functionName,
-      args,
-      query: {
-        enabled: false,
-      },
-    });
-
-    return { data, isError, error, refetch };
-  };
-
   const loadContractStats = useCallback(async (address: string, abi: any[]) => {
     try {
       let totalSupply = '0';
       let holders = '0';
 
-      // Usar el hook para totalSupply
-      const totalSupplyRead = useContractReadWithArgs(address, abi, 'totalSupply');
-      await totalSupplyRead.refetch();
-      if (totalSupplyRead.data) {
-        totalSupply = totalSupplyRead.data.toString();
+      if (!publicClient) {
+        throw new Error('Public client not available');
       }
 
-      // Usar el hook para balanceOf
-      const balanceOfRead = useContractReadWithArgs(address, abi, 'balanceOf', [address]);
-      await balanceOfRead.refetch();
-      if (balanceOfRead.data) {
-        holders = balanceOfRead.data.toString();
+      // Usar readContract directamente en lugar del hook
+      const data = await publicClient.readContract({
+        address: address as `0x${string}`,
+        abi,
+        functionName: 'totalSupply',
+        args: []
+      });
+      
+      if (data) {
+        totalSupply = data.toString();
+      }
+
+      // Leer balanceOf
+      const balanceData = await publicClient.readContract({
+        address: address as `0x${string}`,
+        abi,
+        functionName: 'balanceOf',
+        args: [address]
+      });
+
+      if (balanceData) {
+        holders = balanceData.toString();
       }
 
       return {
@@ -112,72 +110,77 @@ const ContractAdmin: React.FC = () => {
         volume: '0'
       };
     }
-  }, []);
+  }, [publicClient]);
 
   const loadContractState = useCallback(async (address: string, abi: any[]): Promise<ContractState[]> => {
     const state: ContractState[] = [];
     
     try {
-      // Usar hooks para cada función
-      const pausedRead = useContractReadWithArgs(address, abi, 'paused');
-      const ownerRead = useContractReadWithArgs(address, abi, 'owner');
-      const totalSupplyRead = useContractReadWithArgs(address, abi, 'totalSupply');
-      const symbolRead = useContractReadWithArgs(address, abi, 'symbol');
+      if (!publicClient) {
+        throw new Error('Public client not available');
+      }
 
-      // Leer paused
-      try {
-        await pausedRead.refetch();
-        if (pausedRead.data !== undefined) {
-          state.push({
-            label: 'Paused',
-            value: pausedRead.data ? 'Yes' : 'No',
-            type: 'status' as const
-          });
-        }
-      } catch {}
+      // Usar readContract directamente para cada función
+      const functions = ['paused', 'owner', 'totalSupply', 'symbol'];
       
-      // Leer owner
-      try {
-        await ownerRead.refetch();
-        if (ownerRead.data) {
-          state.push({
-            label: 'Owner',
-            value: ownerRead.data.toString(),
-            type: 'address' as const
+      for (const functionName of functions) {
+        try {
+          const data = await publicClient.readContract({
+            address: address as `0x${string}`,
+            abi,
+            functionName,
+            args: []
           });
+
+          switch (functionName) {
+            case 'paused':
+              if (data !== undefined) {
+                state.push({
+                  label: 'Paused',
+                  value: data ? 'Yes' : 'No',
+                  type: 'status'
+                });
+              }
+              break;
+            case 'owner':
+              if (data) {
+                state.push({
+                  label: 'Owner',
+                  value: data.toString(),
+                  type: 'address'
+                });
+              }
+              break;
+            case 'totalSupply':
+              if (data !== undefined) {
+                state.push({
+                  label: 'Total Supply',
+                  value: data.toString(),
+                  type: 'number'
+                });
+              }
+              break;
+            case 'symbol':
+              if (data) {
+                state.push({
+                  label: 'Symbol',
+                  value: data.toString(),
+                  type: 'string'
+                });
+              }
+              break;
+          }
+        } catch (error) {
+          console.error(`Error reading ${functionName}:`, error);
         }
-      } catch {}
-      
-      // Leer totalSupply
-      try {
-        await totalSupplyRead.refetch();
-        if (totalSupplyRead.data !== undefined) {
-          state.push({
-            label: 'Total Supply',
-            value: totalSupplyRead.data.toString(),
-            type: 'number' as const
-          });
-        }
-      } catch {}
-      
-      // Leer symbol
-      try {
-        await symbolRead.refetch();
-        if (symbolRead.data) {
-          state.push({
-            label: 'Symbol',
-            value: symbolRead.data.toString(),
-            type: 'string' as const
-          });
-        }
-      } catch {}
+      }
       
       return state;
     } catch (error) {
       console.error('Error loading contract state:', error);
       return state;
     }
-  }, []);
+  }, [publicClient]);
 
   const loadDeployedContracts = useCallback(async () => {
     if (!userAddress) return;

@@ -65,7 +65,7 @@ const AssistedChat: React.FC = (): JSX.Element => {
   const compilationService = useRef<CompilationService>(CompilationService.getInstance());
   const databaseService = useRef<DatabaseService>(DatabaseService.getInstance());
   const chatContextService = useRef<ChatContextService | null>(null);
-  const [isFileExplorerOpen, setIsFileExplorerOpen] = useState(true);
+  const [isFileExplorerOpen, setIsFileExplorerOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [showWorkspaceManager, setShowWorkspaceManager] = useState(false);
   const lastCompilationRef = useRef<string>('');

@@ -116,20 +116,20 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
   const [showContractSelector, setShowContractSelector] = useState(false);
   const [contractSelectorMessageId, setContractSelectorMessageId] = useState<string | null>(null);
 
-  // Esta función de scroll usa behavior: "auto" para el scroll inicial (más inmediato)
+  // This function uses behavior: "auto" for initial scroll (more immediate)
   const scrollToBottomImmediate = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
   };
   
-  // Esta función usa behavior: "smooth" para scrolls durante la interacción
+  // This function uses behavior: "smooth" for scrolls during interaction
   const scrollToBottomSmooth = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // Este efecto se ejecuta solo en el montaje inicial
+  // This effect runs only on initial mount
   useLayoutEffect(() => {
     scrollToBottomImmediate();
-    // Doble scroll para asegurar que funcione correctamente, incluso con imágenes o contenido que carga lento
+    // Double scroll to ensure it works correctly, even with images or content that loads slowly
     setTimeout(scrollToBottomImmediate, 100);
     
     return () => {
@@ -137,7 +137,7 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
     };
   }, []);
 
-  // Este efecto se ejecuta cuando cambian los mensajes
+  // This effect runs when messages change
   useEffect(() => {
     if (!isInitialMount.current) {
       scrollToBottomSmooth();
@@ -224,47 +224,79 @@ I'm here to help you create, compile, test, and deploy Solidity smart contracts 
   };
 
   return (
-    <div className="h-full overflow-y-auto" ref={containerRef}>
+    <div className="h-full overflow-y-auto bg-transparent" ref={containerRef}>
       {/* Add animation styles */}
       <style>{animationStyles}</style>
       
-      <div className="max-w-4xl mx-auto py-6 px-4 sm:px-6 space-y-6">
-        {/* Show welcome message if no messages */}
+      <div className="max-w-4xl mx-auto py-8 px-4 sm:px-8 space-y-8">
+        {/* Welcome effect - only for empty message list */}
         {messages.length === 0 && (
-          <MessageComponent message={welcomeMessage} />
+          <div className="animate-fade-in-slow">
+            <MessageComponent message={welcomeMessage} />
+          </div>
         )}
         
         {/* Render all messages */}
-        {messages.map((message) => (
-          <MessageComponent 
-            key={message.id} 
-            message={{
-              ...message,
-              showAnimation: message.sender === 'ai' && !message.isTyping
-            }} 
-          />
-        ))}
+        <div className="space-y-6 relative">
+          {messages.map((message, index) => (
+            <div key={message.id} className="relative">
+              {/* Decorative line connecting messages from same sender */}
+              {index > 0 && messages[index-1].sender === message.sender && message.sender === 'ai' && (
+                <div className="absolute left-4 -top-6 w-0.5 h-6 bg-gradient-to-b from-transparent to-blue-500/20"></div>
+              )}
+              
+              <MessageComponent 
+                message={{
+                  ...message,
+                  showAnimation: message.sender === 'ai' && !message.isTyping
+                }} 
+              />
+            </div>
+          ))}
+        </div>
 
         {/* Show contract selector if active */}
         {showContractSelector && (
-          <MessageComponent message={contractSelectorMessage} />
+          <div className="animate-fade-in-up">
+            <MessageComponent message={contractSelectorMessage} />
+          </div>
         )}
 
         {/* Show typing indicator */}
         {isTyping && (
-          <MessageComponent 
-            message={{
-              id: 'typing',
-              text: '',
-              sender: 'ai',
-              timestamp: Date.now(),
-              isTyping: true,
-              showAnimation: false
-            }}
-          />
+          <div className="animate-fade-in-up">
+            <MessageComponent 
+              message={{
+                id: 'typing',
+                text: '',
+                sender: 'ai',
+                timestamp: Date.now(),
+                isTyping: true,
+                showAnimation: false
+              }}
+            />
+          </div>
         )}
         <div ref={messagesEndRef} />
       </div>
+      
+      {/* Add any additional styles needed */}
+      <style>{`
+        @keyframes fade-in-slow {
+          0% { opacity: 0; transform: translateY(10px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fade-in-up {
+          0% { opacity: 0; transform: translateY(20px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in-slow {
+          animation: fade-in-slow 1s ease-out;
+        }
+        .animate-fade-in-up {
+          animation: fade-in-up 0.4s ease-out;
+        }
+      `}</style>
     </div>
   );
 };

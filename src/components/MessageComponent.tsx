@@ -100,10 +100,10 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
             // Slower for headings
             currentSpeed = typingSpeed * headingSpeedMultiplier;
           } else if (nextChar === '\n' && remainingText.startsWith('\n')) {
-            // Pausa más larga al final de párrafos
+            // Longer pause at the end of paragraphs
             currentSpeed = typingSpeed * 10;
           } else if (/^\d+\.\s/.test(remainingText.trimStart())) {
-            // Pausa antes de puntos numerados
+            // Pause before numbered points
             currentSpeed = typingSpeed * 5;
           }
           
@@ -144,39 +144,50 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
   };
 
   return (
-    <div className={`flex justify-${isUser ? 'end' : 'start'} group animate-fade-in`}>
+    <div className={`flex justify-${isUser ? 'end' : 'start'} group animate-fade-in mb-6`}>
       {/* Avatar for AI/System messages */}
       {!isUser && (
         <div className="flex-shrink-0 mr-4">
-          <div className={`w-8 h-8 rounded-lg ${
+          <div className={`w-10 h-10 rounded-xl transform transition-all duration-300 group-hover:scale-110 ${
             isSystem 
-              ? 'bg-red-600/20 border border-red-500/30' 
-              : 'bg-blue-600/20 border border-blue-500/30'
+              ? 'bg-gradient-to-br from-red-500/30 to-red-700/40 border border-red-500/40 shadow-md shadow-red-500/10' 
+              : 'bg-gradient-to-br from-blue-500/30 to-indigo-600/40 border border-blue-500/40 shadow-md shadow-blue-500/10'
           } flex items-center justify-center`}>
-            <CommandLineIcon className={`w-5 h-5 ${
+            <CommandLineIcon className={`w-6 h-6 ${
               isSystem ? 'text-red-400' : 'text-blue-400'
-            }`} />
+            } group-hover:text-opacity-100 text-opacity-80 transition-all duration-300`} />
           </div>
         </div>
       )}
 
-      <div className="flex flex-col items-start max-w-[85%] lg:max-w-[75%] min-w-[40px]">
+      <div className="flex flex-col items-start max-w-[85%] lg:max-w-[75%] min-w-[40px] relative group">
+        {/* Time indicator - small and subtle */}
+        <div className={`text-[10px] text-gray-500 mb-1 font-medium opacity-0 group-hover:opacity-100 transition-opacity 
+          absolute ${isUser ? 'right-0' : 'left-0'} -top-4`}>
+          {format(new Date(message.timestamp), 'HH:mm')}
+        </div>
+        
         {/* Message Content */}
         <div 
-          className={`relative rounded-2xl px-4 sm:px-6 py-4 shadow-lg ${
+          className={`relative rounded-2xl px-5 sm:px-6 py-4 shadow-lg transform transition-all duration-300 ${
             isUser
-              ? 'bg-blue-600 text-white ml-4 sm:ml-12'
+              ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white ml-4 sm:ml-12 group-hover:shadow-blue-500/30 hover:scale-[1.02] hover:-translate-y-0.5'
               : isSystem
-              ? 'bg-red-600/20 border border-red-500/30 text-red-200 mr-4 sm:mr-12'
-              : 'bg-gradient-to-br from-gray-800 to-gray-900 text-gray-100 border border-gray-700/50 mr-4 sm:mr-12 cursor-pointer'
+              ? 'bg-gradient-to-br from-red-600/30 to-red-700/40 border border-red-500/40 text-red-100 mr-4 sm:mr-12 group-hover:shadow-red-500/20 hover:scale-[1.02] hover:-translate-y-0.5'
+              : 'bg-gradient-to-br from-gray-800/95 to-gray-900/95 text-gray-100 border border-gray-700/50 mr-4 sm:mr-12 cursor-pointer group-hover:shadow-blue-500/10 hover:scale-[1.01] hover:-translate-y-0.5 hover:border-indigo-500/30'
           }`}
           onClick={handleMessageClick}
         >
+          {/* Soft glow effect for AI messages */}
+          {isAI && !message.isTyping && !isSystem && (
+            <div className="absolute inset-0 -z-10 bg-blue-500/5 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          )}
+          
           {message.isTyping ? (
-            <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 bg-blue-400/80 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-2 h-2 bg-blue-400/80 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-2 h-2 bg-blue-400/80 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            <div className="flex items-center space-x-2 py-2">
+              <div className="w-2.5 h-2.5 bg-blue-400/80 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <div className="w-2.5 h-2.5 bg-blue-400/80 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-2.5 h-2.5 bg-blue-400/80 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
           ) : message.customContent ? (
             <>
@@ -252,7 +263,7 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
               </div>
             </>
           ) : (
-            <div className="markdown-content">
+            <div className={`prose prose-invert max-w-none ${isAnimating ? 'animate-pulse-subtle' : ''}`}>
               <ReactMarkdown
                 components={{
                   code({className, children, ...props}) {
@@ -321,17 +332,17 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
             <span className="inline-block h-4 w-2 bg-blue-400/80 ml-1 animate-blink"></span>
           )}
 
-          {/* Action Buttons */}
+          {/* Message Actions */}
           {message.actions && message.actions.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {message.actions.map((action, index) => (
-                <button
-                  key={index}
+            <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-gray-700/50">
+              {message.actions.map((action, i) => (
+                <button 
+                  key={i}
                   onClick={action.onClick}
-                  className="px-4 py-2 text-sm bg-gray-800/80 hover:bg-gray-700 
-                    text-gray-200 rounded-lg transition-all duration-200 
-                    border border-gray-700/50 hover:border-gray-600/50 
-                    hover:shadow-lg flex items-center space-x-2"
+                  className="px-3 py-1.5 text-xs font-medium bg-gray-800 text-gray-300 rounded-full 
+                    hover:bg-blue-600/80 hover:text-white transition-all duration-200 
+                    border border-gray-700/70 hover:border-blue-500/60
+                    hover:shadow-md hover:shadow-blue-500/20 transform hover:-translate-y-0.5"
                 >
                   {action.label}
                 </button>
@@ -339,28 +350,19 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
             </div>
           )}
         </div>
-
-        {/* Timestamp */}
-        <div className="flex items-center space-x-2 px-2 mt-1 text-xs text-gray-500">
-          <span>{format(message.timestamp, 'HH:mm')}</span>
-          <span>•</span>
-          <span>
-            {message.isTyping 
-              ? 'Assistant is typing...'
-              : isUser 
-                ? 'You' 
-                : isSystem 
-                  ? 'System' 
-                  : 'Assistant'}
-          </span>
-          {isAI && isAnimating && (
-            <>
-              <span>•</span>
-              <span className="text-blue-400">typing...</span>
-            </>
-          )}
-        </div>
       </div>
+
+      {/* Avatar for User messages */}
+      {isUser && (
+        <div className="flex-shrink-0 ml-4">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/30 to-purple-600/40 border border-indigo-500/40 
+            shadow-md shadow-indigo-500/10 flex items-center justify-center transform transition-all duration-300 group-hover:scale-110">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 text-indigo-400 text-opacity-80 group-hover:text-opacity-100 transition-all duration-300">
+              <path fillRule="evenodd" d="M7.5 6a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM3.751 20.105a8.25 8.25 0 0116.498 0 .75.75 0 01-.437.695A18.683 18.683 0 0112 22.5c-2.786 0-5.433-.608-7.812-1.7a.75.75 0 01-.437-.695z" clipRule="evenodd" />
+            </svg>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

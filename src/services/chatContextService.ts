@@ -492,7 +492,7 @@ export class ChatContextService {
             address: lastContract.contract_address,
             hasAbi: !!lastContract.abi,
             deployedAt: lastContract.deployed_at,
-            sourceCodeExists: !!lastContract.sourceCode,
+            sourceCodeExists: !!lastContract.source_code,
             abiPreview: lastContract.abi ? JSON.stringify(lastContract.abi).substring(0, 100) + '...' : 'null'
           });
 
@@ -575,15 +575,22 @@ export class ChatContextService {
           });
 
           // Actualizar el código fuente si está disponible
-          if (lastContract.sourceCode) {
+          if (lastContract.source_code) {
             let sourceCode = '';
             try {
-              if (typeof lastContract.sourceCode === 'string') {
-                const parsedSource = JSON.parse(lastContract.sourceCode);
-                sourceCode = parsedSource.content || lastContract.sourceCode;
-              } else if (lastContract.sourceCode.content) {
-                sourceCode = lastContract.sourceCode.content;
+              if (typeof lastContract.source_code === 'string') {
+                try {
+                  // Intentar parsear como JSON primero
+                  const parsedSource = JSON.parse(lastContract.source_code);
+                  sourceCode = typeof parsedSource === 'object' && parsedSource !== null && 'content' in parsedSource
+                    ? parsedSource.content
+                    : lastContract.source_code;
+                } catch {
+                  // Si no es JSON válido, usar el string directamente
+                  sourceCode = lastContract.source_code;
+                }
               }
+              
               if (sourceCode) {
                 this.config.setCurrentCode(sourceCode);
                 this.config.setShowCodeEditor(true);
