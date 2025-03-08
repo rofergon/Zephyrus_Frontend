@@ -85,7 +85,8 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({
       // Obtener el ID del agente
       const agentId = agentConfig?.agent.contractId || agent?.agent_id || selectedAgent?.agent_id;
       
-      // Construir la URL completa del WebSocket
+      // Construir la URL completa del WebSocket - evitar duplicar /ws/agent/
+      // Las URLs en .env NO deben incluir /ws/agent/ al final
       const fullWsUrl = `${wsUrl}/ws/agent/${agentId}`;
       
       // Log de la URL del WebSocket para depuración
