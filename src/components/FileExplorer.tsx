@@ -17,7 +17,7 @@ import { Fragment } from 'react';
 import ContextMenu from './ContextMenu';
 
 interface FileExplorerProps {
-  onFileSelect: (path: string) => void;
+  onFileSelect: (path: string | null) => void;
   selectedFile: string | null;
 }
 

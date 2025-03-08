@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import Editor from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import {   MagnifyingGlassIcon,  BoltIcon,  RocketLaunchIcon,} from '@heroicons/react/24/outline';
@@ -10,6 +10,7 @@ import 'react-resizable/css/styles.css';
 import ContractVersionHistory from './ContractVersionHistory';
 import { ConversationContext } from '../../services/conversationService';
 import DatabaseService from '../../services/databaseService';
+import { CommandLineIcon } from '@heroicons/react/24/outline';
 
 interface ContractViewerProps {
   currentArtifact: ContractArtifact | null;
@@ -29,6 +30,15 @@ interface ContractViewerProps {
   onViewConversation: (contextId: string) => void;
   onArtifactUpdated: (artifact: ContractArtifact) => void;
 }
+
+// Memoizar el componente FunctionCard
+const MemoizedFunctionCard = memo(FunctionCard, (prev, next) => {
+  return (
+    prev.func.name === next.func.name &&
+    prev.contractAddress === next.contractAddress &&
+    prev.deploymentResult?.contractAddress === next.deploymentResult?.contractAddress
+  );
+});
 
 const ContractViewer: React.FC<ContractViewerProps> = ({
   currentArtifact,
@@ -70,37 +80,73 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   const [autoScroll, setAutoScroll] = useState(true);
   const [isDeploymentCollapsed, setIsDeploymentCollapsed] = useState(false);
 
-  // Función para resetear el estado de despliegue
+  // Memoizar el tema del editor
+  const editorTheme = useMemo(() => ({
+    base: 'vs-dark' as monaco.editor.BuiltinTheme,
+    inherit: true,
+    rules: [
+      { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
+      { token: 'identifier', foreground: 'D4D4D4' },
+      { token: 'type', foreground: '4EC9B0' },
+      { token: 'number', foreground: 'B5CEA8' },
+      { token: 'string', foreground: 'CE9178' },
+      { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
+      { token: 'operator', foreground: 'D4D4D4' },
+      { token: 'delimiter', foreground: 'D4D4D4' },
+      { token: 'brackets', foreground: 'FFD700' }
+    ],
+    colors: {
+      'editor.background': '#1E1E1E',
+      'editor.foreground': '#D4D4D4',
+      'editor.lineHighlightBackground': '#2F3337',
+      'editorCursor.foreground': '#FFFFFF',
+      'editor.selectionBackground': '#264F78',
+      'editor.inactiveSelectionBackground': '#3A3D41',
+      'editorError.foreground': '#F14C4C',
+      'editorError.border': '#F14C4C',
+      'editorWarning.foreground': '#CCA700',
+      'editorWarning.border': '#CCA700',
+      'editorGutter.background': '#1E1E1E',
+      'editorGutter.modifiedBackground': '#4B9FD6',
+      'editorGutter.addedBackground': '#487E02',
+      'editorGutter.deletedBackground': '#F14C4C',
+      'editorOverviewRuler.errorForeground': '#F14C4C',
+      'editorOverviewRuler.warningForeground': '#CCA700'
+    }
+  }), []);
+
+  const handleEditorChange = useCallback((value: string | undefined) => {
+    onCodeChange(value);
+  }, [onCodeChange]);
+
   const resetDeploymentState = useCallback(() => {
-    console.log('[ContractViewer] Resetting deployment state');
     setDeploymentResult(null);
     setIsLoadedVersionDeployed(false);
     setIsNewlyDeployed(false);
-    
-    // Si el artefacto actual tiene una dirección, la eliminamos
-    if (currentArtifact?.address) {
-      const updatedArtifact = {
-        ...currentArtifact,
-        address: undefined
-      };
-      onArtifactUpdated(updatedArtifact);
-    }
-  }, [currentArtifact, onArtifactUpdated]);
+    setConstructorArgs([]);
+  }, []);
 
-  // Función para generar un hash del código
-  const generateCodeHash = (code: any): string => {
-    // Asegurarse de que el código sea un string
+  // Memoizar la función getConstructor
+  const getConstructor = useCallback(() => {
+    if (!currentArtifact?.abi) return null;
+    return currentArtifact.abi.find((item: any) => item.type === 'constructor');
+  }, [currentArtifact?.abi]);
+
+  // Memoizar el resultado del constructor
+  const constructor = useMemo(() => getConstructor(), [getConstructor]);
+
+  // Memoizar la función generateCodeHash
+  const generateCodeHash = useCallback((code: any): string => {
     let codeString = '';
     if (typeof code === 'string') {
       codeString = code;
     } else if (typeof code === 'object' && code !== null) {
-      // Si es un objeto, intentar obtener el contenido
       codeString = code.content || code.sourceCode || JSON.stringify(code);
     } else {
       codeString = String(code || '');
     }
     return codeString.replace(/\s+/g, '').trim();
-  };
+  }, []);
 
   // Efecto para sincronizar la dirección del contrato con la versión actual del código
   useEffect(() => {
@@ -359,6 +405,61 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     }
   }, [currentArtifact, isLoadedVersionDeployed, conversationId]);
 
+  // Efecto adicional para asegurar que el código se cargue después de recargar la página
+  useEffect(() => {
+    // Este efecto se ejecuta cuando el componente se monta o cuando editorRef.current cambia
+    if (editorRef.current && currentCode) {
+      console.log('[ContractViewer] Ensuring code is loaded in editor after page reload');
+      const model = editorRef.current.getModel();
+      if (model) {
+        // Verificar si el modelo está vacío o tiene un contenido diferente
+        const currentModelValue = model.getValue();
+        if (!currentModelValue || currentModelValue !== currentCode) {
+          console.log('[ContractViewer] Updating editor model with current code');
+          model.setValue(currentCode);
+          
+          // También compilar el código si es necesario
+          onCompile(currentCode);
+        }
+      }
+    }
+  }, [editorRef.current, currentCode, onCompile]);
+
+  // Efecto para escuchar eventos de código actualizado desde otros componentes
+  useEffect(() => {
+    const handleCodeUpdated = (event: CustomEvent) => {
+      if (event.detail && event.detail.content && editorRef.current) {
+        console.log('[ContractViewer] Received code_updated event');
+        const model = editorRef.current.getModel();
+        if (model) {
+          const newCode = event.detail.content;
+          // Solo actualizar si el código es diferente
+          if (model.getValue() !== newCode) {
+            console.log('[ContractViewer] Updating editor with code from event');
+            model.setValue(newCode);
+            
+            // Programar compilación
+            if (compileTimeoutRef.current) {
+              clearTimeout(compileTimeoutRef.current);
+            }
+            
+            compileTimeoutRef.current = setTimeout(() => {
+              onCompile(newCode);
+            }, 500);
+          }
+        }
+      }
+    };
+    
+    // Añadir listener para el evento personalizado
+    window.addEventListener('code_updated', handleCodeUpdated as EventListener);
+    
+    // Limpiar al desmontar
+    return () => {
+      window.removeEventListener('code_updated', handleCodeUpdated as EventListener);
+    };
+  }, [onCompile]);
+
   // Efecto para manejar cambios automáticos en el código
   useEffect(() => {
     if (currentCode !== previousCodeRef.current) {
@@ -406,80 +507,41 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     };
   }, []);
 
-  // Function to scroll console to bottom
-  const scrollToBottom = () => {
-    if (consoleContainerRef.current) {
+  // Memoizar scrollToBottom
+  const scrollToBottom = useCallback(() => {
+    if (consoleContainerRef.current && autoScroll) {
       const container = consoleContainerRef.current;
-      // Force scroll to the very bottom
-      container.scrollTop = container.scrollHeight + 9999;
-    }
-  };
-
-  // Add effect for auto-scrolling when new messages arrive
-  useEffect(() => {
-    // Use multiple approaches to ensure scroll happens after rendering
-    requestAnimationFrame(() => {
-      scrollToBottom();
-    });
-    
-    // Also try with timeouts at different intervals
-    setTimeout(scrollToBottom, 50);
-    setTimeout(scrollToBottom, 200);
-    setTimeout(scrollToBottom, 500);
-  }, [consoleMessages]);
-
-  // Also scroll on deployment result changes
-  useEffect(() => {
-    if (deploymentResult) {
-      setTimeout(scrollToBottom, 100);
-      setTimeout(scrollToBottom, 300);
-    }
-  }, [deploymentResult]);
-
-  // Use mutation observer to detect DOM changes in the console and scroll to bottom
-  useEffect(() => {
-    if (consoleContentRef.current) {
-      const observer = new MutationObserver(() => {
-        if (autoScroll) {
-          scrollToBottom();
-        }
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: 'smooth'
       });
-      
-      observer.observe(consoleContentRef.current, {
-        childList: true,
-        subtree: true,
-        characterData: true
-      });
-      
-      return () => observer.disconnect();
     }
   }, [autoScroll]);
 
-  // Handle scroll events to determine if auto-scroll should be enabled/disabled
-  const handleConsoleScroll = () => {
+  // Update the console messages effect
+  useEffect(() => {
+    if (autoScroll) {
+      requestAnimationFrame(scrollToBottom);
+    }
+  }, [consoleMessages, scrollToBottom]);
+
+  // Memoizar handleConsoleScroll
+  const handleConsoleScroll = useCallback(() => {
     if (consoleContainerRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = consoleContainerRef.current;
-      // If user has scrolled up more than 50px from bottom, disable auto-scroll
-      // If user scrolls to bottom again, re-enable auto-scroll
-      const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-      setAutoScroll(isAtBottom);
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+      setAutoScroll(isNearBottom);
     }
-  };
+  }, []);
 
-  // Función para obtener el constructor del ABI
-  const getConstructor = () => {
-    if (!currentArtifact?.abi) return null;
-    return currentArtifact.abi.find((item: any) => item.type === 'constructor');
-  };
-
-  const handleDeploy = async () => {
+  // Memoizar handleDeploy
+  const handleDeploy = useCallback(async () => {
     if (!currentArtifact?.abi || !currentArtifact?.bytecode || !isConnected || !conversationId) {
       console.error('No contract compiled, wallet not connected, or no conversation ID');
       setError('Missing required data for deployment');
       return;
     }
 
-    // Asegurarse de que estamos en la red Sonic Blaze Testnet
     if (chainId !== 57054) {
       await switchChain?.({ chainId: 57054 });
       return;
@@ -489,6 +551,26 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     setDeploymentResult(null);
 
     try {
+      // Mensaje inicial de despliegue
+      addConsoleMessage(
+        `Starting deployment of contract ${currentArtifact.name}...`,
+        'info'
+      );
+
+      // Si hay argumentos del constructor, mostrarlos
+      if (constructorArgs.length > 0) {
+        addConsoleMessage(
+          `Constructor arguments: ${constructorArgs.join(', ')}`,
+          'info'
+        );
+      }
+
+      // Mensaje de espera de confirmación
+      addConsoleMessage(
+        'Waiting for transaction confirmation...',
+        'info'
+      );
+
       const result = await deployContract(
         currentArtifact.abi,
         currentArtifact.bytecode,
@@ -498,7 +580,6 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
         currentCode
       );
 
-      // Add timestamp to deployment result
       const resultWithTimestamp = {
         ...result,
         timestamp: Date.now(),
@@ -508,16 +589,13 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       
       setDeploymentResult(resultWithTimestamp);
       
-      // Add a success message to the console
       if (result.success) {
-        // Set as newly deployed
         setIsNewlyDeployed(true);
         setIsLoadedVersionDeployed(true);
         
-        const successMessage = `Deployment Successful! Contract address: ${result.contractAddress}`;
-        // Use the addConsoleMessage prop to add message to console
-        addConsoleMessage(successMessage, 'info');
-        // Ensure console is visible
+        // Mensaje de éxito con el hash de la transacción y la dirección del contrato
+        const successMessage = `Deployment Successful!\nTransaction Hash: ${result.transactionHash}\nContract address: ${result.contractAddress}`;
+        addConsoleMessage(successMessage, 'success');
         onConsoleResize(Math.max(consoleHeight, 200));
       }
     } catch (error) {
@@ -529,27 +607,40 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
         conversationId
       });
       
-      // Add error message to console
+      // Mensaje de error detallado
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       addConsoleMessage(
-        `Deployment failed: ${error instanceof Error ? error.message : 'Unknown error occurred'}`, 
+        `Deployment failed:\n${errorMessage}`, 
         'error'
       );
     } finally {
       setIsDeploying(false);
     }
-  };
+  }, [
+    currentArtifact,
+    isConnected,
+    conversationId,
+    chainId,
+    switchChain,
+    deployContract,
+    constructorArgs,
+    currentCode,
+    addConsoleMessage,
+    consoleHeight,
+    onConsoleResize
+  ]);
 
-  // Función para manejar cambios en los argumentos del constructor
-  const handleConstructorArgChange = (index: number, value: string) => {
+  // Memoizar handleConstructorArgChange
+  const handleConstructorArgChange = useCallback((index: number, value: string) => {
     setConstructorArgs(prev => {
       const newArgs = [...prev];
       newArgs[index] = value;
       return newArgs;
     });
-  };
+  }, []);
 
-  // Function to handle loading a specific version
-  const handleLoadVersion = (sourceCode: string, isDeployed: boolean) => {
+  // Memoizar handleLoadVersion
+  const handleLoadVersion = useCallback((sourceCode: string, isDeployed: boolean) => {
     console.log('[ContractViewer] Loading version:', { 
       isDeployed, 
       currentCodeLength: currentCode?.length, 
@@ -557,21 +648,13 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       isSameCode: sourceCode === currentCode
     });
     
-    // Primero actualizamos el estado de si la versión está desplegada
     setIsLoadedVersionDeployed(isDeployed);
     
-    // Solo actualizar el código si es diferente
     if (sourceCode !== currentCode) {
-      // Actualizar el código
       onCodeChange(sourceCode);
-      
-      // Compilar el nuevo código
       onCompile(sourceCode);
-      
-      // Resetear el estado de despliegue
       resetDeploymentState();
       
-      // Disparar evento para notificar a otros componentes
       const codeUpdateEvent = new CustomEvent('code_updated', { 
         detail: { content: sourceCode, isDeployed } 
       });
@@ -581,51 +664,34 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     } else {
       console.log('[ContractViewer] Code unchanged, skipping update');
     }
-  };
-
-  // Add a specific effect to handle code updates from WebSocket
-  useEffect(() => {
-    if (currentCode && currentCode !== previousCodeRef.current) {
-      console.log('[ContractViewer] Code updated from WebSocket:', currentCode.substring(0, 100) + '...');
-      previousCodeRef.current = currentCode;
-      
-      // Reset deployment state when code changes
-      resetDeploymentState();
-      
-      // Force a re-render by updating a state value
-      setAutoScroll(true);
-    }
-  }, [currentCode, resetDeploymentState]);
+  }, [currentCode, onCodeChange, onCompile, resetDeploymentState]);
 
   if (!currentArtifact) return null;
 
-  const constructor = getConstructor();
-
   return (
-    <div className="flex flex-col h-full relative">
-      {/* Main Content Area - Editor/Function Cards con scroll propio */}
-      <div className="flex-1 min-h-0 flex flex-col">
+    <div className="flex flex-col h-full relative bg-gray-900">
+      {/* Main Content Area */}
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* Editor Container */}
-        <div className={`flex-1 relative ${!showCodeEditor ? 'hidden' : ''}`}>
-          <div className="absolute inset-0">
+        <div className={`flex-1 relative mb-4 ${!showCodeEditor ? 'hidden' : ''}`}>
+          <div className="absolute inset-0 rounded-lg overflow-hidden border border-gray-700/50">
             <Editor
               height="100%"
               defaultLanguage="solidity"
-              defaultValue={currentCode}
               theme="solidityTheme"
+              value={currentArtifact?.source || ''}
+              onChange={handleEditorChange}
               options={{
                 minimap: { enabled: true },
-                lineNumbers: 'on',
+                lineNumbers: 'on' as const,
                 scrollBeyondLastLine: false,
                 automaticLayout: true,
                 fontSize: 14,
                 tabSize: 2,
-                wordWrap: 'on',
-                renderValidationDecorations: 'on',
+                wordWrap: 'on' as const,
+                renderValidationDecorations: 'editable' as const,
                 glyphMargin: true,
-                lightbulb: {
-                  enabled: monaco.editor.ShowLightbulbIconMode.OnCode
-                },
+                lightbulb: { enabled: 'on' as monaco.editor.ShowLightbulbIconMode },
                 hover: {
                   enabled: true,
                   delay: 300
@@ -640,14 +706,16 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                 },
                 folding: true,
                 lineDecorationsWidth: 10,
-                renderLineHighlight: 'all',
-                occurrencesHighlight: "singleFile",
-                renderWhitespace: 'none',
+                renderLineHighlight: 'all' as const,
+                occurrencesHighlight: 'singleFile' as const,
+                renderWhitespace: 'none' as const,
                 bracketPairColorization: {
                   enabled: true
                 },
                 guides: {
                   bracketPairs: true,
+                  bracketPairsHorizontal: true,
+                  highlightActiveBracketPair: true,
                   indentation: true
                 }
               }}
@@ -658,7 +726,17 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                 // Establecer el valor inicial
                 const model = editor.getModel();
                 if (model) {
+                  console.log('[ContractViewer] Editor mounted, setting initial code:', 
+                    currentCode ? `${currentCode.substring(0, 50)}...` : 'No code available');
                   model.setValue(currentCode);
+                  
+                  // Si hay código, programar una compilación
+                  if (currentCode && currentCode.trim().length > 10) {
+                    console.log('[ContractViewer] Scheduling initial compilation after editor mount');
+                    setTimeout(() => {
+                      onCompile(currentCode);
+                    }, 500);
+                  }
                 }
 
                 // Registrar el lenguaje Solidity
@@ -746,43 +824,10 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                   }
                 });
 
-                // Configurar el tema con soporte para marcadores de error
-                monaco.editor.defineTheme('solidityTheme', {
-                  base: 'vs-dark',
-                  inherit: true,
-                  rules: [
-                    { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
-                    { token: 'identifier', foreground: 'D4D4D4' },
-                    { token: 'type', foreground: '4EC9B0' },
-                    { token: 'number', foreground: 'B5CEA8' },
-                    { token: 'string', foreground: 'CE9178' },
-                    { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
-                    { token: 'operator', foreground: 'D4D4D4' },
-                    { token: 'delimiter', foreground: 'D4D4D4' },
-                    { token: 'brackets', foreground: 'FFD700' }
-                  ],
-                  colors: {
-                    'editor.background': '#1E1E1E',
-                    'editor.foreground': '#D4D4D4',
-                    'editor.lineHighlightBackground': '#2F3337',
-                    'editorCursor.foreground': '#FFFFFF',
-                    'editor.selectionBackground': '#264F78',
-                    'editor.inactiveSelectionBackground': '#3A3D41',
-                    'editorError.foreground': '#F14C4C',
-                    'editorError.border': '#F14C4C',
-                    'editorWarning.foreground': '#CCA700',
-                    'editorWarning.border': '#CCA700',
-                    'editorGutter.background': '#1E1E1E',
-                    'editorGutter.modifiedBackground': '#4B9FD6',
-                    'editorGutter.addedBackground': '#487E02',
-                    'editorGutter.deletedBackground': '#F14C4C',
-                    'editorOverviewRuler.errorForeground': '#F14C4C',
-                    'editorOverviewRuler.warningForeground': '#CCA700'
-                  }
-                });
-
-                // Aplicar el tema
+                // Usar el tema memoizado
+                monaco.editor.defineTheme('solidityTheme', editorTheme);
                 monaco.editor.setTheme('solidityTheme');
+
                 // Configure custom decorations for errors
                 const decorations = editor.createDecorationsCollection();
 
@@ -887,21 +932,21 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
           </div>
         </div>
 
-        {/* Function Cards Container con scroll propio y márgenes fijos */}
+        {/* Function Cards Container */}
         {!showCodeEditor && (
-          <div className="flex-1 relative">
-            <div className="absolute inset-0 overflow-auto">
-              <div className="min-w-[640px]"> {/* Ancho mínimo para evitar compresión excesiva */}
-                <div className="p-4 lg:p-6 space-y-6 lg:space-y-8 pb-20"> {/* Padding bottom extra para margen inferior */}
-                  {/* Contract Header - Mejorado para móviles y scroll horizontal */}
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 min-w-0">
+          <div className="flex-1 relative overflow-hidden">
+            <div className="absolute inset-0 overflow-auto rounded-lg border border-gray-700/50">
+              <div className="min-w-[640px]">
+                <div className="p-6 space-y-8">
+                  {/* Contract Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 min-w-0 bg-gray-800/50 p-4 rounded-lg">
                     <div className="flex-shrink-0">
-                      <h2 className="text-xl lg:text-2xl font-bold text-white">{currentArtifact.name}</h2>
-                      <p className="text-sm lg:text-base text-gray-400 mt-1">{currentArtifact.description}</p>
+                      <h2 className="text-2xl font-bold text-white">{currentArtifact.name}</h2>
+                      <p className="text-base text-gray-400 mt-1">{currentArtifact.description}</p>
                     </div>
                     {currentArtifact.address && isLoadedVersionDeployed && (
-                      <div className="flex-shrink-0 flex items-center space-x-2 px-3 py-1.5 bg-gray-800/50 rounded-lg border border-gray-700/50">
-                        <span className="text-sm text-gray-400 whitespace-nowrap">Deployed at:</span>
+                      <div className="flex-shrink-0 flex items-center space-x-2 px-4 py-2 bg-gray-700/50 rounded-lg border border-gray-600/50">
+                        <span className="text-sm text-gray-300 whitespace-nowrap">Deployed at:</span>
                         <a 
                           href={`https://testnet.sonicscan.org/address/${currentArtifact.address}`}
                           target="_blank"
@@ -912,87 +957,76 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                         </a>
                       </div>
                     )}
-                    {!isLoadedVersionDeployed && (
-                      <div className="flex-shrink-0 flex items-center space-x-2 px-3 py-1.5 bg-yellow-800/20 rounded-lg border border-yellow-700/50">
-                        <span className="text-sm text-yellow-400 whitespace-nowrap">Historical Version (Not Deployed)</span>
-                      </div>
-                    )}
                   </div>
 
-                  {/* Functions Grid - Mejorada la responsividad y scroll */}
-                  {currentArtifact.functions && currentArtifact.functions.length > 0 ? (
+                  {/* Functions Sections with improved spacing */}
+                  {/* View/Pure Functions */}
+                  {currentArtifact.functions && currentArtifact.functions.length > 0 && currentArtifact.functions.filter(f => f.stateMutability === 'view' || f.stateMutability === 'pure').length > 0 && (
                     <>
-                      {/* View/Pure Functions */}
-                      {currentArtifact.functions.filter(f => f.stateMutability === 'view' || f.stateMutability === 'pure').length > 0 && (
-                        <div className="relative">
-                          <div className="sticky top-0 z-10 backdrop-blur-sm bg-gray-900/80 -mx-4 lg:-mx-6 px-4 lg:px-6 py-4 border-b border-gray-700/50">
-                            <div className="flex items-center space-x-3">
-                              <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
-                                <MagnifyingGlassIcon className="w-5 h-5" />
-                              </div>
-                              <div>
-                                <h3 className="text-lg font-semibold text-white">Read Functions</h3>
-                                <p className="text-sm text-gray-400">Query contract state without gas fees</p>
-                              </div>
+                      <div className="relative">
+                        <div className="sticky top-0 z-10 backdrop-blur-sm bg-gray-900/80 -mx-4 lg:-mx-6 px-4 lg:px-6 py-4 border-b border-gray-700/50">
+                          <div className="flex items-center space-x-3">
+                            <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
+                              <MagnifyingGlassIcon className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-semibold text-white">Read Functions</h3>
+                              <p className="text-sm text-gray-400">Query contract state without gas fees</p>
                             </div>
                           </div>
-                          <div className={`mt-6 grid gap-4 lg:gap-6 min-w-0
-                            ${isMaximized 
-                              ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' 
-                              : 'grid-cols-1 sm:grid-cols-2'
-                            }`}>
-                            {currentArtifact.functions
-                              .filter(f => f.stateMutability === 'view' || f.stateMutability === 'pure')
-                              .map((func, index) => (
-                                <FunctionCard 
-                                  key={index} 
-                                  func={func} 
-                                  contractAddress={currentArtifact.address}
-                                  abi={currentArtifact.abi}
-                                  deploymentResult={deploymentResult}
-                                />
-                              ))}
-                          </div>
                         </div>
-                      )}
-
-                      {/* Write Functions - Similar grid improvement */}
-                      {currentArtifact.functions.filter(f => f.stateMutability !== 'view' && f.stateMutability !== 'pure').length > 0 && (
-                        <div className="relative mt-8">
-                          <div className="sticky top-0 z-10 backdrop-blur-sm bg-gray-900/80 -mx-4 lg:-mx-6 px-4 lg:px-6 py-4 border-b border-gray-700/50">
-                            <div className="flex items-center space-x-3">
-                              <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
-                                <BoltIcon className="w-5 h-5" />
-                              </div>
-                              <div>
-                                <h3 className="text-lg font-semibold text-white">Write Functions</h3>
-                                <p className="text-sm text-gray-400">Modify contract state (requires gas)</p>
-                              </div>
-                            </div>
-                          </div>
-                          <div className={`mt-6 grid gap-4 lg:gap-6 min-w-0
-                            ${isMaximized 
-                              ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' 
-                              : 'grid-cols-1 sm:grid-cols-2'
-                            }`}>
-                            {currentArtifact.functions
-                              .filter(f => f.stateMutability !== 'view' && f.stateMutability !== 'pure')
-                              .map((func, index) => (
-                                <FunctionCard 
-                                  key={index} 
-                                  func={func} 
-                                  contractAddress={currentArtifact.address}
-                                  abi={currentArtifact.abi}
-                                  deploymentResult={deploymentResult}
-                                />
-                              ))}
-                          </div>
+                        <div className={`mt-6 grid gap-4 lg:gap-6 min-w-0
+                          ${isMaximized 
+                            ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' 
+                            : 'grid-cols-1 sm:grid-cols-2'
+                          }`}>
+                          {currentArtifact.functions
+                            .filter(f => f.stateMutability === 'view' || f.stateMutability === 'pure')
+                            .map((func, index) => (
+                              <MemoizedFunctionCard 
+                                key={index} 
+                                func={func} 
+                                contractAddress={currentArtifact.address}
+                                abi={currentArtifact.abi}
+                                deploymentResult={deploymentResult}
+                              />
+                            ))}
                         </div>
-                      )}
+                      </div>
                     </>
-                  ) : (
-                    <div className="text-gray-400 text-center py-8">
-                      No functions found in contract
+                  )}
+
+                  {/* Write Functions - Similar grid improvement */}
+                  {currentArtifact.functions.filter(f => f.stateMutability !== 'view' && f.stateMutability !== 'pure').length > 0 && (
+                    <div className="relative mt-8">
+                      <div className="sticky top-0 z-10 backdrop-blur-sm bg-gray-900/80 -mx-4 lg:-mx-6 px-4 lg:px-6 py-4 border-b border-gray-700/50">
+                        <div className="flex items-center space-x-3">
+                          <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
+                            <BoltIcon className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="text-lg font-semibold text-white">Write Functions</h3>
+                            <p className="text-sm text-gray-400">Modify contract state (requires gas)</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className={`mt-6 grid gap-4 lg:gap-6 min-w-0
+                        ${isMaximized 
+                          ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' 
+                          : 'grid-cols-1 sm:grid-cols-2'
+                        }`}>
+                        {currentArtifact.functions
+                          .filter(f => f.stateMutability !== 'view' && f.stateMutability !== 'pure')
+                          .map((func, index) => (
+                            <MemoizedFunctionCard 
+                              key={index} 
+                              func={func} 
+                              contractAddress={currentArtifact.address}
+                              abi={currentArtifact.abi}
+                              deploymentResult={deploymentResult}
+                            />
+                          ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1002,13 +1036,13 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
         )}
       </div>
 
-      {/* Console y Deploy Section - Contenedor fijo en la parte inferior */}
-      <div className="flex-none">
+      {/* Bottom Section: Console, History, and Deploy */}
+      <div className="flex-none space-y-4 p-4 bg-gray-800/50 border-t border-gray-700/50 backdrop-filter backdrop-blur-sm">
         {/* Console Area */}
-        <div className="mx-4 lg:mx-6 mb-4">
-          {/* Barra de resize superior */}
+        <div className="rounded-lg overflow-hidden border border-gray-700/50 shadow-xl transition-all duration-300 hover:shadow-blue-900/10">
+          {/* Resize Handle */}
           <div 
-            className="h-1 bg-gray-700 hover:bg-blue-500 cursor-ns-resize transition-colors relative group"
+            className="h-2 bg-gradient-to-r from-gray-700/50 via-gray-700 to-gray-700/50 hover:bg-gradient-to-r hover:from-blue-500/50 hover:via-blue-500 hover:to-blue-500/50 cursor-ns-resize transition-all duration-300 relative group"
             onMouseDown={(e) => {
               e.preventDefault();
               const startY = e.clientY;
@@ -1047,61 +1081,88 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
               document.addEventListener('mouseup', handleMouseUp);
             }}
           >
-            {/* Indicador visual de resize */}
             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-0.5 bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity"></div>
           </div>
 
-          {/* Contenedor de la consola */}
+          {/* Console Content */}
           <div 
-            className="bg-gray-800/90 backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl overflow-hidden flex flex-col mt-1"
-            style={{ 
-              height: `${consoleHeight}px`,
-              minHeight: '100px'
-            }}
+            className="bg-gradient-to-b from-gray-900 to-gray-950 backdrop-blur-sm flex flex-col"
+            style={{ height: `${consoleHeight}px`, minHeight: '100px' }}
           >
-            {/* Cabecera de la consola */}
-            <div className="flex-none h-10 border-b border-gray-700 px-4 flex items-center justify-between bg-gray-800/95 sticky top-0 z-10">
-              <h3 className="text-sm font-medium text-gray-300">Console Log</h3>
+            {/* Console Header */}
+            <div className="flex-none h-10 border-b border-gray-700/70 px-4 flex items-center justify-between bg-gray-800/95 sticky top-0 z-10 shadow-sm">
+              <h3 className="text-sm font-medium text-gray-300 flex items-center gap-2">
+                <CommandLineIcon className="w-4 h-4 text-gray-400" />
+                Console Log
+              </h3>
               <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                <div className="w-3 h-3 rounded-full bg-red-500 hover:bg-red-400 transition-colors cursor-pointer"></div>
+                <div className="w-3 h-3 rounded-full bg-yellow-500 hover:bg-yellow-400 transition-colors cursor-pointer"></div>
+                <div className="w-3 h-3 rounded-full bg-green-500 hover:bg-green-400 transition-colors cursor-pointer"></div>
               </div>
             </div>
 
-            {/* Contenido de la consola */}
+            {/* Console Messages */}
             <div 
               ref={consoleContainerRef}
-              className="flex-1 overflow-y-auto p-4 pb-2 font-mono text-sm scroll-smooth"
+              className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent"
               onScroll={handleConsoleScroll}
             >
-              <div ref={consoleContentRef} className="space-y-2">
-                {consoleMessages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`
-                      p-2 text-sm rounded-md mb-1 flex justify-between
-                      ${msg.type === 'error' ? 'bg-red-800/30 text-red-400' : 
-                        msg.type === 'warning' ? 'bg-yellow-800/30 text-yellow-400' : 
-                        msg.type === 'success' ? 'bg-green-800/30 text-green-400' : 
-                        'bg-blue-800/30 text-blue-400'
-                      }`}
-                  >
-                    <div className="flex-1 whitespace-pre-wrap">{msg.content}</div>
-                    <div className="flex-none text-xs text-gray-500">
-                      {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}
+              <div ref={consoleContentRef} className="p-4 font-mono text-sm space-y-2">
+                {consoleMessages.map((msg) => {
+                  // Función para convertir direcciones y hashes en enlaces
+                  const formatMessage = (content: string) => {
+                    // Patrones para detectar direcciones y hashes de transacción
+                    const addressPattern = /(0x[a-fA-F0-9]{40})/g;
+                    const txHashPattern = /(0x[a-fA-F0-9]{64})/g;
+
+                    // Reemplazar direcciones con enlaces
+                    let formattedContent = content.replace(addressPattern, (address) => (
+                      `<a href="https://testnet.sonicscan.org/address/${address}" 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          class="text-blue-400 hover:text-blue-300 hover:underline">${address}</a>`
+                    ));
+
+                    // Reemplazar hashes de transacción con enlaces
+                    formattedContent = formattedContent.replace(txHashPattern, (hash) => (
+                      `<a href="https://testnet.sonicscan.org/tx/${hash}" 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          class="text-blue-400 hover:text-blue-300 hover:underline">${hash}</a>`
+                    ));
+
+                    return <span dangerouslySetInnerHTML={{ __html: formattedContent }} />;
+                  };
+
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`
+                        p-3 text-sm rounded-lg flex justify-between transition-all duration-200 hover:shadow-md border border-transparent
+                        ${msg.type === 'error' ? 'bg-red-900/30 text-red-400 hover:bg-red-900/40 hover:border-red-800/50' : 
+                          msg.type === 'warning' ? 'bg-yellow-900/30 text-yellow-400 hover:bg-yellow-900/40 hover:border-yellow-800/50' : 
+                          msg.type === 'success' ? 'bg-green-900/30 text-green-400 hover:bg-green-900/40 hover:border-green-800/50' : 
+                          'bg-blue-900/30 text-blue-400 hover:bg-blue-900/40 hover:border-blue-800/50'
+                        }`}
+                    >
+                      <div className="flex-1 whitespace-pre-wrap break-all">
+                        {formatMessage(msg.content)}
+                      </div>
+                      <div className="flex-none ml-4 text-xs text-gray-500 whitespace-nowrap">
+                        {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}
+                      </div>
                     </div>
-                  </div>
-                ))}
-                {/* Bottom anchor element for scrolling target - reduced height */}
-                <div id="console-bottom-anchor" style={{ height: '5px' }}></div>
+                  );
+                })}
+                <div id="console-bottom-anchor" className="h-1" />
               </div>
             </div>
           </div>
         </div>
 
-        {/* Contract Version History */}
-        <div className="mx-4 lg:mx-6 mb-4">
+        {/* Contract Version History with improved styling */}
+        <div className="rounded-lg overflow-hidden border border-gray-700/50 shadow-lg">
           <ContractVersionHistory
             contractAddress={currentArtifact?.address}
             conversationContexts={conversationContexts}
@@ -1111,221 +1172,81 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
           />
         </div>
 
-        {/* Deploy Section */}
+        {/* Deploy Section with improved styling */}
         {currentArtifact.bytecode && (
-          <div className={`mt-4 p-4 ${
-            (currentArtifact.address && isLoadedVersionDeployed) || deploymentResult?.contractAddress 
-              ? 'bg-gray-800/70 border-gray-700/30' 
-              : 'bg-gray-800/90'
-            } backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl`}>
-            
-            {/* Display different UI based on whether contract is already deployed */}
-            {((currentArtifact.address && isLoadedVersionDeployed) || deploymentResult?.contractAddress) ? (
-              // Compact version for redeployment - esta versión actualmente desplegada
-              <>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-400">
-                      <RocketLaunchIcon className="w-4 h-4" />
-                    </div>
-                    <div className="text-sm">
-                      <span className="text-gray-400">Deployed at: </span>
-                      <a 
-                        href={`https://testnet.sonicscan.org/address/${currentArtifact.address || deploymentResult?.contractAddress}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors"
-                      >
-                        {currentArtifact.address || deploymentResult?.contractAddress}
-                      </a>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {/* Toggle button for constructor arguments */}
-                    <button
-                      onClick={() => setIsDeploymentCollapsed(!isDeploymentCollapsed)}
-                      className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
-                      title={isDeploymentCollapsed ? "Show constructor arguments" : "Hide constructor arguments"}
-                    >
-                      <svg 
-                        className={`w-5 h-5 transition-transform ${isDeploymentCollapsed ? 'rotate-180' : ''}`} 
-                        fill="none" 
-                        stroke="currentColor" 
-                        viewBox="0 0 24 24"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={handleDeploy}
-                      disabled={isDeploying || !isConnected}
-                      className={`px-3 py-1.5 text-sm rounded-md ${
-                        isDeploying || !isConnected
-                          ? 'bg-gray-700 cursor-not-allowed'
-                          : 'bg-yellow-600 hover:bg-yellow-700'
-                      } text-white transition-colors duration-200`}
-                    >
-                      {isDeploying ? 'Deploying...' : 'Redeploy'}
-                    </button>
-                  </div>
+          <div className="rounded-lg overflow-hidden border border-gray-700/50 shadow-xl bg-gradient-to-b from-gray-800/90 to-gray-850/90 backdrop-blur-sm transition-all duration-300 hover:shadow-blue-900/10">
+            {/* Header and Deploy Button Combined */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-700/50 bg-gray-850/30">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/20">
+                  <RocketLaunchIcon className="w-5 h-5" />
                 </div>
-                
-                {/* Constructor Arguments in compact view */}
-                {!isDeploymentCollapsed && constructor && constructor.inputs && constructor.inputs.length > 0 && (
-                  <div className="mt-4 space-y-4">
-                    <h4 className="text-sm font-medium text-gray-400">Constructor Arguments</h4>
-                    {constructor.inputs.map((input: { name: string; type: string }, index: number) => (
-                      <div key={index} className="space-y-1">
-                        <label className="text-sm text-gray-400">
-                          {input.name} ({input.type})
-                        </label>
-                        <input
-                          type="text"
-                          onChange={(e) => handleConstructorArgChange(index, e.target.value)}
-                          placeholder={`Enter ${input.type}`}
-                          className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            ) : (
-              // Full version for initial deployment o versión histórica
-              <>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
-                      <RocketLaunchIcon className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-white">Deploy Contract</h3>
-                      {/* Si es una versión histórica (tiene address pero no es la desplegada) */}
-                      {!isLoadedVersionDeployed && currentArtifact.address && (
-                        <p className="text-sm text-yellow-400">This is a historical version (previously deployed to {currentArtifact.address.substring(0, 6)}...{currentArtifact.address.substring(38)})</p>
-                      )}
-                      {/* Si no tiene address o es la versión actualmente desplegada */}
-                      {(!currentArtifact.address || isLoadedVersionDeployed) && (
-                        <p className="text-sm text-gray-400">Deploy this contract to the blockchain</p>
-                      )}
-                    </div>
-                  </div>
-                  {/* Toggle button for collapsing the deployment section */}
-                  <button
-                    onClick={() => setIsDeploymentCollapsed(!isDeploymentCollapsed)}
-                    className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
-                    title={isDeploymentCollapsed ? "Expand" : "Collapse"}
-                  >
-                    <svg 
-                      className={`w-5 h-5 transition-transform ${isDeploymentCollapsed ? 'rotate-180' : ''}`} 
-                      fill="none" 
-                      stroke="currentColor" 
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                </div>
-
-                {/* Content only shown when not collapsed */}
-                {!isDeploymentCollapsed && (
-                  <>
-                    {/* Constructor Arguments */}
-                    {constructor && constructor.inputs && constructor.inputs.length > 0 && (
-                      <div className="space-y-4 mb-4">
-                        <h4 className="text-sm font-medium text-gray-400">Constructor Arguments</h4>
-                        {constructor.inputs.map((input: { name: string; type: string }, index: number) => (
-                          <div key={index} className="space-y-1">
-                            <label className="text-sm text-gray-400">
-                              {input.name} ({input.type})
-                            </label>
-                            <input
-                              type="text"
-                              onChange={(e) => handleConstructorArgChange(index, e.target.value)}
-                              placeholder={`Enter ${input.type}`}
-                              className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {/* Deploy Button for initial deployment - always visible */}
-                <button
-                  onClick={handleDeploy}
-                  disabled={isDeploying || !isConnected}
-                  className={`w-full py-2 rounded-lg ${
-                    isDeploying || !isConnected
-                      ? 'bg-gray-700 cursor-not-allowed'
-                      : 'bg-blue-600 hover:bg-blue-700'
-                  } text-white font-medium transition-colors duration-200 flex items-center justify-center space-x-2`}
-                >
-                  {isDeploying ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      <span>Deploying...</span>
-                    </>
-                  ) : (
-                    <>
-                      <RocketLaunchIcon className="w-5 h-5" />
-                      <span>Deploy Contract</span>
-                    </>
-                  )}
-                </button>
-              </>
-            )}
-
-            {/* Show deployment result only temporarily after a deployment */}
-            {deploymentResult && deploymentResult.timestamp && 
-             Date.now() - deploymentResult.timestamp < 10000 && 
-             isNewlyDeployed && (
-              <div className={`mt-4 p-3 rounded-lg border animate-fade-in ${
-                deploymentResult.success
-                  ? 'bg-green-900/20 border-green-700'
-                  : 'bg-red-900/20 border-red-700'
-              }`}>
-                {deploymentResult.success ? (
-                  <div className="text-green-400">
-                    <p>Contract deployed successfully!</p>
-                    <p className="mt-1 text-sm">
-                      Address: {' '}
-                      <a 
-                        href={`https://testnet.sonicscan.org/address/${deploymentResult.contractAddress}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs underline hover:text-blue-400 transition-colors"
-                      >
-                        {deploymentResult.contractAddress}
-                      </a>
+                <div>
+                  <h4 className="text-base font-medium text-white">Deploy Contract</h4>
+                  {constructor && constructor.inputs && constructor.inputs.length > 0 && (
+                    <p className="text-sm text-gray-400">
+                      {constructor.inputs.length} constructor argument{constructor.inputs.length > 1 ? 's' : ''} required
                     </p>
-                    {deploymentResult.transactionHash && (
-                      <p className="mt-1 text-sm">
-                        TX Hash: {' '}
-                        <a 
-                          href={`https://testnet.sonicscan.org/tx/${deploymentResult.transactionHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs underline hover:text-blue-400 transition-colors"
-                        >
-                          {deploymentResult.transactionHash}
-                        </a>
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-red-400">
-                    <p>Deployment failed</p>
-                    {deploymentResult.error && (
-                      <p className="mt-1 text-sm overflow-auto">
-                        Error: <code className="text-xs">{deploymentResult.error}</code>
-                      </p>
-                    )}
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            )}
+
+              {constructor && constructor.inputs && constructor.inputs.length > 0 ? (
+                <button
+                  onClick={() => setIsDeploymentCollapsed(!isDeploymentCollapsed)}
+                  className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-700/70 active:bg-gray-600/70 transition-all duration-200"
+                  title={isDeploymentCollapsed ? "Show constructor arguments" : "Hide constructor arguments"}
+                >
+                  <svg 
+                    className={`w-5 h-5 transition-transform duration-300 ${isDeploymentCollapsed ? '' : 'rotate-180'}`} 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              ) : null}
+            </div>
+
+            {/* Constructor Arguments Content */}
+            <div className={`transition-all duration-300 ease-in-out ${
+              isDeploymentCollapsed ? 'max-h-0 opacity-0' : 'max-h-[500px] opacity-100'
+            } overflow-hidden`}>
+              {constructor && constructor.inputs && constructor.inputs.length > 0 && (
+                <div className="p-5 space-y-4 border-b border-gray-700/50 bg-gray-900/40 backdrop-filter backdrop-blur-sm">
+                  {constructor.inputs.map((input: { name: string; type: string }, index: number) => (
+                    <div key={index} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                      <label className="flex-none text-sm font-medium text-gray-300 min-w-[120px]">
+                        {input.name} <span className="text-gray-500">({input.type})</span>
+                      </label>
+                      <input
+                        type="text"
+                        onChange={(e) => handleConstructorArgChange(index, e.target.value)}
+                        placeholder={`Enter ${input.type}`}
+                        className="flex-1 px-4 py-2.5 bg-gray-900/70 border border-gray-700 rounded-lg text-gray-300 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/70 focus:border-transparent text-sm transition-all duration-200 shadow-inner hover:border-gray-600"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Deploy Button */}
+            <div className="p-5">
+              <button
+                onClick={handleDeploy}
+                disabled={isDeploying || !isConnected}
+                className={`w-full py-3 rounded-lg flex items-center justify-center gap-3 text-white font-medium transition-all duration-300 shadow-lg ${
+                  isDeploying || !isConnected
+                    ? 'bg-gray-700 cursor-not-allowed opacity-70'
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-900/30 active:scale-[0.98]'
+                }`}
+              >
+                <RocketLaunchIcon className={`w-5 h-5 ${isDeploying ? 'animate-pulse' : ''}`} />
+                <span>{isDeploying ? 'Deploying...' : 'Deploy Contract'}</span>
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1333,4 +1254,5 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   );
 };
 
-export default ContractViewer;
+// Exportar el componente memoizado
+export default memo(ContractViewer);

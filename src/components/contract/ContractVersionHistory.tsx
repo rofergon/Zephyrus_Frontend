@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAccount } from 'wagmi';
 import { 
   ClockIcon, 
@@ -40,20 +40,30 @@ const parseTimestamp = (input: any): number => {
   }
 };
 
+// Definir interfaz para el objeto de código fuente
+interface SourceCodeObject {
+  content: string;
+  [key: string]: any;
+}
+
 // Función de utilidad para procesar código fuente
 const parseSourceCode = (contract: DeployedContract): string => {
   try {
-    // Caso 1: sourceCode es un string directo
-    if (typeof contract.sourceCode === 'string') {
-      return contract.sourceCode;
-    }
+    const sourceCode = contract.source_code;
     
-    // Caso 2: source_code es un string JSON
-    if (typeof contract.source_code === 'string') {
-      const trimmed = contract.source_code.trim();
+    // Si no hay código fuente, retornar string vacío
+    if (!sourceCode) {
+      return '';
+    }
+
+    // Caso 1: source_code es un string directo
+    if (typeof sourceCode === 'string') {
+      const trimmed = sourceCode.trim();
+      // Caso 2: source_code es un string JSON
       if (trimmed.startsWith('{')) {
         try {
-          return JSON.parse(trimmed).content || trimmed;
+          const parsed = JSON.parse(trimmed) as SourceCodeObject;
+          return parsed.content || trimmed;
         } catch {
           return trimmed;
         }
@@ -61,9 +71,11 @@ const parseSourceCode = (contract: DeployedContract): string => {
       return trimmed;
     }
     
-    // Caso 3: sourceCode es un objeto con content
-    if (contract.sourceCode?.content) {
-      return contract.sourceCode.content;
+    // Caso 3: source_code es un objeto con content (este caso no debería ocurrir según el tipo,
+    // pero lo mantenemos por compatibilidad)
+    const sourceCodeAsAny = sourceCode as any;
+    if (sourceCodeAsAny && typeof sourceCodeAsAny === 'object' && 'content' in sourceCodeAsAny) {
+      return sourceCodeAsAny.content;
     }
     
     return '';
@@ -113,8 +125,18 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [lastLoadParams, setLastLoadParams] = useState<{
+    contractAddress?: string;
+    activeContextId?: string;
+    contextHash?: string;
+  }>();
   const databaseService = DatabaseService.getInstance();
   const { address } = useAccount();
+
+  // Compute a hash of conversation contexts for comparison
+  const computeContextHash = useCallback((contexts: ConversationContext[]) => {
+    return contexts.map(c => `${c.id}-${c.name}`).join('|');
+  }, []);
 
   // Manejadores de eventos
   const handleToggleExpand = () => {
@@ -138,170 +160,51 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
     onViewConversation(conversationId);
   };
 
-  // Obtener los contratos de la base de datos
+  // Optimized version loading
   useEffect(() => {
     const loadVersions = async () => {
+      // Skip if no wallet address
+      if (!address) {
+        console.log('[ContractVersionHistory] No wallet address available');
+        return;
+      }
+
+      // Check if we need to reload based on params
+      const currentContextHash = computeContextHash(conversationContexts);
+      if (
+        lastLoadParams?.contractAddress === contractAddress &&
+        lastLoadParams?.activeContextId === activeContextId &&
+        lastLoadParams?.contextHash === currentContextHash
+      ) {
+        console.log('[ContractVersionHistory] Skipping reload - params unchanged');
+        return;
+      }
+
       setIsLoading(true);
       
       try {
-        const allVersions: ContractVersion[] = [];
-        
-        if (!address) {
-          console.log('[ContractVersionHistory] No wallet address available');
-          setIsLoading(false);
-          return;
-        }
-        
         console.log('[ContractVersionHistory] Loading versions with params:', {
           contractAddress,
           activeContextId,
           conversationContexts
         });
         
-        try {
-          const deployedContracts = await databaseService.getDeployedContracts(address);
-          console.log('[ContractVersionHistory] Loaded deployed contracts:', deployedContracts);
-          
-          // Identificar el contrato actualmente desplegado
-          const currentlyDeployedContract = contractAddress && 
-            deployedContracts.find((contract: DeployedContract) => 
-              contract.contract_address?.toLowerCase() === contractAddress?.toLowerCase()
-            );
-            
-          console.log('[ContractVersionHistory] Currently deployed contract:', currentlyDeployedContract);
-          
-          // Filtrar los contratos que pertenecen al contexto actual o que están activamente desplegados
-          const relevantContracts = deployedContracts.filter((contract: DeployedContract) => {
-            // Si el contrato está desplegado activamente, incluirlo
-            const isActiveDeployment = contractAddress && 
-              contract.contract_address?.toLowerCase() === contractAddress?.toLowerCase();
-              
-            // Si el contrato pertenece al contexto actual, incluirlo
-            const belongsToCurrentContext = contract.conversation_id === activeContextId;
-            
-            // Incluir si cumple alguna de las condiciones
-            return isActiveDeployment || belongsToCurrentContext;
-          });
-          
-          console.log('[ContractVersionHistory] Filtered contracts for current context:', {
-            total: deployedContracts.length,
-            filtered: relevantContracts.length,
-            activeContextId
-          });
-          
-          // Procesar solo los contratos relevantes
-          relevantContracts.forEach((contract: DeployedContract) => {
-            const isActiveDeployment = !!(contractAddress && 
-              contract.contract_address?.toLowerCase() === contractAddress?.toLowerCase());
-            
-            // CORRECCIÓN: Verificar si el ID de conversación del contrato coincide con el
-            // ID del contexto actual, o si debe asignarse al contexto actual
-            let isCurrentContext = contract.conversation_id === activeContextId;
-            
-            // Si el contrato no tiene un ID de conversación pero está desplegado en el contexto actual,
-            // o si es el contrato activo y estamos en el contexto activo, asignarle el contexto actual
-            if ((!contract.conversation_id && isActiveDeployment && activeContextId) || 
-                (isActiveDeployment && activeContextId && !isCurrentContext)) {
-              console.log('[ContractVersionHistory] Assigning current context to deployed contract:', contractAddress);
-              contract.conversation_id = activeContextId;
-              isCurrentContext = true;
-              
-              // Intentar actualizar la base de datos (esta función se implementará después)
-              try {
-                databaseService.updateContractConversationId?.(contract.id || '', activeContextId);
-              } catch (error) {
-                console.warn('[ContractVersionHistory] Could not update contract conversation ID in database:', error);
-              }
-            }
-            
-            // Encontrar el contexto de la conversación
-            const conversationContext = conversationContexts.find(ctx => 
-              ctx.id === contract.conversation_id
-            );
-            
-            console.log(`[ContractVersionHistory] Processing contract:`, {
-              address: contract.contract_address,
-              isActiveDeployment,
-              isCurrentContext,
-              conversationId: contract.conversation_id,
-              activeContextId,
-              foundContext: !!conversationContext
-            });
-            
-            let timestamp = parseTimestamp(contract.deployedAt || contract.deployed_at);
-            let sourceCodeContent = parseSourceCode(contract);
-            
-            // Determinar el nombre de la conversación
-            let conversationName = 'Unknown Conversation';
-            if (conversationContext) {
-              conversationName = conversationContext.name;
-            } else if (isCurrentContext) {
-              // Si pertenece al contexto actual pero no encontramos el contexto
-              conversationName = 'Current Conversation';
-            }
-            
-            allVersions.push({
-              id: contract.id || generateUUID(),
-              name: contract.name || `Contract in ${conversationName}`,
-              address: contract.contract_address,
-              timestamp,
-              sourceCode: sourceCodeContent,
-              conversationId: contract.conversation_id || '',
-              conversationName,
-              txHash: contract.tx_hash || contract.transactionHash || '',
-              isDeployed: isActiveDeployment,
-              isCurrentContext
-            });
-          });
-        } catch (error) {
-          console.error('[ContractVersionHistory] Error fetching deployed contracts:', error);
-        }
+        const deployedContracts = await databaseService.getDeployedContracts(address);
         
-        // Procesar versiones no desplegadas de los contextos
-        conversationContexts.forEach(context => {
-          // Solo procesar el contexto actual
-          if (context.id !== activeContextId) {
-            console.log('[ContractVersionHistory] Skipping non-active context:', context.id);
-            return;
-          }
-          
-          const hasSolidityFiles = context.virtualFiles && 
-            Object.entries(context.virtualFiles).some(([_, file]) => 
-              (file as VirtualFile).language === 'solidity'
-            );
-            
-          if (hasSolidityFiles) {
-            console.log('[ContractVersionHistory] Processing Solidity files from current context:', context.id);
-            const solidityFiles = Object.entries(context.virtualFiles)
-              .filter(([_, file]) => (file as VirtualFile).language === 'solidity');
-              
-            solidityFiles.forEach(([path, file]) => {
-              const isAlreadyIncluded = allVersions.some(
-                (version) => 
-                  version.conversationId === context.id && 
-                  version.sourceCode === (file as VirtualFile).content
-              );
-              
-              if (!isAlreadyIncluded) {
-                allVersions.push({
-                  id: `${context.id}_${generateUUID()}`,
-                  name: path.split('/').pop() || `Draft in ${context.name || 'Current Chat'}`,
-                  timestamp: (file as VirtualFile).timestamp,
-                  sourceCode: (file as VirtualFile).content,
-                  conversationId: context.id,
-                  conversationName: context.name || 'Unnamed Conversation',
-                  isDeployed: false,
-                  isCurrentContext: context.id === activeContextId
-                });
-              }
-            });
-          }
-        });
-        
-        allVersions.sort((a, b) => b.timestamp - a.timestamp);
-        console.log('[ContractVersionHistory] Final versions:', allVersions);
+        // Process contracts and update state
+        const allVersions = await processVersions(
+          deployedContracts,
+          contractAddress,
+          activeContextId,
+          conversationContexts
+        );
         
         setVersions(allVersions);
+        setLastLoadParams({
+          contractAddress,
+          activeContextId,
+          contextHash: currentContextHash
+        });
       } catch (error) {
         console.error('[ContractVersionHistory] Error loading versions:', error);
       } finally {
@@ -310,7 +213,123 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
     };
     
     loadVersions();
-  }, [conversationContexts, contractAddress, databaseService, address, activeContextId]);
+  }, [address, contractAddress, activeContextId, conversationContexts, computeContextHash, lastLoadParams]);
+
+  // Separate processing logic for better organization
+  const processVersions = async (
+    deployedContracts: DeployedContract[],
+    currentAddress?: string,
+    contextId?: string,
+    contexts: ConversationContext[] = []
+  ): Promise<ContractVersion[]> => {
+    const allVersions: ContractVersion[] = [];
+    
+    // Process deployed contracts
+    const relevantContracts = deployedContracts.filter((contract: DeployedContract) => {
+      const isActiveDeployment = currentAddress && 
+        contract.contract_address?.toLowerCase() === currentAddress.toLowerCase();
+      const belongsToCurrentContext = contract.conversation_id === contextId;
+      return isActiveDeployment || belongsToCurrentContext;
+    });
+
+    // Process each contract
+    for (const contract of relevantContracts) {
+      try {
+        const version = await processContractToVersion(
+          contract,
+          currentAddress,
+          contextId,
+          contexts
+        );
+        if (version) {
+          allVersions.push(version);
+        }
+      } catch (error) {
+        console.error('[ContractVersionHistory] Error processing contract:', error);
+      }
+    }
+
+    // Process non-deployed versions from current context
+    if (contextId) {
+      const currentContext = contexts.find(ctx => ctx.id === contextId);
+      if (currentContext?.virtualFiles) {
+        const solidityFiles = Object.entries(currentContext.virtualFiles)
+          .filter(([_, file]) => (file as VirtualFile).language === 'solidity');
+
+        for (const [path, file] of solidityFiles) {
+          const isAlreadyIncluded = allVersions.some(
+            version => 
+              version.conversationId === contextId && 
+              version.sourceCode === (file as VirtualFile).content
+          );
+
+          if (!isAlreadyIncluded) {
+            allVersions.push({
+              id: `${contextId}_${generateUUID()}`,
+              name: path.split('/').pop() || `Draft in ${currentContext.name || 'Current Chat'}`,
+              timestamp: (file as VirtualFile).timestamp,
+              sourceCode: (file as VirtualFile).content,
+              conversationId: contextId,
+              conversationName: currentContext.name || 'Unnamed Conversation',
+              isDeployed: false,
+              isCurrentContext: true
+            });
+          }
+        }
+      }
+    }
+
+    // Sort by timestamp descending
+    return allVersions.sort((a, b) => b.timestamp - a.timestamp);
+  };
+
+  const processContractToVersion = async (
+    contract: DeployedContract,
+    currentAddress?: string,
+    contextId?: string,
+    contexts: ConversationContext[] = []
+  ): Promise<ContractVersion | null> => {
+    try {
+      const isActiveDeployment = !!(currentAddress && 
+        contract.contract_address?.toLowerCase() === currentAddress.toLowerCase());
+      
+      let isCurrentContext = contract.conversation_id === contextId;
+      
+      if ((!contract.conversation_id && isActiveDeployment && contextId) || 
+          (isActiveDeployment && contextId && !isCurrentContext)) {
+        contract.conversation_id = contextId;
+        isCurrentContext = true;
+        
+        try {
+          await databaseService.updateContractConversationId?.(
+            contract.contract_address || '', 
+            contextId
+          );
+        } catch (error) {
+          console.warn('[ContractVersionHistory] Could not update contract conversation ID:', error);
+        }
+      }
+      
+      const context = contexts.find(ctx => ctx.id === contract.conversation_id);
+      const conversationName = context?.name || (isCurrentContext ? 'Current Conversation' : 'Unknown Conversation');
+      
+      return {
+        id: contract.contract_address || generateUUID(),
+        name: contract.name || `Contract in ${conversationName}`,
+        address: contract.contract_address,
+        timestamp: parseTimestamp(contract.deployed_at || contract.deployedAt),
+        sourceCode: parseSourceCode(contract),
+        conversationId: contract.conversation_id || '',
+        conversationName,
+        txHash: contract.tx_hash || contract.transactionHash || '',
+        isDeployed: isActiveDeployment,
+        isCurrentContext
+      };
+    } catch (error) {
+      console.error('[ContractVersionHistory] Error processing contract to version:', error);
+      return null;
+    }
+  };
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleString();
@@ -319,71 +338,6 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
   const handleLoadVersion = (version: ContractVersion) => {
     setSelectedVersion(version.id);
     onLoadVersion(version.sourceCode, version.isDeployed);
-  };
-
-  // Helper function to process deployed contracts into contract versions
-  const processDeployedContractsToVersions = (
-    deployedContracts: DeployedContract[],
-    currentContractAddress?: string,
-    contexts: ConversationContext[] = [],
-    currentContextId?: string
-  ): ContractVersion[] => {
-    const allVersions: ContractVersion[] = [];
-    
-    // Find currently deployed contract
-      
-    // Filter contracts relevant to the current context
-    const relevantContracts = deployedContracts.filter((contract: DeployedContract) => {
-      // If the contract is currently deployed, include it
-      const isActiveDeployment = currentContractAddress && 
-        contract.contract_address?.toLowerCase() === currentContractAddress?.toLowerCase();
-        
-      // If the contract belongs to the current context, include it
-      const belongsToCurrentContext = contract.conversation_id === currentContextId;
-      
-      return isActiveDeployment || belongsToCurrentContext;
-    });
-    
-    console.log('[ContractVersionHistory] Filtered contracts for current context:', {
-      total: deployedContracts.length,
-      filtered: relevantContracts.length,
-      activeContextId: currentContextId
-    });
-    
-    // Convert contracts to versions
-    relevantContracts.forEach((contract: DeployedContract) => {
-      try {
-        const sourceCode = parseSourceCode(contract);
-        const timestamp = parseTimestamp(contract.deployed_at || contract.created_at);
-        
-        // Find context name
-        const conversationContext = contexts.find(
-          context => context.id === contract.conversation_id
-        );
-        const conversationName = conversationContext?.name || 'Unknown Context';
-        
-        // Create version object
-        const version: ContractVersion = {
-          id: contract.id || generateUUID(),
-          name: contract.contract_name || 'Unnamed Contract',
-          address: contract.contract_address,
-          timestamp: timestamp,
-          sourceCode: sourceCode,
-          conversationId: contract.conversation_id || '',
-          conversationName: conversationName,
-          txHash: contract.tx_hash,
-          isDeployed: !!contract.contract_address,
-          isCurrentContext: contract.conversation_id === currentContextId
-        };
-        
-        allVersions.push(version);
-      } catch (error) {
-        console.error('[ContractVersionHistory] Error processing contract:', error, contract);
-      }
-    });
-    
-    // Sort versions by timestamp (newest first)
-    return allVersions.sort((a, b) => b.timestamp - a.timestamp);
   };
 
   // Efecto para actualizar las versiones cuando cambia el contexto activo
@@ -474,11 +428,11 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
           
           // Procesar las versiones como en el useEffect original
           // Implementación simplificada para la actualización
-          const processedVersions = processDeployedContractsToVersions(
+          const processedVersions = await processVersions(
             deployedContracts, 
             contractAddress, 
-            conversationContexts, 
-            activeContextId
+            activeContextId,
+            conversationContexts
           );
           
           setVersions(processedVersions);
@@ -510,154 +464,163 @@ const ContractVersionHistory: React.FC<ContractVersionHistoryProps> = ({
   }, [address, activeContextId, contractAddress, conversationContexts, databaseService]);
 
   return (
-    <div className={`bg-gray-800/90 backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl overflow-hidden transition-all duration-300 ${
-      isExpanded ? 'h-80' : 'h-12'
-    }`}>
-      {/* Header with toggle */}
+    <div className={`flex flex-col ${isExpanded ? 'h-80' : 'h-10'} transition-all duration-300 ease-in-out overflow-hidden`}>
+      {/* Header with toggle button */}
       <div 
-        className="h-12 px-4 flex items-center justify-between bg-gray-800/95 cursor-pointer"
+        className="flex-none h-10 border-b border-gray-700/70 px-4 flex items-center justify-between bg-gradient-to-r from-gray-800/95 to-gray-850/95 backdrop-blur-sm sticky top-0 z-10 shadow-sm cursor-pointer transition-colors hover:bg-gray-750/90"
         onClick={handleToggleExpand}
       >
-        <div className="flex items-center space-x-3">
-          <ClockIcon className="w-5 h-5 text-blue-400" />
-          <h3 className="text-sm font-medium text-white">Contract Version History</h3>
+        <div className="flex items-center gap-3">
+          <div className="p-1.5 rounded-full bg-gray-700/70 text-blue-400">
+            <ClockIcon className="w-4 h-4" />
+          </div>
+          <h3 className="text-sm font-medium text-gray-300">Contract Version History</h3>
+          {versions.length > 0 && (
+            <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded-full text-xs ml-2">
+              {versions.length}
+            </span>
+          )}
         </div>
-        <div className="flex items-center space-x-2">
-          <span className="text-xs text-gray-400">{versions.length} versions</span>
+        <button
+          className="p-1.5 rounded-full text-gray-400 hover:text-white hover:bg-gray-700/70 transition-all duration-200"
+          title={isExpanded ? "Collapse" : "Expand"}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleToggleExpand();
+          }}
+        >
           <svg 
-            className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} 
+            className={`w-5 h-5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : 'rotate-0'}`} 
             fill="none" 
             stroke="currentColor" 
             viewBox="0 0 24 24"
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
-        </div>
+        </button>
       </div>
 
-      {/* Content when expanded */}
-      {isExpanded && (
-        <div className="h-[calc(100%-3rem)] flex flex-col">
-          {/* Loading state */}
-          {isLoading && (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-            </div>
-          )}
+      {/* Loading state */}
+      {isLoading && (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500"></div>
+        </div>
+      )}
 
-          {/* No versions state */}
-          {!isLoading && versions.length === 0 && (
-            <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-6">
-              <DocumentDuplicateIcon className="w-12 h-12 mb-4 text-gray-600" />
-              <p className="text-center">No version history available for this contract.</p>
-              <p className="text-sm text-gray-500 mt-2">
-                Contract versions will appear here when you deploy or save different versions.
-              </p>
-            </div>
-          )}
+      {/* No versions state */}
+      {!isLoading && versions.length === 0 && (
+        <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-6">
+          <div className="p-4 rounded-full bg-gray-800/80 mb-4">
+            <DocumentDuplicateIcon className="w-10 h-10 text-gray-600" />
+          </div>
+          <p className="text-center font-medium text-gray-300">No version history available</p>
+          <p className="text-sm text-gray-500 mt-2 text-center max-w-xs">
+            Contract versions will appear here when you deploy or save different versions of your contract.
+          </p>
+        </div>
+      )}
 
-          {/* Versions list */}
-          {!isLoading && versions.length > 0 && (
-            <div className="flex-1 overflow-y-auto p-4">
-              <div className="space-y-3">
-                {versions.map((version) => (
-                  <div 
-                    key={version.id}
-                    className={`p-3 rounded-lg border transition-colors ${
-                      selectedVersion === version.id
-                        ? 'bg-blue-500/10 border-blue-500/30'
-                        : 'bg-gray-700/40 border-gray-700 hover:bg-gray-700/60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col">
-                        <span className="font-medium text-white">{version.name}</span>
-                        {version.conversationId !== activeContextId && (
-                          <span className="text-xs text-yellow-400 mt-1">
-                            From: {version.conversationName}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={(e) => handleLoadVersionClick(e, version)}
-                          className="p-1.5 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/20 transition-colors"
-                          title="Load this version into editor"
-                        >
-                          <ArrowPathIcon className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={(e) => handleViewConversationClick(e, version.conversationId)}
-                          className="p-1.5 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/20 transition-colors"
-                          title="View conversation"
-                        >
-                          <ChatBubbleLeftRightIcon className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-2 text-sm">
-                      <div className="flex items-center text-gray-500">
-                        <ClockIcon className="w-3.5 h-3.5 mr-1 inline" />
-                        <span>{formatDate(version.timestamp)}</span>
-                      </div>
-                      
-                      <div className="flex items-center text-gray-500 mt-1">
-                        <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 mr-1 inline" />
-                        <span>{version.conversationName}</span>
-                      </div>
-                      
-                      {version.address && (
-                        <div className="flex items-center text-gray-400 mt-1">
-                          <LinkIcon className="w-3.5 h-3.5 mr-1 inline" />
-                          <span className={`${
-                            version.isDeployed 
-                              ? 'text-green-400' 
-                              : 'text-yellow-400'
-                          }`}>
-                            {version.address.substring(0, 6)}...{version.address.substring(38)}
-                          </span>
-                        </div>
-                      )}
-                      
-                      {version.txHash && (
-                        <div className="flex items-center text-gray-400 mt-1 text-xs">
-                          <span className="text-gray-500">TX: </span>
-                          <span className="ml-1 text-blue-400">{version.txHash}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {version.conversationId === activeContextId && (
-                      <div className="mt-2 px-2 py-1 text-xs bg-blue-500/20 text-blue-400 rounded inline-block">
-                        Current Context
-                      </div>
+      {/* Versions list */}
+      {!isLoading && versions.length > 0 && (
+        <div className="flex-1 overflow-y-auto p-4 bg-gray-900/40 backdrop-blur-sm">
+          <div className="space-y-3">
+            {versions.map((version) => (
+              <div 
+                key={version.id}
+                className={`p-3.5 rounded-lg border shadow-sm transition-all duration-200 ${
+                  selectedVersion === version.id
+                    ? 'bg-gradient-to-br from-blue-900/20 to-blue-800/20 border-blue-500/40 shadow-blue-900/20'
+                    : 'bg-gray-800/60 border-gray-700/60 hover:bg-gray-750/70 hover:border-gray-600/70 hover:shadow-md'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="font-medium text-white">{version.name}</span>
+                    {version.conversationId !== activeContextId && (
+                      <span className="text-xs text-yellow-400 mt-1">
+                        From: {version.conversationName}
+                      </span>
                     )}
-                    
-                    {/* Status Indicator - Combined version */}
-                    <div className="mt-2 flex items-center gap-2">
-                      {version.isDeployed ? (
-                        <div className="flex items-center gap-2 px-2 py-1 text-xs bg-green-500/20 text-green-400 rounded">
-                          <div className="w-2 h-2 rounded-full bg-green-400"></div>
-                          Currently Deployed
-                        </div>
-                      ) : version.address ? (
-                        <div className="flex items-center gap-2 px-2 py-1 text-xs bg-yellow-500/20 text-yellow-400 rounded">
-                          <div className="w-2 h-2 rounded-full bg-yellow-400"></div>
-                          Previously Deployed
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 px-2 py-1 text-xs bg-gray-500/20 text-gray-400 rounded">
-                          <div className="w-2 h-2 rounded-full bg-gray-400"></div>
-                          Not Deployed
-                        </div>
-                      )}
-                    </div>
                   </div>
-                ))}
+                  <div className="flex space-x-1">
+                    <button
+                      onClick={(e) => handleLoadVersionClick(e, version)}
+                      className="p-1.5 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/20 transition-all duration-200 hover:shadow-inner"
+                      title="Load this version into editor"
+                    >
+                      <ArrowPathIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={(e) => handleViewConversationClick(e, version.conversationId)}
+                      className="p-1.5 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/20 transition-all duration-200 hover:shadow-inner"
+                      title="View conversation"
+                    >
+                      <ChatBubbleLeftRightIcon className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="mt-2.5 text-sm grid grid-cols-2 gap-2">
+                  <div className="flex items-center text-gray-500">
+                    <ClockIcon className="w-3.5 h-3.5 mr-1.5 inline text-gray-400" />
+                    <span className="truncate">{formatDate(version.timestamp)}</span>
+                  </div>
+                  
+                  <div className="flex items-center text-gray-500">
+                    <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 mr-1.5 inline text-gray-400" />
+                    <span className="truncate">{version.conversationName}</span>
+                  </div>
+                  
+                  {version.address && (
+                    <div className="flex items-center text-gray-400 col-span-2 mt-0.5">
+                      <LinkIcon className="w-3.5 h-3.5 mr-1.5 inline" />
+                      <span className={`truncate ${
+                        version.isDeployed 
+                          ? 'text-green-400' 
+                          : 'text-yellow-400'
+                      }`}>
+                        {version.address.substring(0, 6)}...{version.address.substring(38)}
+                      </span>
+                    </div>
+                  )}
+                  
+                  {version.txHash && (
+                    <div className="flex items-center text-gray-400 mt-0.5 text-xs col-span-2">
+                      <span className="text-gray-500">TX: </span>
+                      <span className="ml-1 text-blue-400 truncate">{version.txHash}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {version.conversationId === activeContextId && (
+                    <div className="px-2.5 py-1 text-xs bg-blue-500/20 text-blue-400 rounded-full inline-flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-400"></div>
+                      Current Context
+                    </div>
+                  )}
+                  
+                  {/* Status Indicator - Combined version */}
+                  {version.isDeployed ? (
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-green-500/20 text-green-400 rounded-full">
+                      <div className="w-1.5 h-1.5 rounded-full bg-green-400"></div>
+                      Deployed
+                    </div>
+                  ) : version.address ? (
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-yellow-500/20 text-yellow-400 rounded-full">
+                      <div className="w-1.5 h-1.5 rounded-full bg-yellow-400"></div>
+                      Draft
+                    </div>
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-gray-500/20 text-gray-400 rounded-full">
+                      <div className="w-1.5 h-1.5 rounded-full bg-gray-400"></div>
+                      Not Deployed
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -161,24 +161,113 @@ export class CompilationService {
         const responseText = await response.text();
         console.log('[CompilationService] API response:', responseText);
 
+        // Handle HTTP error status codes (4xx, 5xx)
+        if (!response.ok) {
+          console.error(`[CompilationService] HTTP error ${response.status}: ${responseText}`);
+          
+          // Try to extract meaningful error message from the response
+          let errorMessage = `Server error (${response.status})`;
+          let errorCode = 'ServerError';
+          
+          // Check if the response contains a meaningful error message
+          if (responseText) {
+            // For 500 errors that contain Solidity error messages
+            if (responseText.includes('Error HH') || 
+                responseText.includes('not found') || 
+                responseText.includes('imported from')) {
+              
+              errorMessage = responseText.trim();
+              
+              // Extract error code if present
+              const errorCodeMatch = responseText.match(/Error ([A-Z0-9]+):/);
+              if (errorCodeMatch && errorCodeMatch[1]) {
+                errorCode = errorCodeMatch[1];
+              }
+              
+              // For import errors, provide more helpful message
+              if (responseText.includes('not found') && responseText.includes('imported from')) {
+                const missingFileMatch = responseText.match(/File ([^,]+), imported from/);
+                if (missingFileMatch && missingFileMatch[1]) {
+                  const missingFile = missingFileMatch[1];
+                  
+                  // Add installation instructions for common packages
+                  
+                }
+              }
+            }
+          }
+          
+          // Create a properly formatted error result
+          const result = {
+            success: false,
+            markers: this.convertErrorsToMarkers([{
+              formattedMessage: errorMessage,
+              severity: 'error',
+              errorCode: errorCode
+            }], monaco),
+            error: errorMessage,
+            output: null
+          };
+          
+          // Handle the error result
+          this.handleCompilationResult(result, monaco, model, addConsoleMessage, setCurrentArtifact);
+          
+          // Cache the result
+          this.compilationResults.set(code, result);
+          return;
+        }
+
         let compilationResult;
         try {
           // Try to parse as JSON first
           compilationResult = JSON.parse(responseText);
         } catch (e) {
           // If it's not JSON, assume it's a compilation error message
-          // Format the error message to match the expected structure
-          const errorLines = responseText.split('\n');
-          const formattedMessage = errorLines.join('\n');
+          console.log('[CompilationService] Response is not JSON, treating as error message');
           
-          compilationResult = {
-            success: false,
-            error: {
-              formattedMessage: formattedMessage,
-              severity: 'error',
-              errorCode: 'ParserError'
+          // Check if this looks like a Solidity error message
+          if (responseText.includes('Error') || responseText.includes('not found') || 
+              responseText.includes('Compilation failed') || responseText.includes('HH')) {
+            
+            // Try to extract specific error information
+            let errorCode = 'CompilationError';
+            let formattedMessage = responseText;
+            
+            // Extract error code if present (like HH404)
+            const errorCodeMatch = responseText.match(/Error ([A-Z0-9]+):/);
+            if (errorCodeMatch && errorCodeMatch[1]) {
+              errorCode = errorCodeMatch[1];
             }
-          };
+            
+            // Look for import errors specifically
+            if (responseText.includes('not found') && responseText.includes('imported from')) {
+              // This is likely an import error, extract the missing file
+              const missingFileMatch = responseText.match(/File ([^,]+), imported from/);
+              if (missingFileMatch && missingFileMatch[1]) {
+                const missingFile = missingFileMatch[1];
+                formattedMessage = `Missing dependency: ${missingFile}. Make sure this file is available or install the required package.`;
+              }
+            }
+            
+            compilationResult = {
+              success: false,
+              error: {
+                formattedMessage: formattedMessage,
+                severity: 'error',
+                errorCode: errorCode
+              }
+            };
+          } else {
+            // Generic error format
+            compilationResult = {
+              success: false,
+              error: {
+                formattedMessage: responseText,
+                severity: 'error',
+                errorCode: 'ParserError'
+              }
+            };
+          }
         }
 
         console.log('[CompilationService] Parsed compilation result:', compilationResult);
@@ -186,9 +275,26 @@ export class CompilationService {
         let result;
         if (!response.ok || compilationResult.error) {
           // Handle both JSON errors and plain text compilation errors
-          const errorInfo = typeof compilationResult.error === 'string' 
-            ? { formattedMessage: compilationResult.error, severity: 'error' }
-            : compilationResult.error;
+          let errorInfo;
+          
+          if (typeof compilationResult.error === 'string') {
+            errorInfo = { formattedMessage: compilationResult.error, severity: 'error' };
+          } else if (compilationResult.error && typeof compilationResult.error === 'object') {
+            // Make sure formattedMessage exists, create it if it doesn't
+            errorInfo = {
+              formattedMessage: compilationResult.error.formattedMessage || 
+                                compilationResult.error.message || 
+                                JSON.stringify(compilationResult.error),
+              severity: compilationResult.error.severity || 'error',
+              errorCode: compilationResult.error.errorCode
+            };
+          } else {
+            // Fallback for when error is completely undefined or null
+            errorInfo = {
+              formattedMessage: 'Unknown compilation error occurred',
+              severity: 'error'
+            };
+          }
 
           result = {
             success: false,
@@ -248,22 +354,86 @@ export class CompilationService {
           }
         }
         
+        // Extract the actual error message
+        let errorMessage = 'An unknown network error occurred';
+        
         if (networkError instanceof Error) {
-          addConsoleMessage(`Network error: ${networkError.message}. This may be a CORS issue if you're seeing errors about 'Access-Control-Allow-Origin'.`, 'error');
+          errorMessage = networkError.message;
+          
+          // Check if this is a HTTP error
+          if (errorMessage.includes('500') || errorMessage.includes('Internal Server Error')) {
+            errorMessage = 'Server error (500): The compilation server encountered an error. This might be due to missing dependencies or invalid code.';
+            
+            // Try to extract import statements to provide better guidance
+            const importRegex = /import\s+[^;]+from\s+["']([^"']+)["']/g;
+            const imports = [...code.matchAll(importRegex)].map(match => match[1]);
+            
+            if (imports.length > 0) {
+              // Check for common dependencies
+              const missingOpenZeppelin = imports.some(imp => imp.includes('@openzeppelin'));
+              
+              if (missingOpenZeppelin) {
+                errorMessage += '\n\nYour contract imports OpenZeppelin libraries. Make sure to install them:\nnpm install @openzeppelin/contracts';
+              } else {
+                errorMessage += `\n\nYour contract imports these files which might be missing: ${imports.join(', ')}`;
+              }
+            }
+          }
+          
+          // Check if this is a missing dependency error (common with imports)
+          else if (errorMessage.includes('Cannot read properties of undefined') && 
+              errorMessage.includes('formattedMessage')) {
+            
+            // Try to extract import errors from the code
+            const importRegex = /import\s+[^;]+from\s+["']([^"']+)["']/g;
+            const imports = [...code.matchAll(importRegex)].map(match => match[1]);
+            
+            if (imports.length > 0) {
+              errorMessage = `Possible missing dependencies: ${imports.join(', ')}. Make sure all imported files are available.`;
+            } else {
+              errorMessage = 'Compilation error: There might be missing dependencies or import errors in your contract.';
+            }
+          }
+          
+          // Create a marker for the error
+          const errorMarker = {
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: 1,
+            endColumn: 1,
+            message: errorMessage,
+            severity: monaco.MarkerSeverity.Error
+          };
+          monaco.editor.setModelMarkers(model, 'solidity', [errorMarker]);
+          
+          addConsoleMessage(`Compilation error: ${errorMessage}`, 'error');
         } else {
-          addConsoleMessage('An unknown network error occurred', 'error');
+          addConsoleMessage('An unknown compilation error occurred', 'error');
         }
         
         // Don't clear the current artifact on network errors
         // This prevents the Contract Viewer from disappearing
-        
-        // Don't rethrow the error here to allow the app to continue functioning
-        // throw networkError; 
       }
 
     } catch (error) {
       console.error('[CompilationService] Compilation error:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Check if this is a missing dependency error
+      let enhancedErrorMessage = errorMessage;
+      
+      // Look for import statements in the code to provide better error messages
+      if (errorMessage.includes('not found') || errorMessage.includes('dependency') || 
+          errorMessage.includes('import') || errorMessage.includes('Cannot find')) {
+        
+        const importRegex = /import\s+[^;]+from\s+["']([^"']+)["']/g;
+        const imports = [...code.matchAll(importRegex)].map(match => match[1]);
+        
+        if (imports.length > 0) {
+          enhancedErrorMessage = `Missing dependencies detected: ${imports.join(', ')}. 
+          Make sure all imported files are available. Original error: ${errorMessage}`;
+        }
+      }
       
       // Si el error ya tiene un marcador establecido (por el código anterior), no necesitamos hacer nada más
       const existingMarkers = monaco.editor.getModelMarkers({ resource: model.uri });
@@ -274,14 +444,14 @@ export class CompilationService {
           startColumn: 1,
           endLineNumber: 1,
           endColumn: 1,
-          message: `Compilation failed: ${errorMessage}`,
+          message: `Compilation failed: ${enhancedErrorMessage}`,
           severity: monaco.MarkerSeverity.Error
         };
         monaco.editor.setModelMarkers(model, 'solidity', [errorMarker]);
       }
       
       addConsoleMessage(
-        `Compilation failed: ${errorMessage}`,
+        `Compilation failed: ${enhancedErrorMessage}`,
         "error"
       );
       
@@ -328,9 +498,28 @@ export class CompilationService {
   }
 
   private convertErrorsToMarkers(errors: any[], monaco: typeof import('monaco-editor')): any[] {
+    if (!errors || !Array.isArray(errors)) {
+      console.warn('[CompilationService] Invalid errors array:', errors);
+      return [];
+    }
+    
     return errors.map(error => {
+      if (!error) {
+        console.warn('[CompilationService] Null or undefined error object');
+        return {
+          startLineNumber: 1,
+          endLineNumber: 1,
+          startColumn: 1,
+          endColumn: 2,
+          message: 'Unknown error',
+          severity: monaco.MarkerSeverity.Error,
+          source: 'solidity'
+        };
+      }
+      
       // Extract line and column information from the error message
-      const locationMatch = error.formattedMessage?.match(/\d+:\d+/);
+      const formattedMessage = error.formattedMessage || error.message || JSON.stringify(error);
+      const locationMatch = formattedMessage.match(/\d+:\d+/);
       let startLineNumber = 1;
       let startColumn = 1;
       
@@ -345,7 +534,7 @@ export class CompilationService {
         endLineNumber: startLineNumber,
         startColumn,
         endColumn: startColumn + 1,
-        message: error.formattedMessage || error.message,
+        message: formattedMessage,
         severity: error.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
         source: 'solidity'
       };
@@ -369,14 +558,31 @@ export class CompilationService {
 
     if (!result.success || result.error) {
       // Handle compilation error
-      const errorMessage = result.error || 'Unknown compilation error';
+      let errorMessage = result.error || 'Unknown compilation error';
+      
+      // Format error message for better readability
+      if (errorMessage.includes('Error HH404') || 
+          (errorMessage.includes('not found') && errorMessage.includes('imported from'))) {
+        
+        // This is an import error, extract the missing file
+        const missingFileMatch = errorMessage.match(/File ([^,]+), imported from/);
+        if (missingFileMatch && missingFileMatch[1]) {
+          const missingFile = missingFileMatch[1];
+          
+          // Add installation instructions for common packages
+          
+        }
+      }
+      
+      // Add the error message to console
       addConsoleMessage(errorMessage, 'error');
 
+      // Set markers if available
       if (result.markers && result.markers.length > 0) {
         monaco.editor.setModelMarkers(model, 'solidity', result.markers);
       }
 
-      setCurrentArtifact(null);
+      // Don't clear the artifact on compilation errors to prevent UI disruption
       return;
     }
 

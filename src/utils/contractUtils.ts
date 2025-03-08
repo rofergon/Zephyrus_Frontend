@@ -1,4 +1,4 @@
-import { ContractFunction } from '../types/contracts';
+import { ContractFunction, AdminAction } from '../types/contracts';
 
 export const processABI = (abi: any[]): ContractFunction[] => {
   return abi
@@ -68,4 +68,74 @@ export const generateExampleValue = (type: string): string => {
       }
       return '""'; // Valor por defecto para tipos desconocidos
   }
+};
+
+export const getCommonAdminActions = (contractType: string): AdminAction[] => {
+  const commonActions: { [key: string]: AdminAction[] } = {
+    'ERC20': [
+      {
+        name: 'pause',
+        label: 'Pause Contract',
+        description: 'Temporarily pause all contract operations',
+        params: []
+      },
+      {
+        name: 'unpause',
+        label: 'Unpause Contract',
+        description: 'Resume contract operations',
+        params: []
+      },
+      {
+        name: 'mint',
+        label: 'Mint Tokens',
+        description: 'Create new tokens and assign them to an address',
+        params: [
+          { name: 'recipient', type: 'address', placeholder: 'Recipient address' },
+          { name: 'amount', type: 'uint256', placeholder: 'Amount of tokens' }
+        ]
+      },
+      {
+        name: 'burn',
+        label: 'Burn Tokens',
+        description: 'Permanently remove tokens from circulation',
+        params: [
+          { name: 'amount', type: 'uint256', placeholder: 'Amount to burn' }
+        ]
+      }
+    ],
+    'NFT': [
+      {
+        name: 'pause',
+        label: 'Pause Contract',
+        description: 'Temporarily pause all contract operations',
+        params: []
+      },
+      {
+        name: 'unpause',
+        label: 'Unpause Contract',
+        description: 'Resume contract operations',
+        params: []
+      },
+      {
+        name: 'setBaseURI',
+        label: 'Set Base URI',
+        description: 'Update the base URI for token metadata',
+        params: [
+          { name: 'baseURI', type: 'string', placeholder: 'https://api.example.com/token/' }
+        ]
+      },
+      {
+        name: 'mint',
+        label: 'Mint NFT',
+        description: 'Create a new NFT and assign it to an address',
+        params: [
+          { name: 'recipient', type: 'address', placeholder: 'Recipient address' },
+          { name: 'tokenId', type: 'uint256', placeholder: 'Token ID' },
+          { name: 'uri', type: 'string', placeholder: 'Token URI' }
+        ]
+      }
+    ]
+  };
+
+  return commonActions[contractType] || [];
 }; 

@@ -25,7 +25,7 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
   const [effectiveAddress, setEffectiveAddress] = useState<string>(contractAddress || '');
   const [txHash, setTxHash] = useState<Hash | undefined>();
   const { isConnected } = useAccount();
-  const { executeRead } = useContractInteraction(effectiveAddress, abi || []);
+  const { readContractData } = useContractInteraction();
 
   // Configurar useWriteContract para funciones de escritura
   const { 
@@ -141,8 +141,7 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
       // Función de lectura (view/pure)
       if (func.stateMutability === 'view' || func.stateMutability === 'pure') {
         try {
-          const response = await executeRead(func.name, processedInputs);
-          // Log crítico que se mantiene
+          const response = await readContractData(effectiveAddress, abi || [], func.name, processedInputs);
           console.log(`[FunctionCard] Read success: ${func.name}`);
           setResult(response);
         } catch (error: any) {
@@ -152,7 +151,7 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
           // Reintentar en caso de errores transitorios
           if (retryCount < maxRetries) {
             try {
-              const response = await executeRead(func.name, processedInputs);
+              const response = await readContractData(effectiveAddress, abi || [], func.name, processedInputs);
               setResult(response);
             } catch (retryError: any) {
               setError(`Error: ${retryError.message || 'Unknown error'}`);
@@ -189,7 +188,7 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
   // Helper function to format function results
 
   return (
-    <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-700/50 p-4 hover:border-blue-500/50 transition-colors">
+    <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-700/50 p-4 hover:border-blue-500/50 transition-colors h-full flex flex-col">
       <div className="flex items-start justify-between mb-4">
         <div>
           <h3 className="text-lg font-semibold text-white">{func.name}</h3>
@@ -198,28 +197,34 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
         <div className="flex items-center space-x-2">
           <span className={`px-2 py-1 text-xs rounded-full ${
             func.stateMutability === 'view' || func.stateMutability === 'pure'
-              ? 'bg-emerald-500/20 text-emerald-400'
-              : 'bg-blue-500/20 text-blue-400'
+              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+              : func.stateMutability === 'payable'
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
           }`}>
             {func.stateMutability}
+            {func.stateMutability === 'payable' && (
+              <span className="ml-1">💰</span>
+            )}
           </span>
         </div>
       </div>
 
       {/* Inputs */}
       {func.inputs.length > 0 && (
-        <div className="space-y-3 mb-4">
+        <div className="space-y-3 mb-4 flex-grow">
           {func.inputs.map((input, index) => (
             <div key={index} className="space-y-1">
-              <label className="text-sm text-gray-400">
-                {input.name} ({input.type})
+              <label className="text-sm text-gray-400 flex items-center gap-1">
+                <span className="font-medium">{input.name}</span> 
+                <span className="text-xs text-gray-500">({input.type})</span>
               </label>
               <input
                 type="text"
                 value={inputValues[input.name] || ''}
                 onChange={(e) => handleInputChange(input.name, e.target.value)}
                 placeholder={`Enter ${input.type}`}
-                className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full p-2 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors"
               />
             </div>
           ))}
@@ -230,13 +235,15 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
       <button
         onClick={handleExecute}
         disabled={isLoading || isPending || isConfirming || !isConnected || !effectiveAddress}
-        className={`w-full py-2 px-4 rounded-lg ${
+        className={`w-full py-2 px-4 rounded-lg font-medium ${
           isLoading || isPending || isConfirming || !isConnected || !effectiveAddress
             ? 'bg-gray-700 cursor-not-allowed opacity-50'
             : func.stateMutability === 'view' || func.stateMutability === 'pure'
-            ? 'bg-emerald-600 hover:bg-emerald-700'
-            : 'bg-blue-600 hover:bg-blue-700'
-        } text-white transition-colors duration-200`}
+            ? 'bg-emerald-600 hover:bg-emerald-700 shadow-md hover:shadow-lg'
+            : func.stateMutability === 'payable'
+              ? 'bg-amber-600 hover:bg-amber-700 shadow-md hover:shadow-lg'
+              : 'bg-blue-600 hover:bg-blue-700 shadow-md hover:shadow-lg'
+        } text-white transition-all duration-200`}
       >
         {isLoading || isPending
           ? 'Preparing...' 
@@ -271,7 +278,7 @@ const FunctionCard: React.FC<FunctionCardProps> = ({ func, contractAddress, abi,
       {result && (
         <div className="mt-4 p-3 bg-gray-900/50 rounded-lg border border-gray-700">
           <h4 className="text-sm font-medium text-gray-400 mb-1">Result:</h4>
-          <div className="text-sm text-white break-all font-mono">
+          <div className="text-sm text-white break-all font-mono overflow-auto max-h-32">
             {typeof result === 'object' 
               ? safeStringify(result, 2)
               : String(result)}

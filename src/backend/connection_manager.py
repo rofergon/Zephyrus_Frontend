@@ -17,20 +17,10 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket, wallet_address: str):
         await websocket.accept()
         self.active_connections[wallet_address] = websocket
-        self.agents[wallet_address] = Agent(self.file_manager)
+        self.agents[wallet_address] = Agent(self.file_manager, self.chat_manager)
         
         # Load existing chats for the wallet
         chats = self.chat_manager.get_user_chats(wallet_address)
-        
-        # Si no hay chats, crear uno nuevo
-        if not chats:
-            logger.info(f"No existing chats found for wallet {wallet_address}, creating initial chat")
-            initial_chat = self.chat_manager.create_chat(wallet_address, "Main Chat")
-            chats = [initial_chat.to_dict()]
-        else:
-            logger.info(f"Found {len(chats)} existing chats for wallet {wallet_address}")
-            
-        # Enviar los chats al cliente
         await websocket.send_json({
             "type": "contexts_loaded",
             "content": chats

@@ -363,6 +363,9 @@ export class ChatContextService {
         // Actualizar estado local
         this.currentContexts = updatedContexts;
         
+        // Actualizar el servicio de conversación con los contextos únicos
+        conversationService.setContexts(updatedContexts);
+        
         this.config.setConversationContexts(updatedContexts);
         this.config.setActiveContext(activeContext);
         conversationService.setActiveContext(activeContext.id);
@@ -383,37 +386,25 @@ export class ChatContextService {
    * Asegura que todos los contextos tengan IDs únicos
    */
   private ensureUniqueContexts(contexts: ConversationContext[]): ConversationContext[] {
-    const uniqueIds = new Set<string>();
+    const seen = new Set<string>();
     const uniqueContexts: ConversationContext[] = [];
-
-    contexts.forEach((ctx: ConversationContext) => {
-      if (!uniqueIds.has(ctx.id)) {
-        uniqueIds.add(ctx.id);
-        uniqueContexts.push(ctx);
+    
+    for (const context of contexts) {
+      if (!seen.has(context.id)) {
+        seen.add(context.id);
+        uniqueContexts.push(context);
       } else {
-        // Si hay un ID duplicado, crear uno nuevo
-        const newId = this.generateUUID();
-        console.log(`[ChatContextService] Found duplicate context ID: ${ctx.id}, replacing with: ${newId}`);
+        // If duplicate ID found, generate a new unique ID
+        const newId = generateUniqueId();
+        console.log(`[ChatContextService] Found duplicate context ID: ${context.id}, generating new ID: ${newId}`);
         uniqueContexts.push({
-          ...ctx,
+          ...context,
           id: newId
         });
-        uniqueIds.add(newId);
       }
-    });
-
+    }
+    
     return uniqueContexts;
-  }
-
-  /**
-   * Genera un UUID v4
-   */
-  private generateUUID(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
   }
 
   /**
@@ -501,7 +492,7 @@ export class ChatContextService {
             address: lastContract.contract_address,
             hasAbi: !!lastContract.abi,
             deployedAt: lastContract.deployed_at,
-            sourceCodeExists: !!lastContract.sourceCode,
+            sourceCodeExists: !!lastContract.source_code,
             abiPreview: lastContract.abi ? JSON.stringify(lastContract.abi).substring(0, 100) + '...' : 'null'
           });
 
@@ -584,15 +575,22 @@ export class ChatContextService {
           });
 
           // Actualizar el código fuente si está disponible
-          if (lastContract.sourceCode) {
+          if (lastContract.source_code) {
             let sourceCode = '';
             try {
-              if (typeof lastContract.sourceCode === 'string') {
-                const parsedSource = JSON.parse(lastContract.sourceCode);
-                sourceCode = parsedSource.content || lastContract.sourceCode;
-              } else if (lastContract.sourceCode.content) {
-                sourceCode = lastContract.sourceCode.content;
+              if (typeof lastContract.source_code === 'string') {
+                try {
+                  // Intentar parsear como JSON primero
+                  const parsedSource = JSON.parse(lastContract.source_code);
+                  sourceCode = typeof parsedSource === 'object' && parsedSource !== null && 'content' in parsedSource
+                    ? parsedSource.content
+                    : lastContract.source_code;
+                } catch {
+                  // Si no es JSON válido, usar el string directamente
+                  sourceCode = lastContract.source_code;
+                }
               }
+              
               if (sourceCode) {
                 this.config.setCurrentCode(sourceCode);
                 this.config.setShowCodeEditor(true);

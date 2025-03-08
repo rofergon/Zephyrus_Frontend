@@ -65,7 +65,7 @@ const AssistedChat: React.FC = (): JSX.Element => {
   const compilationService = useRef<CompilationService>(CompilationService.getInstance());
   const databaseService = useRef<DatabaseService>(DatabaseService.getInstance());
   const chatContextService = useRef<ChatContextService | null>(null);
-  const [isFileExplorerOpen, setIsFileExplorerOpen] = useState(true);
+  const [isFileExplorerOpen, setIsFileExplorerOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [showWorkspaceManager, setShowWorkspaceManager] = useState(false);
   const lastCompilationRef = useRef<string>('');
@@ -150,6 +150,28 @@ const AssistedChat: React.FC = (): JSX.Element => {
 
   // Initialize chat context service
   useEffect(() => {
+    // Inicializar el servicio de contexto de chat si no existe
+    if (!chatContextService.current) {
+      console.log('[AssistedChat] Initializing ChatContextService');
+      chatContextService.current = new ChatContextService({
+        addConsoleMessage,
+        setMessages,
+        setConversationContexts,
+        setActiveContext,
+        setCurrentArtifact,
+        setCurrentCode,
+        setShowCodeEditor,
+        compileCode,
+        databaseService: databaseService.current,
+        chatService: chatService.current,
+        address,
+        demoArtifact
+      });
+      
+      // Hacer disponible el servicio globalmente para depuración
+      (window as any).__chatContextService = chatContextService.current;
+    }
+    
     // Actualizar la dirección de wallet en el servicio de base de datos
     if (address) {
       databaseService.current.setCurrentWalletAddress(address);
@@ -226,7 +248,12 @@ const AssistedChat: React.FC = (): JSX.Element => {
   }, [address]);
 
   // Handle file selection from FileExplorer
-  const handleFileSelect = useCallback((path: string) => {
+  const handleFileSelect = useCallback((path: string | null) => {
+    if (!path) {
+      setSelectedFile(null);
+      return;
+    }
+    
     setSelectedFile(path);
     
     // Read file content and set appropriate state
@@ -866,6 +893,72 @@ const AssistedChat: React.FC = (): JSX.Element => {
       }
     }
   }, [messages, currentCode]);
+
+  // Efecto para asegurar que el código se cargue después de recargar la página
+  useEffect(() => {
+    if (activeContext && !currentCode) {
+      console.log('[AssistedChat] Checking for code in active context after page reload');
+      
+      // Buscar archivos Solidity en el contexto activo
+      if (activeContext.virtualFiles) {
+        const solidityFiles = Object.entries(activeContext.virtualFiles)
+          .filter(([_, file]: [string, any]) => file.language === 'solidity');
+        
+        if (solidityFiles.length > 0) {
+          // Tomar el archivo Solidity más reciente
+          const [path, lastSolidityFile]: [string, any] = solidityFiles[solidityFiles.length - 1];
+          console.log(`[AssistedChat] Found Solidity file in context after reload: ${path}`);
+          
+          // Actualizar el código y mostrar el editor
+          setCurrentCode(lastSolidityFile.content);
+          setShowCodeEditor(true);
+          setSelectedFile(path);
+          
+          // Compilar el código si es posible
+          if (editorRef.current && monacoRef.current) {
+            console.log('[AssistedChat] Compiling loaded Solidity code after reload');
+            compileCode(lastSolidityFile.content);
+          } else {
+            console.log('[AssistedChat] Editor refs not ready, scheduling compilation for later');
+            // Programar la compilación para cuando el editor esté listo
+            setTimeout(() => {
+              if (editorRef.current && monacoRef.current) {
+                compileCode(lastSolidityFile.content);
+              }
+            }, 1000);
+          }
+        }
+      }
+      
+      // También verificar en los workspaces del contexto activo
+      if (activeContext.workspaces && activeContext.activeWorkspace) {
+        const activeWorkspace = activeContext.workspaces[activeContext.activeWorkspace];
+        if (activeWorkspace && activeWorkspace.files) {
+          const solidityFiles = Object.entries(activeWorkspace.files)
+            .filter(([_, file]: [string, any]) => file.language === 'solidity');
+          
+          if (solidityFiles.length > 0) {
+            const [path, solFile]: [string, any] = solidityFiles[0];
+            console.log(`[AssistedChat] Found Solidity file in active workspace after reload: ${path}`);
+            
+            setCurrentCode(solFile.content);
+            setShowCodeEditor(true);
+            setSelectedFile(path);
+            
+            if (editorRef.current && monacoRef.current) {
+              compileCode(solFile.content);
+            } else {
+              setTimeout(() => {
+                if (editorRef.current && monacoRef.current) {
+                  compileCode(solFile.content);
+                }
+              }, 1000);
+            }
+          }
+        }
+      }
+    }
+  }, [activeContext, currentCode, editorRef.current, monacoRef.current, compileCode]);
 
   // Calculate initial widths
   useEffect(() => {
