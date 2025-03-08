@@ -20,6 +20,7 @@ export type WebSocketMessageType =
   | 'agent_stopped'
   | 'execute'
   | 'execute_response'
+  | 'websocket_execution'
   | 'error'
   | 'log'
   | 'status';
@@ -256,9 +257,11 @@ export class AgentWebSocketService {
   }
 
   public executeAgent(agentId: string): void {
-    this.sendMessageToAgent(agentId, {
-      type: 'execute',
-      data: { agent_id: agentId }
+    console.log('AgentWebSocketService executing agent:', agentId);
+    
+    this.sendRawMessage(agentId, {
+      type: 'websocket_execution',
+      agent_id: agentId
     });
   }
 
@@ -404,6 +407,44 @@ export class AgentWebSocketService {
       case 'error':
         console.error(`Agent error for ${agentId}:`, message.data.message);
         break;
+    }
+  }
+
+  /**
+   * Sends a raw message to an agent without following the standard WebSocketMessage format
+   * Use this for special message types that require a different structure
+   */
+  public sendRawMessage(agentId: string, rawMessage: any): void {
+    const connection = this.connections.get(agentId);
+    if (connection && connection.socket.readyState === WebSocket.OPEN) {
+      const messageString = JSON.stringify(rawMessage);
+      console.log(`Sending raw message to agent ${agentId}:`, messageString);
+      console.log(`WebSocket URL: ${connection.socket.url}`);
+      console.log(`WebSocket state: ${connection.socket.readyState} (${
+        connection.socket.readyState === WebSocket.CONNECTING ? 'CONNECTING' :
+        connection.socket.readyState === WebSocket.OPEN ? 'OPEN' :
+        connection.socket.readyState === WebSocket.CLOSING ? 'CLOSING' :
+        connection.socket.readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN'
+      })`);
+      
+      try {
+        connection.socket.send(messageString);
+        this.emitForAgent(agentId, 'log', { 
+          message: `Sent message: ${messageString}`,
+          logType: 'info'
+        });
+      } catch (error) {
+        console.error(`Error sending message to agent ${agentId}:`, error);
+        this.emitForAgent(agentId, 'error', { 
+          message: `Failed to send message: ${error}`
+        });
+      }
+    } else {
+      const errorMessage = `WebSocket is not connected for agent ${agentId}. ${
+        connection ? `State: ${connection.socket.readyState}` : 'Connection not found'
+      }`;
+      console.error(errorMessage);
+      this.emitForAgent(agentId, 'error', { message: errorMessage });
     }
   }
 } 
