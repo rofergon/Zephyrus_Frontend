@@ -77,26 +77,53 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({
     
     // Establecer conexión WebSocket
     try {
-      // Determinar qué URL de WebSocket usar basado en el entorno
+      // Usar la URL de WebSocket para agentes desde el .env
       const wsUrl = import.meta.env.MODE === 'production' 
-        ? import.meta.env.VITE_WS_URL_PROD
-        : import.meta.env.VITE_WS_URL_DEV;
+        ? import.meta.env.VITE_WS_AGENT_URL_PROD
+        : import.meta.env.VITE_WS_AGENT_URL_DEV;
       
-      // The URLs in .env end with /ws/agent, so we need to append the contractId
-      const ws = new WebSocket(`${wsUrl}/${contractId}`);
+      // Obtener el ID del agente
+      const agentId = agentConfig?.agent.contractId || agent?.agent_id || selectedAgent?.agent_id;
+      
+      // Construir la URL completa del WebSocket
+      const fullWsUrl = `${wsUrl}/ws/agent/${agentId}`;
+      
+      // Log de la URL del WebSocket para depuración
+      console.log('Connecting to WebSocket URL:', fullWsUrl);
+      // Mostrar la URL en el panel de logs
+      addLog(`Connecting to WebSocket URL: ${fullWsUrl}`, 'info');
+      
+      // Conectar al WebSocket para agentes
+      const ws = new WebSocket(fullWsUrl);
 
       ws.onopen = () => {
-        addLog('Connected to agent service', 'info');
-        console.log(`WebSocket connected to ${wsUrl}/${contractId}`);
+        // Añadir la URL en el log visible para mejorar la depuración
+        addLog(`Connected to agent service at ${fullWsUrl}`, 'success');
+        console.log(`WebSocket connected to ${fullWsUrl}`);
+        
+        // Al establecer conexión, mostrar información del agente
+        if (agentId) {
+          console.log('Connected with agent ID:', agentId);
+          addLog(`Registered with agent ID: ${agentId}`, 'info');
+        }
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           
+          // Log all messages received for debugging
+          console.log('WebSocket message received:', JSON.stringify(data, null, 2));
+          
+          // Mostrar mensaje recibido en el panel
+          const messageType = data.type || 'unknown';
+          
           if (data.type === 'log') {
             addLog(data.message, data.logType || 'info');
           } else if (data.type === 'status') {
+            // Mostrar detalles del estado
+            addLog(`Received status update: ${JSON.stringify(data)}`, 'info');
+            
             setIsRunning(data.running);
             if (data.lastExecuted) {
               setLastExecuted(new Date(data.lastExecuted).toLocaleString());
@@ -104,19 +131,35 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({
             if (data.nextExecution) {
               setNextExecution(new Date(data.nextExecution).toLocaleString());
             }
+          } else if (data.type === 'error') {
+            addLog(`Error: ${data.message || JSON.stringify(data)}`, 'error');
+            console.error('WebSocket error response:', data);
+          } else if (data.type === 'execute_response') {
+            // Mostrar respuesta de ejecución
+            addLog(`Execution response: ${JSON.stringify(data)}`, 'success');
+          } else {
+            // Log unknown message types
+            addLog(`Received message type [${messageType}]: ${JSON.stringify(data)}`, 'info');
+            console.log('Unknown message type received:', data.type, data);
           }
         } catch (error) {
           console.error('Error parsing websocket message:', error);
+          addLog(`Error parsing WebSocket message: ${error}`, 'error');
         }
       };
 
-      ws.onclose = () => {
-        addLog('Disconnected from agent service', 'warning');
+      ws.onclose = (event) => {
+        console.log('WebSocket closed:', event);
+        const reason = event.reason ? ` Reason: ${event.reason}` : '';
+        const code = event.code ? ` (Code: ${event.code})` : '';
+        addLog(`Disconnected from agent service${code}${reason}`, 'warning');
       };
 
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
-        addLog('Error connecting to agent service', 'error');
+        // Convertir el error a string para mostrarlo
+        const errorMessage = typeof error === 'object' ? JSON.stringify(error) : String(error);
+        addLog(`Error connecting to agent service: ${errorMessage}`, 'error');
       };
 
       setSocket(ws);
@@ -172,11 +215,27 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({
         return;
       }
       
-      socket.send(JSON.stringify({
-        action: 'execute',
-        agentId: agentId,
-      }));
-      addLog('Manual execution requested', 'info');
+      // Usar el formato exacto que espera el servidor
+      const message = {
+        type: "websocket_execution",
+        agent_id: agentId
+      };
+      
+      // Crear representación del mensaje para los logs
+      const messageStr = JSON.stringify(message, null, 2);
+      
+      // Añadir logs detallados para depuración
+      console.log('Sending execution request for agent:', agentId);
+      console.log('Message format:', messageStr);
+      
+      // Añadir detalles del mensaje a los logs visibles
+      addLog(`Sending WebSocket message: ${messageStr}`, 'info');
+      
+      // Enviar mensaje al WebSocket
+      socket.send(JSON.stringify(message));
+      
+      // Añadir log visible para el usuario
+      addLog(`Sending execution request for agent ${agentId}`, 'info');
       setLastExecuted(new Date().toISOString());
     } else {
       addLog('WebSocket not connected. Try refreshing the page.', 'error');
@@ -322,12 +381,9 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({
           
           <button 
             onClick={handleManualRun}
-            className="px-4 py-2 bg-blue-600/20 border border-blue-600/30 text-blue-400 rounded-lg hover:bg-blue-600/30 transition-colors text-sm font-medium flex items-center gap-2"
+            className="px-4 py-2 bg-indigo-600/90 hover:bg-indigo-700 text-white rounded-lg transition-all duration-200 shadow-md hover:shadow-lg border border-indigo-500/30"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
-            </svg>
-            Run Now
+            Execute Now
           </button>
         </div>
       </div>
@@ -642,10 +698,7 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({
             
             <button
               onClick={handleManualRun}
-              className={`px-4 py-2 bg-indigo-600/90 hover:bg-indigo-700 text-white rounded-lg transition-all duration-200 shadow-md hover:shadow-lg border border-indigo-500/30 ${
-                !isRunning ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-              disabled={!isRunning}
+              className="px-4 py-2 bg-indigo-600/90 hover:bg-indigo-700 text-white rounded-lg transition-all duration-200 shadow-md hover:shadow-lg border border-indigo-500/30"
             >
               Execute Now
             </button>

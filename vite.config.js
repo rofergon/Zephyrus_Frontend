@@ -91,6 +91,7 @@ export default defineConfig({
   server: {
     fs: {
       allow: ['..', 'node_modules']
-    }
+    },
+    allowedHosts: ['.ngrok.app', '.ngrok.io']
   }
 })
