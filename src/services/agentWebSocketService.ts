@@ -58,7 +58,7 @@ export class AgentWebSocketService {
 
       // Obtener la URL base del WebSocket del entorno
       const wsUrl = import.meta.env.MODE === 'production'
-        ? import.meta.env.VITE_WS_URL_PROD
+        ? import.meta.env.VITE_WS_AGENT_URL_PROD
         : import.meta.env.VITE_WS_AGENT_URL_DEV || 'ws://localhost:8765';
 
       // Construir la URL completa según la documentación
