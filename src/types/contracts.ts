@@ -106,6 +106,7 @@ export interface DeployedContract {
   transactionHash?: string;
   source_code?: string;
   bytecode?: string;
+  owner?: string;
   stats: {
     totalSupply?: string;
     holders?: string;

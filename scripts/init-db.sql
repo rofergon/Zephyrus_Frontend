@@ -97,6 +97,8 @@ CREATE TABLE agents (
     status TEXT CHECK (status IN ('active', 'paused', 'stopped')) DEFAULT 'paused',
     gas_limit TEXT,
     max_priority_fee TEXT,
+    owner TEXT NOT NULL,
+    contract_state JSON,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (contract_id) REFERENCES contracts(contract_id) ON DELETE CASCADE
@@ -111,6 +113,7 @@ CREATE TABLE agent_functions (
     function_type TEXT CHECK (function_type IN ('read', 'write', 'payable')) NOT NULL,
     is_enabled BOOLEAN DEFAULT true,
     validation_rules JSON,
+    abi JSON,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (agent_id) REFERENCES agents(agent_id) ON DELETE CASCADE,

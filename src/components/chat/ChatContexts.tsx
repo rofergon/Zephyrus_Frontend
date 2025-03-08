@@ -18,21 +18,46 @@ const ChatContexts: React.FC<ChatContextsProps> = ({
   // Debug log cuando los contextos cambian
   useEffect(() => {
     console.log('[ChatContexts] Contexts updated:', contexts.length);
+    
+    // Verificar IDs duplicados
+    const seenIds = new Set<string>();
+    const duplicateIds = new Set<string>();
+    
     contexts.forEach(ctx => {
-      console.log(`[ChatContexts] Context: ${ctx.id}, Name: ${ctx.name}, Active: ${ctx.active}`);
+      if (seenIds.has(ctx.id)) {
+        duplicateIds.add(ctx.id);
+        console.warn(`[ChatContexts] Duplicate context ID found: ${ctx.id}`);
+      } else {
+        seenIds.add(ctx.id);
+      }
+      
+      console.log(`[ChatContexts] Context: ${ctx.id}, Name: ${ctx.name}, Active: ${ctx.active}, CreatedAt: ${ctx.createdAt}`);
     });
+    
+    if (duplicateIds.size > 0) {
+      console.error('[ChatContexts] Duplicate context IDs detected:', Array.from(duplicateIds));
+    }
   }, [contexts]);
+
+  // Filtrar contextos duplicados antes de renderizar
+  const uniqueContexts = contexts.reduce((acc: ConversationContext[], current) => {
+    const exists = acc.find(ctx => ctx.id === current.id);
+    if (!exists) {
+      acc.push(current);
+    }
+    return acc;
+  }, []);
 
   return (
     <div className="flex-none border-b border-gray-700 bg-gray-800/80 backdrop-blur-sm">
       <div className="flex overflow-x-auto pb-2 px-4">
-        {contexts.length === 0 && (
+        {uniqueContexts.length === 0 && (
           <div className="text-sm text-gray-400 py-2">
             No chats available. Create a new chat to get started.
           </div>
         )}
         
-        {contexts.map((context) => (
+        {uniqueContexts.map((context) => (
           <div key={context.id} className="flex items-center mr-2">
             <button
               onClick={() => {

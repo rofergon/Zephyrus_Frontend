@@ -1,11 +1,6 @@
 import { createClient } from '@libsql/client';
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import * as fs from 'fs';
+import * as path from 'path';
 
 async function main() {
   const url = process.env.VITE_TURSO_DATABASE_URL;
@@ -23,8 +18,8 @@ async function main() {
 
   try {
     // Leer el archivo SQL
-    const sqlPath = join(__dirname, 'init-db.sql');
-    const sql = readFileSync(sqlPath, 'utf8');
+    const sqlPath = path.join(__dirname, 'init-db.sql');
+    const sql = fs.readFileSync(sqlPath, 'utf8');
 
     // Dividir las declaraciones SQL
     const statements = sql
