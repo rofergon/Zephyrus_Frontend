@@ -762,10 +762,17 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
         setIsNewlyDeployed(true);
         setIsLoadedVersionDeployed(true);
         
-        // Mensaje de éxito con el hash de la transacción y la dirección del contrato
-        const successMessage = `Deployment Successful!\nTransaction Hash: ${result.transactionHash}\nContract address: ${result.contractAddress}`;
+        // Format the success message with clear line breaks for proper parsing
+        const successMessage = 
+          `Deployment Successful!\n` +
+          `Transaction Hash: ${result.transactionHash}\n` +
+          `Contract address: ${result.contractAddress}`;
+        
         addConsoleMessage(successMessage, 'success');
         onConsoleResize(Math.max(consoleHeight, 200));
+        
+        // Also log the transaction link to console for easy access
+        console.log(`[ContractViewer] Contract deployed. View transaction: https://testnet.sonicscan.org/tx/${result.transactionHash}`);
       }
     } catch (error) {
       setDeploymentResult({
@@ -1347,27 +1354,70 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                 {consoleMessages.map((msg) => {
                   // Función para convertir direcciones y hashes en enlaces
                   const formatMessage = (content: string) => {
-                    // Patrones para detectar direcciones y hashes de transacción
-                    const addressPattern = /(0x[a-fA-F0-9]{40})/g;
-                    const txHashPattern = /(0x[a-fA-F0-9]{64})/g;
-
-                    // Reemplazar direcciones con enlaces
-                    let formattedContent = content.replace(addressPattern, (address) => (
-                      `<a href="https://testnet.sonicscan.org/address/${address}" 
+                    // Split the message by lines to handle each part separately
+                    const lines = content.split('\n');
+                    const formattedLines = lines.map(line => {
+                      // Check for transaction hash line
+                      if (line.startsWith('Transaction Hash:')) {
+                        // Extract hash using regex
+                        const hashMatch = line.match(/Transaction Hash: (0x[a-fA-F0-9]{64})/);
+                        if (hashMatch && hashMatch[1]) {
+                          const hash = hashMatch[1];
+                          return `Transaction Hash: <a href="https://testnet.sonicscan.org/tx/${hash}" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            class="text-blue-400 hover:text-blue-300 hover:underline">${hash}</a>`;
+                        }
+                      }
+                      
+                      // Handle contract address line
+                      if (line.startsWith('Contract address:')) {
+                        // Extract address using regex
+                        const addressMatch = line.match(/Contract address: (0x[a-fA-F0-9]{40})/);
+                        if (addressMatch && addressMatch[1]) {
+                          const address = addressMatch[1];
+                          return `Contract address: <a href="https://testnet.sonicscan.org/address/${address}" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            class="text-blue-400 hover:text-blue-300 hover:underline">${address}</a>`;
+                        }
+                      }
+                      
+                      // For other lines, handle standalone addresses and hashes
+                      let processedLine = line;
+                      
+                      // Process standalone addresses (not in HTML tags)
+                      const addressPattern = /(0x[a-fA-F0-9]{40})/g;
+                      processedLine = processedLine.replace(addressPattern, (address) => {
+                        // Don't replace if already in an HTML tag
+                        const prevChar = processedLine.charAt(processedLine.indexOf(address) - 1);
+                        if (prevChar === '"' || prevChar === "'") {
+                          return address;
+                        }
+                        return `<a href="https://testnet.sonicscan.org/address/${address}" 
                           target="_blank" 
                           rel="noopener noreferrer" 
-                          class="text-blue-400 hover:text-blue-300 hover:underline">${address}</a>`
-                    ));
-
-                    // Reemplazar hashes de transacción con enlaces
-                    formattedContent = formattedContent.replace(txHashPattern, (hash) => (
-                      `<a href="https://testnet.sonicscan.org/tx/${hash}" 
+                          class="text-blue-400 hover:text-blue-300 hover:underline">${address}</a>`;
+                      });
+                      
+                      // Process standalone transaction hashes (not in HTML tags)
+                      const txHashPattern = /(0x[a-fA-F0-9]{64})/g;
+                      processedLine = processedLine.replace(txHashPattern, (hash) => {
+                        // Don't replace if already in an HTML tag
+                        const prevChar = processedLine.charAt(processedLine.indexOf(hash) - 1);
+                        if (prevChar === '"' || prevChar === "'") {
+                          return hash;
+                        }
+                        return `<a href="https://testnet.sonicscan.org/tx/${hash}" 
                           target="_blank" 
                           rel="noopener noreferrer" 
-                          class="text-blue-400 hover:text-blue-300 hover:underline">${hash}</a>`
-                    ));
-
-                    return <span dangerouslySetInnerHTML={{ __html: formattedContent }} />;
+                          class="text-blue-400 hover:text-blue-300 hover:underline">${hash}</a>`;
+                      });
+                      
+                      return processedLine;
+                    });
+                    
+                    return <span dangerouslySetInnerHTML={{ __html: formattedLines.join('\n') }} />;
                   };
 
                   return (
