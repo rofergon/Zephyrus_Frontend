@@ -415,13 +415,22 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       const editor = editorRef.current;
       const monaco = monacoRef.current;
       
+      // Ensure currentCode is a string
+      const codeString = typeof currentCode === 'string' 
+        ? currentCode 
+        : typeof currentCode === 'object'
+          ? currentCode.toString && currentCode.toString !== Object.prototype.toString
+            ? currentCode.toString()
+            : JSON.stringify(currentCode, null, 2)
+          : String(currentCode);
+      
       let model = editor.getModel();
       
       // Si no hay modelo, crear uno nuevo
       if (!model) {
         console.log('[ContractViewer] Creating new model for editor');
         model = monaco.editor.createModel(
-          currentCode,
+          codeString,
           'solidity',
           monaco.Uri.parse('file:///workspace/contract.sol')
         );
@@ -429,13 +438,13 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       } else {
         // Si el modelo existe, verificar si necesita actualización
         const currentValue = model.getValue();
-        if (currentValue !== currentCode) {
+        if (currentValue !== codeString) {
           console.log('[ContractViewer] Updating editor model with current code');
           model.pushEditOperations(
             [],
             [{
               range: model.getFullModelRange(),
-              text: currentCode
+              text: codeString
             }],
             () => null
           );
@@ -456,22 +465,58 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     const handleCodeUpdated = (event: CustomEvent) => {
       if (!event.detail || !editorRef.current || !monacoRef.current) return;
       
-      console.log('[ContractViewer] Received code_updated event');
+      console.log('[ContractViewer] Code changed externally, processing update');
+      console.log('[ContractViewer] Event detail type:', typeof event.detail);
+      console.log('[ContractViewer] Content type:', typeof event.detail.content);
       
       try {
         // Procesar el código para asegurar formato correcto
         let newCode = event.detail.content;
         
-        // Si el contenido es un objeto con propiedad replace, usar ese valor
-        if (typeof newCode === 'object' && 'replace' in newCode) {
-          newCode = newCode.replace;
+        // Ensure newCode is a string
+        if (newCode === null || newCode === undefined) {
+          console.error('[ContractViewer] Received null or undefined content in code_updated event');
+          return;
         }
+        
+        // If it's an object, try to extract a string value
+        if (typeof newCode === 'object') {
+          console.log('[ContractViewer] Content is an object, attempting to extract string value:', JSON.stringify(newCode).substring(0, 100) + '...');
+          if ('replace' in newCode) {
+            newCode = newCode.replace;
+            console.log('[ContractViewer] Extracted from replace property:', typeof newCode);
+          } else if ('content' in newCode) {
+            newCode = newCode.content;
+            console.log('[ContractViewer] Extracted from content property:', typeof newCode);
+          } else if ('toString' in newCode && newCode.toString !== Object.prototype.toString) {
+            newCode = newCode.toString();
+            console.log('[ContractViewer] Converted using toString method:', typeof newCode);
+          } else {
+            // Convert object to JSON string as fallback
+            try {
+              newCode = JSON.stringify(newCode, null, 2);
+              console.warn('[ContractViewer] Converted object to JSON string:', newCode.substring(0, 100) + '...');
+            } catch (err) {
+              console.error('[ContractViewer] Failed to convert object to string:', err);
+              return;
+            }
+          }
+        }
+        
+        // Final check to ensure we have a string
+        if (typeof newCode !== 'string') {
+          console.error('[ContractViewer] Unable to convert content to string, type is:', typeof newCode);
+          newCode = String(newCode);
+          console.log('[ContractViewer] Forcibly converted to string using String()');
+        }
+        
+        console.log('[ContractViewer] Updating model with new code');
         
         // Normalizar los saltos de línea
         newCode = newCode.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         
         // Si el código viene con marcadores de bloque de código, eliminarlos
-        if (typeof newCode === 'string' && newCode.startsWith('```') && newCode.endsWith('```')) {
+        if (newCode.startsWith('```') && newCode.endsWith('```')) {
           newCode = newCode
             .replace(/^```[^\n]*\n/, '') // Eliminar la primera línea con ```
             .replace(/```$/, '')         // Eliminar el último ```

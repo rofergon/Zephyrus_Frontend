@@ -49,6 +49,7 @@ export interface AgentResponse {
     language?: string;
     chat_id?: string;
     id?: string;
+    forceReload?: boolean;
   };
 }
 
@@ -60,6 +61,7 @@ export interface WebSocketResponse {
     language?: string;
     chat_id?: string;
     id?: string;
+    forceReload?: boolean;
   };
 }
 
@@ -596,9 +598,11 @@ export class ChatService {
             setTimeout(() => {
               if (this.messageHandler) {
                 console.log('[ChatService] Forcing code reload');
+                // Ensure content is a string
+                const contentString = typeof codeContent === 'string' ? codeContent : String(codeContent);
                 this.messageHandler({
                   type: 'file_create',
-                  content: codeContent,
+                  content: contentString,
                   metadata: {
                     path: 'contracts/Contract.sol',
                     language: 'solidity',
