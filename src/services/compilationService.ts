@@ -41,7 +41,15 @@ export class CompilationService {
     addConsoleMessage: (message: string, type: ConsoleMessage['type']) => void,
     setCurrentArtifact: (artifact: ContractArtifact | null) => void
   ): Promise<void> {
-    if (!code) return;
+    // Asegurar que el código es una cadena válida
+    if (!code || typeof code !== 'string') {
+      console.error('[CompilationService] Invalid code format:', code);
+      addConsoleMessage('Invalid code format provided', 'error');
+      return;
+    }
+
+    // Limpiar el código de caracteres no válidos
+    code = code.replace(/^\uFEFF/, ''); // Eliminar BOM si existe
 
     // Skip if this is an exact duplicate of last compilation within the last 5 seconds
     const now = Date.now();

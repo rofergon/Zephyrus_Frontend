@@ -4,6 +4,7 @@ import { virtualFS } from './virtual-fs';
 import { DatabaseService } from './databaseService';
 import { ContractArtifact } from '../types/contracts';
 import { generateUniqueId } from '../utils/commonUtils';
+import { apiService } from './apiService';
 
 // Define tipos para las funciones de callback
 export type AddConsoleMessageFn = (message: string, type: 'error' | 'warning' | 'success' | 'info') => void;
@@ -42,26 +43,41 @@ export class ChatContextService {
     try {
       console.log('[ChatContextService] Creating new chat');
       
-      if (!customContextId) {
-        console.error('[ChatContextService] Cannot create chat without an ID');
+      if (!this.config.address) {
+        console.error('[ChatContextService] Cannot create chat without wallet address');
         return;
       }
+
+      // Crear la conversación en la base de datos primero
+      const newConversation = await apiService.createConversation(
+        this.config.address,
+        'New Chat'
+      );
+
+      console.log('[ChatContextService] Created conversation in database:', newConversation);
+
+      if (!newConversation.id) {
+        throw new Error('Failed to create conversation - no ID returned');
+      }
+
+      // Usar el ID devuelto por la base de datos
+      const contextId = newConversation.id;
       
       // Verificar que el ID no esté duplicado
-      if (this.currentContexts.some((ctx: ConversationContext) => ctx.id === customContextId)) {
-        console.warn(`[ChatContextService] Detected duplicate context ID: ${customContextId}`);
+      if (this.currentContexts.some((ctx: ConversationContext) => ctx.id === contextId)) {
+        console.warn(`[ChatContextService] Detected duplicate context ID: ${contextId}`);
         return;
       }
       
       // Crear nuevo contexto
       const newContext: ConversationContext = {
-        id: customContextId,
-        name: 'New Chat',
+        id: contextId,
+        name: newConversation.name || 'New Chat',
         messages: [],
         virtualFiles: {},
         workspaces: {},
         active: true,
-        createdAt: new Date().toISOString(),
+        createdAt: newConversation.created_at || new Date().toISOString(),
       };
       
       // Actualizar el servicio de conversación
@@ -84,9 +100,11 @@ export class ChatContextService {
       this.config.setActiveContext(newContext);
       this.config.chatService.setCurrentChatId(newContext.id);
       
-      console.log(`[ChatContextService] New chat created with ID: ${customContextId}, total contexts: ${newContexts.length}`);
+      console.log(`[ChatContextService] New chat created with ID: ${contextId}, total contexts: ${newContexts.length}`);
     } catch (error) {
       console.error('[ChatContextService] Error creating new chat:', error);
+      this.config.addConsoleMessage('Failed to create new chat', 'error');
+      throw error;
     }
   }
 
@@ -410,43 +428,75 @@ export class ChatContextService {
   /**
    * Añade un mensaje al contexto de chat actual
    */
-  public addMessageToContext(message: string, isUserMessage: boolean, currentContext?: ConversationContext): Message {
-    const newMessage: Message = {
-      id: generateUniqueId(),
-      text: message,
-      sender: isUserMessage ? 'user' : 'ai',
-      timestamp: Date.now(),
-      showAnimation: !isUserMessage // Habilitar la animación de typing para mensajes de AI
-    };
+  public async addMessageToContext(message: string, isUserMessage: boolean, currentContext?: ConversationContext): Promise<Message> {
+    try {
+      if (!currentContext) {
+        throw new Error('No active context found');
+      }
 
-    // Actualizar el estado de mensajes
-    this.config.setMessages(prevMessages => [...prevMessages, newMessage]);
-    
-    // Actualizar el contexto activo si existe
-    if (currentContext) {
-      // Actualizar los contextos en el servicio
-      conversationService.addMessage(currentContext.id, newMessage);
-      
-      // Actualizar el estado del contexto activo
+      const timestamp = Date.now();
+      const timestampIso = new Date(timestamp).toISOString();
+
+      // Crear el mensaje en la base de datos
+      const messageResponse = await apiService.createMessage(
+        currentContext.id,
+        message,
+        isUserMessage ? 'user' : 'ai',
+        { timestamp: timestampIso }
+      );
+
+      if (!messageResponse.success) {
+        throw new Error('Failed to save message to database');
+      }
+
+      // Crear el mensaje UI directamente
+      const uiMessage: Message = {
+        id: generateUniqueId(), // Se actualizará cuando obtengamos la respuesta de la base de datos
+        text: message,
+        sender: isUserMessage ? 'user' : 'ai',
+        timestamp,
+        showAnimation: !isUserMessage
+      };
+
+      // Actualizar el estado de mensajes inmediatamente
+      this.config.setMessages(prevMessages => [...prevMessages, uiMessage]);
+
+      // Actualizar el contexto activo
       this.config.setActiveContext(prevContext => {
         if (!prevContext) return undefined;
         const updatedContext = {
           ...prevContext,
-          messages: [...prevContext.messages, newMessage]
+          messages: [...prevContext.messages, uiMessage]
         };
-        
+
         // Actualizar el estado de los contextos
         this.config.setConversationContexts(prevContexts => 
           prevContexts.map((ctx: ConversationContext) => 
             ctx.id === prevContext.id ? updatedContext : ctx
           )
         );
-        
+
         return updatedContext;
       });
-    }
 
-    return newMessage;
+      // Obtener los mensajes actualizados en segundo plano
+      try {
+        const messages = await apiService.getMessages(currentContext.id);
+        const latestMessage = messages[messages.length - 1];
+        if (latestMessage) {
+          // Actualizar el ID del mensaje con el de la base de datos
+          uiMessage.id = latestMessage.id;
+        }
+      } catch (error) {
+        console.error('[ChatContextService] Error fetching updated messages:', error);
+      }
+
+      return uiMessage;
+    } catch (error) {
+      console.error('[ChatContextService] Error adding message:', error);
+      this.config.addConsoleMessage('Error saving message', 'error');
+      throw error;
+    }
   }
 
   /**
@@ -731,6 +781,40 @@ export class ChatContextService {
     }
   }
 
+  // Función auxiliar para convertir mensajes de la API al formato de la UI
+  private convertApiMessageToUiMessage(apiMessage: any): Message {
+    // Asegurarnos de que tenemos un timestamp válido
+    let timestamp: number;
+    try {
+      if (apiMessage.metadata?.timestamp) {
+        const date = new Date(apiMessage.metadata.timestamp);
+        timestamp = date.getTime();
+      } else if (apiMessage.created_at) {
+        const date = new Date(apiMessage.created_at);
+        timestamp = date.getTime();
+      } else {
+        timestamp = Date.now();
+      }
+
+      // Verificar que el timestamp es válido
+      if (isNaN(timestamp)) {
+        console.warn('[ChatContextService] Invalid timestamp, using current time');
+        timestamp = Date.now();
+      }
+    } catch (error) {
+      console.warn('[ChatContextService] Error processing timestamp, using current time:', error);
+      timestamp = Date.now();
+    }
+
+    return {
+      id: apiMessage.id || generateUniqueId(),
+      text: apiMessage.content,
+      sender: apiMessage.sender,
+      timestamp,
+      showAnimation: apiMessage.sender === 'ai'
+    };
+  }
+
   /**
    * Inicializa un chat con un ID específico
    * @param chatId ID del chat de la base de datos
@@ -748,11 +832,24 @@ export class ChatContextService {
         throw new Error('Chat ID is required');
       }
 
-      // Crear el contexto base
+      // Cargar los mensajes del chat
+      let messages: Message[] = [];
+      try {
+        const apiMessages = await apiService.getMessages(chatId);
+        messages = apiMessages.map(msg => this.convertApiMessageToUiMessage(msg));
+        console.log('[ChatContextService] Loaded messages from API:', {
+          chatId,
+          messageCount: messages.length
+        });
+      } catch (error) {
+        console.error('[ChatContextService] Error loading messages from API:', error);
+      }
+
+      // Crear el contexto base con los mensajes cargados
       const newContext: ConversationContext = {
         id: chatId,
-        name: 'New Chat',
-        messages: [],
+        name: isNewChat ? 'New Chat' : `Chat ${chatId.substring(0, 8)}`,
+        messages,
         virtualFiles: {},
         workspaces: {},
         active: true,
@@ -770,20 +867,43 @@ export class ChatContextService {
 
       // Actualizar estado local
       this.currentContexts = newContexts;
+      
+      // Actualizar el servicio de conversación
+      conversationService.setContexts(newContexts);
+      conversationService.setActiveContext(chatId);
+      
+      // Actualizar estados en la UI
       this.config.setConversationContexts(newContexts);
       this.config.setActiveContext(newContext);
+      this.config.setMessages(newContext.messages);
 
-      // Actualizar servicio de conversación
-      conversationService.createNewContext(newContext);
-      conversationService.setActiveContext(chatId);
+      // Cargar contratos asociados si existen
+      if (this.config.address) {
+        try {
+          const contracts = await apiService.getContracts(this.config.address);
+          const chatContracts = contracts.filter(c => c.conversation_id === chatId);
+          
+          if (chatContracts.length > 0) {
+            const lastContract = chatContracts[0]; // Usar el contrato más reciente
+            console.log('[ChatContextService] Loading associated contract:', lastContract.name);
+            
+            if (lastContract.source_code) {
+              this.config.setCurrentCode(lastContract.source_code);
+              this.config.setShowCodeEditor(true);
+              await this.config.compileCode(lastContract.source_code);
+            }
+          }
+        } catch (error) {
+          console.error('[ChatContextService] Error loading associated contracts:', error);
+        }
+      }
 
-      console.log('[ChatContextService] Chat initialized successfully:', {
-        contextId: chatId,
-        totalContexts: newContexts.length,
-        isNewChat
+      console.log('[ChatContextService] Chat initialization completed:', {
+        chatId,
+        contextCount: newContexts.length
       });
     } catch (error) {
-      console.error('[ChatContextService] Error initializing chat:', error);
+      console.error('[ChatContextService] Error in initializeChat:', error);
       throw error;
     }
   }

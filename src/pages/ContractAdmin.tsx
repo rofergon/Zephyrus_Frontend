@@ -119,29 +119,21 @@ const ContractAdmin: React.FC = () => {
         throw new Error('Public client not available');
       }
 
-      // Usar readContract directamente para cada función
-      const functions = ['paused', 'owner', 'totalSupply', 'symbol'];
+      // Check which functions exist in the ABI
+      const abiMap = new Map(abi.map(item => [item.name, item]));
       
-      for (const functionName of functions) {
-        try {
-          const data = await publicClient.readContract({
-            address: address as `0x${string}`,
-            abi,
-            functionName,
-            args: []
-          });
-
-          switch (functionName) {
-            case 'paused':
-              if (data !== undefined) {
-                state.push({
-                  label: 'Paused',
-                  value: data ? 'Yes' : 'No',
-                  type: 'status'
-                });
-              }
-              break;
-            case 'owner':
+      // Define functions to check with their handlers
+      const functionChecks = [
+        {
+          name: 'owner',
+          handler: async () => {
+            if (abiMap.has('owner')) {
+              const data = await publicClient.readContract({
+                address: address as `0x${string}`,
+                abi,
+                functionName: 'owner',
+                args: []
+              });
               if (data) {
                 state.push({
                   label: 'Owner',
@@ -149,8 +141,19 @@ const ContractAdmin: React.FC = () => {
                   type: 'address'
                 });
               }
-              break;
-            case 'totalSupply':
+            }
+          }
+        },
+        {
+          name: 'totalSupply',
+          handler: async () => {
+            if (abiMap.has('totalSupply')) {
+              const data = await publicClient.readContract({
+                address: address as `0x${string}`,
+                abi,
+                functionName: 'totalSupply',
+                args: []
+              });
               if (data !== undefined) {
                 state.push({
                   label: 'Total Supply',
@@ -158,8 +161,19 @@ const ContractAdmin: React.FC = () => {
                   type: 'number'
                 });
               }
-              break;
-            case 'symbol':
+            }
+          }
+        },
+        {
+          name: 'symbol',
+          handler: async () => {
+            if (abiMap.has('symbol')) {
+              const data = await publicClient.readContract({
+                address: address as `0x${string}`,
+                abi,
+                functionName: 'symbol',
+                args: []
+              });
               if (data) {
                 state.push({
                   label: 'Symbol',
@@ -167,16 +181,39 @@ const ContractAdmin: React.FC = () => {
                   type: 'string'
                 });
               }
-              break;
+            }
           }
-        } catch (error) {
-          console.error(`Error reading ${functionName}:`, error);
+        },
+        {
+          name: 'paused',
+          handler: async () => {
+            if (abiMap.has('paused')) {
+              const data = await publicClient.readContract({
+                address: address as `0x${string}`,
+                abi,
+                functionName: 'paused',
+                args: []
+              });
+              if (data !== undefined) {
+                state.push({
+                  label: 'Paused',
+                  value: data ? 'Yes' : 'No',
+                  type: 'status'
+                });
+              }
+            }
+          }
         }
-      }
+      ];
+
+      // Execute all function checks in parallel
+      await Promise.all(functionChecks.map(check => check.handler().catch(error => {
+        console.debug(`[ContractAdmin] Function ${check.name} not available or failed:`, error);
+      })));
       
       return state;
     } catch (error) {
-      console.error('Error loading contract state:', error);
+      console.error('[ContractAdmin] Error loading contract state:', error);
       return state;
     }
   }, [publicClient]);
@@ -328,18 +365,32 @@ const ContractAdmin: React.FC = () => {
       try {
         // Get the raw ABI
         const contractAbi = typeof selectedContract.abi === 'string' 
-          ? selectedContract.abi 
-          : JSON.stringify(selectedContract.abi);
+          ? JSON.parse(selectedContract.abi) 
+          : selectedContract.abi;
         
         // Get the agent's configured functions
         const agentFunctions = await agentService.getAgentFunctions(agent.agent_id);
         console.log('Agent functions loaded:', agentFunctions);
         
+        // Create a map of function ABIs for quick lookup
+        const functionAbiMap = new Map(
+          contractAbi.filter((item: any) => item.type === 'function')
+            .map((item: any) => [item.name, item])
+        );
+        
+        // Add ABI to each agent function
+        const functionsWithAbi = agentFunctions.map(func => ({
+          ...func,
+          abi: functionAbiMap.get(func.name || func.function_name)
+        }));
+        
+        console.log('Functions with ABI:', functionsWithAbi);
+        
         // Convert Agent to AgentConfiguration with the agent functions
         const agentConfig = agentService.convertAgentToConfiguration(
           agent, 
           contractAbi,
-          agentFunctions
+          functionsWithAbi
         );
         
         setAgentConfig(agentConfig);
