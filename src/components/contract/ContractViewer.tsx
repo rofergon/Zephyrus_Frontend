@@ -14,7 +14,7 @@ import { CommandLineIcon } from '@heroicons/react/24/outline';
 
 interface ContractViewerProps {
   currentArtifact: ContractArtifact | null;
-  currentCode: string;
+  currentCode: string | any;
   showCodeEditor: boolean;
   isMaximized: boolean;
   consoleHeight: number;
@@ -69,14 +69,11 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   const [] = useState(consoleHeight);
   const [deploymentResult, setDeploymentResult] = useState<any>(null);
   const [isLoadedVersionDeployed, setIsLoadedVersionDeployed] = useState(false);
-  const [isNewlyDeployed, setIsNewlyDeployed] = useState(false);
-  const [] = useState(false);
   const [constructorArgs, setConstructorArgs] = useState<any[]>([]);
   const [isDeploying, setIsDeploying] = useState(false);
   const [] = useState(true);
   const [] = useState<'functions' | 'events' | 'demo'>('functions');
   const [, setError] = useState<string | null>(null);
-  const previousCodeRef = useRef(currentCode);
   const [autoScroll, setAutoScroll] = useState(true);
   const [isDeploymentCollapsed, setIsDeploymentCollapsed] = useState(false);
 
@@ -122,7 +119,6 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   const resetDeploymentState = useCallback(() => {
     setDeploymentResult(null);
     setIsLoadedVersionDeployed(false);
-    setIsNewlyDeployed(false);
     setConstructorArgs([]);
   }, []);
 
@@ -214,7 +210,6 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       
       // Actualizar explícitamente el estado de despliegue basado en los datos recibidos
       setIsLoadedVersionDeployed(deploymentData.isDeployed || false);
-      setIsNewlyDeployed(false); // Esto es una versión cargada, no recién desplegada
       
       // Lo más importante: si el currentArtifact existe, actualizamos su dirección
       if (currentArtifact && deploymentData.contractAddress) {
@@ -770,7 +765,6 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       setDeploymentResult(resultWithTimestamp);
       
       if (result.success) {
-        setIsNewlyDeployed(true);
         setIsLoadedVersionDeployed(true);
         
         // Format the success message with clear line breaks for proper parsing

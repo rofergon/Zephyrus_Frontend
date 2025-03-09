@@ -23,12 +23,8 @@ import { ChatContextService } from '../services/chatContextService';
 import FileExplorer from '../components/FileExplorer';
 import WorkspaceManager from '../components/chat/WorkspaceManager';
 import { ApiService } from '../services/apiService';
+import { ChatInfo } from '../services/chatService';
 
-interface VirtualFile {
-  content: string;
-  language: string;
-  timestamp: number;
-}
 
 const demoArtifact: ContractArtifact = {
   name: "Contract Preview",
@@ -89,6 +85,10 @@ const AssistedChat: React.FC = (): JSX.Element => {
   const compilationQueueRef = useRef<{code: string, timestamp: number}[]>([]);
   const compilationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const apiService = useRef(ApiService.getInstance());
+  const [] = useState(false);
+  const lastProcessedMessageRef = useRef<string | null>(null);
+  const lastProcessedCodeRef = useRef<string | null>(null);
+  const lastCompiledCodeRef = useRef<string | null>(null);
 
   // Add this helper function at the top level of the component
   const ensureStringContent = (content: any): string => {
@@ -154,34 +154,22 @@ const AssistedChat: React.FC = (): JSX.Element => {
   };
 
   // Improved compilation function with stronger debouncing
-  const compileCode = useCallback(async (code: string) => {
+  const compileCode = useCallback(async (code: string): Promise<void> => {
     if (!code || !editorRef.current || !monacoRef.current) return;
       
     const model = editorRef.current.getModel();
     if (!model) return;
-
-    // Skip if this exact code was just compiled (within last 5 seconds - increased from 2)
-    const now = Date.now();
-    if (lastCompilationRef.current === code && now - (compilationQueueRef.current[0]?.timestamp || 0) < 5000) {
-      console.log('[AssistedChat] Skipping duplicate compilation request');
-      return;
-    }
-
-    // If compilation is already in progress, queue this request
+    
+    // Check if a compilation is already in progress
     if (compilationInProgressRef.current) {
-      console.log('[AssistedChat] Compilation in progress, queueing request');
+      console.log('[AssistedChat] Compilation already in progress, queuing:', code.substring(0, 20) + '...');
+      compilationQueueRef.current.push({
+        code,
+        timestamp: Date.now()
+      });
       
-      // Clear any existing timeout
-      if (compilationTimeoutRef.current) {
-        clearTimeout(compilationTimeoutRef.current);
-      }
-      
-      // Add to queue, keeping only the most recent request
-      compilationQueueRef.current = [{code, timestamp: now}];
-      
-      // Set a timeout to process the queue after current compilation finishes
-      // Increased timeout to 2000ms from 1000ms
-      compilationTimeoutRef.current = setTimeout(() => {
+      // Set a timeout to check if the compilation completes within 2 seconds
+      setTimeout(() => {
         if (compilationQueueRef.current.length > 0 && !compilationInProgressRef.current) {
           const nextCompilation = compilationQueueRef.current.pop();
           if (nextCompilation) {
@@ -194,9 +182,16 @@ const AssistedChat: React.FC = (): JSX.Element => {
       return;
     }
 
+    // Skip if the code is identical to the last compiled code
+    if (lastCompiledCodeRef.current === code) {
+      console.log('[AssistedChat] Skipping compilation - code already compiled');
+      return;
+    }
+
     // Mark compilation as in progress
     compilationInProgressRef.current = true;
     lastCompilationRef.current = code;
+    lastCompiledCodeRef.current = code;
 
     try {
       console.log('[AssistedChat] Starting compilation');
@@ -212,10 +207,11 @@ const AssistedChat: React.FC = (): JSX.Element => {
       if (compilationQueueRef.current.length > 0) {
         const nextCompilation = compilationQueueRef.current.pop();
         if (nextCompilation) {
-          // Increased delay to 1000ms from 500ms
-          setTimeout(() => compileCode(nextCompilation.code), 1000);
+          // Increased delay to 1000ms
+          setTimeout(() => {
+            compileCode(nextCompilation.code);
+          }, 1000);
         }
-        compilationQueueRef.current = [];
       }
     }
   }, []);
@@ -410,7 +406,8 @@ const AssistedChat: React.FC = (): JSX.Element => {
                   messages: conversations[0].messages || [],
                   virtualFiles: conversations[0].virtualFiles || {},
                   workspaces: conversations[0].workspaces || {},
-                  active: true
+                  active: true,
+                  createdAt: conversations[0].created_at || new Date().toISOString()
                 });
               }
             })
@@ -423,6 +420,128 @@ const AssistedChat: React.FC = (): JSX.Element => {
     };
     
     service.onConnectionChange(handleChatConnection);
+    
+    // Registrar manejador de mensajes
+    service.onMessage((message: AgentResponse) => {
+      console.log('[AssistedChat] Message received from WebSocket:', message);
+      
+      // Procesando diferentes tipos de mensajes
+      if (message.type === 'message') {
+        // Crear un nuevo mensaje para la UI
+        const newMessage: Message = {
+          id: message.metadata?.id || generateUniqueId(),
+          text: message.content,
+          sender: 'ai',
+          timestamp: Date.now(),
+          isTyping: false,
+          showAnimation: false
+        };
+        
+        // Actualizar los mensajes en el estado
+        setMessages(prevMessages => {
+          // Si hay un mensaje de IA incompleto, reemplazarlo
+          const lastAiMessageIndex = [...prevMessages].reverse().findIndex(m => m.sender === 'ai' && m.isTyping);
+          if (lastAiMessageIndex >= 0) {
+            const updatedMessages = [...prevMessages];
+            updatedMessages[prevMessages.length - 1 - lastAiMessageIndex] = newMessage;
+            return updatedMessages;
+          }
+          
+          // Si no, añadir como un nuevo mensaje
+          return [...prevMessages, newMessage];
+        });
+        
+        // Actualizar contexto activo con el nuevo mensaje
+        if (activeContext) {
+          const updatedContext = {
+            ...activeContext,
+            messages: [...(activeContext.messages || []), newMessage]
+          };
+          
+          setActiveContext(updatedContext);
+          
+          // Actualizar la lista de contextos
+          setConversationContexts(prevContexts => 
+            prevContexts.map(ctx => 
+              ctx.id === activeContext.id ? updatedContext : ctx
+            )
+          );
+        }
+        
+        // Si contiene código, ya no procesarlo aquí
+        // El código será procesado por el efecto useEffect para
+        // evitar actualizaciones redundantes y bucles infinitos
+      } else if (message.type === 'code_edit' || message.type === 'file_create') {
+        // Procesamiento de ediciones de código o creación de archivos
+        console.log(`[AssistedChat] Processing ${message.type}:`, message);
+        
+        if (message.metadata?.path && message.content) {
+          // Actualizar archivos virtuales
+          if (activeContext) {
+            const path = message.metadata.path;
+            const language = message.metadata.language || 'solidity';
+            
+            // Verificar si el contenido ha cambiado para evitar actualizaciones innecesarias
+            const currentFileContent = activeContext.virtualFiles?.[path]?.content;
+            if (currentFileContent === message.content) {
+              console.log(`[AssistedChat] Skipping update for ${path} - content unchanged`);
+              return;
+            }
+            
+            // Crear o actualizar archivo virtual
+            const updatedVirtualFiles = {
+              ...(activeContext.virtualFiles || {}),
+              [path]: {
+                content: message.content,
+                language,
+                timestamp: Date.now()
+              }
+            };
+            
+            // Actualizar el contexto activo
+            const updatedContext = {
+              ...activeContext,
+              virtualFiles: updatedVirtualFiles
+            };
+            
+            setActiveContext(updatedContext);
+            
+            // Actualizar lista de contextos
+            setConversationContexts(prevContexts => 
+              prevContexts.map(ctx => 
+                ctx.id === activeContext.id ? updatedContext : ctx
+              )
+            );
+            
+            // Actualizar el código actual solo si es el archivo seleccionado
+            if (path === selectedFile || !selectedFile) {
+              // Evitar actualizar si el código no ha cambiado
+              if (currentCode !== message.content) {
+                setCurrentCode(message.content);
+                setShowCodeEditor(true);
+                
+                // Actualizar el archivo seleccionado solo si no hay uno seleccionado
+                if (!selectedFile) {
+                  setSelectedFile(path);
+                }
+                
+                // Compilar el código si es Solidity y se permite la compilación
+                if (language === 'solidity' && !message.metadata.noCompile) {
+                  // Usar setTimeout para evitar sobrecargar con compilaciones
+                  if (compilationTimeoutRef.current) {
+                    clearTimeout(compilationTimeoutRef.current);
+                  }
+                  compilationTimeoutRef.current = setTimeout(() => {
+                    compileCode(message.content);
+                    compilationTimeoutRef.current = null;
+                  }, 1000);
+                }
+              }
+            }
+          }
+        }
+      }
+    });
     
     // Eliminar mensajes duplicados antes de procesarlos
     const processUniqueMessages = (loadedChats: ChatInfo[]) => {
@@ -500,8 +619,6 @@ const AssistedChat: React.FC = (): JSX.Element => {
       console.log('[AssistedChat] Chats loaded event:', chats);
       
       if (Array.isArray(chats) && chats.length > 0) {
-        setChatsLoaded(true);
-        
         processUniqueMessages(chats);
         
         // Actualizar lista de contextos
@@ -511,7 +628,8 @@ const AssistedChat: React.FC = (): JSX.Element => {
           messages: chat.messages || [],
           virtualFiles: chat.virtualFiles || {},
           workspaces: chat.workspaces || {},
-          active: chat.id === service.getCurrentChatId()
+          active: chat.id === service.getCurrentChatId(),
+          createdAt: chat.created_at || new Date().toISOString()
         }));
         
         setConversationContexts(loadedContexts);
@@ -757,16 +875,6 @@ const AssistedChat: React.FC = (): JSX.Element => {
       console.log('[AssistedChat] Messages updated, refreshing UI components');
       // Trigger a state update to force re-render of child components
       setShowCodeEditor(prev => prev);
-      
-      // If we have new messages and the last one contains code, make sure UI reflects this
-      const lastMessage = messages[messages.length - 1];
-      if (lastMessage && lastMessage.text && lastMessage.text.includes('```') && currentCode) {
-        // Dispatch a code update event
-        const codeUpdateEvent = new CustomEvent('code_updated', { 
-          detail: { content: currentCode } 
-        });
-        window.dispatchEvent(codeUpdateEvent);
-      }
     }
   }, [messages, currentCode]);
 
@@ -960,6 +1068,13 @@ const AssistedChat: React.FC = (): JSX.Element => {
       // Look for the most recent AI message with Solidity code block
       for (let i = messages.length - 1; i >= 0; i--) {
         const message = messages[i];
+        
+        // Skip if we already processed this message
+        if (message.id === lastProcessedMessageRef.current) {
+          console.log('[AssistedChat] Skipping already processed message:', message.id);
+          break;
+        }
+        
         if (message.sender === 'ai' && message.text.includes('```solidity') && message.text.includes('contract')) {
           console.log('[AssistedChat] Found Solidity code in message:', message.id);
           
@@ -979,11 +1094,15 @@ const AssistedChat: React.FC = (): JSX.Element => {
           
           // Check if this code is already in the editor to avoid duplicate processing
           if (solidityCode && solidityCode.includes('contract') && solidityCode.includes('{') && solidityCode.includes('}')) {
-            // Skip processing if code is unchanged
-            if (currentCode === solidityCode) {
+            // Skip processing if code is unchanged or we already processed this code
+            if (currentCode === solidityCode || lastProcessedCodeRef.current === solidityCode) {
               console.log('[AssistedChat] Skipping code processing - code unchanged');
               break;
             }
+            
+            // Mark this message and code as processed
+            lastProcessedMessageRef.current = message.id;
+            lastProcessedCodeRef.current = solidityCode;
             
             // If we don't already have this code in the editor
             console.log('[AssistedChat] Setting extracted Solidity code in editor');
