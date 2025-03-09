@@ -216,10 +216,58 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({
         return;
       }
       
+      // Create a map of function ABIs for quick lookup
+      const functionAbiMap = new Map(
+        contract.abi
+          .filter((item: any) => item.type === 'function')
+          .map((item: any) => [item.name, item])
+      );
+      
+      // Prepare functions with their ABIs
+      const functions = agentConfig?.functions.map(func => {
+        // Get the ABI for this function
+        const functionAbi = functionAbiMap.get(func.function_name);
+        
+        if (!functionAbi) {
+          console.warn(`[AgentExecutionLogs] No ABI found for function: ${func.function_name}`);
+        }
+        
+        // Get the current parameters from allowedFunctions
+        const currentFunction = allowedFunctions.find(
+          pf => pf.functionName === func.function_name
+        );
+
+        return {
+          function_id: func.function_id,
+          function_name: func.function_name,
+          function_signature: func.function_signature,
+          function_type: func.function_type,
+          is_enabled: func.is_enabled,
+          validation_rules: func.validation_rules || {},
+          abi: functionAbi || null,
+          parameters: currentFunction?.parameters.map(param => ({
+            name: param.name,
+            type: param.type,
+            value: param.value || '',
+            position: 0
+          })) || []
+        };
+      }) || [];
+
+      // Log functions for debugging
+      console.log('Functions to be sent:', JSON.stringify(functions, null, 2));
+      
       // Usar el formato exacto que espera el servidor
       const message = {
         type: "websocket_execution",
-        agent_id: agentId
+        agent_id: agentId,
+        data: {
+          functions: functions,
+          contract: {
+            address: contract.address,
+            abi: contract.abi
+          }
+        }
       };
       
       // Crear representación del mensaje para los logs
@@ -239,7 +287,8 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({
       addLog(`Sending execution request for agent ${agentId}`, 'info');
       setLastExecuted(new Date().toISOString());
     } else {
-      addLog('WebSocket not connected. Try refreshing the page.', 'error');
+      console.error('WebSocket not ready');
+      addLog('WebSocket not ready', 'error');
     }
   };
 
@@ -304,35 +353,38 @@ const AgentExecutionLogs: React.FC<AgentExecutionLogsProps> = ({
       console.log('No hay funciones en agentConfig o no es un array:', agentConfig.functions);
       return [];
     }
+
+    // Create a map of function ABIs for quick lookup
+    const functionAbiMap = new Map(
+      contract.abi
+        .filter((item: any) => item.type === 'function')
+        .map((item: any) => [item.name, item])
+    );
     
-    console.log('Funciones del agentConfig:', JSON.stringify(agentConfig.functions, null, 2));
+    console.log('Function ABI Map:', Object.fromEntries(functionAbiMap));
     
-    return agentConfig.functions.map((func: any, index) => {
+    return agentConfig.functions.map((func: any) => {
       const functionName = func.function_name;
+      const functionAbi = functionAbiMap.get(functionName);
       
+      // Log for debugging
+      console.log(`Processing function ${functionName}:`, {
+        hasAbi: !!functionAbi,
+        originalAbi: func.abi,
+        mappedAbi: functionAbi
+      });
+
       return {
-        functionId: `${index}-${functionName}`,
+        functionId: func.function_id,
         functionName: functionName,
         type: func.function_type || 'read',
         isAllowed: func.is_enabled || false,
-        parameters: func.parameters 
-          ? func.parameters.map((param: any) => ({
-              name: param.name,
-              type: param.type,
-              validation: param.validation || {}
-            })) 
-          : // Si no, tratar de extraerlos del ABI del contrato
-            Array.isArray(contract?.abi) ? 
-              contract.abi
-                .find((item: any) => item.type === 'function' && 
-                     (item.name === functionName || 
-                      item.name.toLowerCase() === functionName.toLowerCase()))
-                ?.inputs?.map((input: any) => ({
-                  name: input.name,
-                  type: input.type,
-                  validation: {}
-                })) || []
-              : []
+        parameters: functionAbi ? functionAbi.inputs.map((input: any) => ({
+          name: input.name,
+          type: input.type,
+          validation: (func.validation_rules && func.validation_rules[input.name]) || {},
+          value: (func.parameters && func.parameters.find((p: any) => p.name === input.name)?.value) || ''
+        })) : []
       };
     });
   };

@@ -407,47 +407,127 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
 
   // Efecto adicional para asegurar que el código se cargue después de recargar la página
   useEffect(() => {
-    // Este efecto se ejecuta cuando el componente se monta o cuando editorRef.current cambia
-    if (editorRef.current && currentCode) {
-      console.log('[ContractViewer] Ensuring code is loaded in editor after page reload');
-      const model = editorRef.current.getModel();
-      if (model) {
-        // Verificar si el modelo está vacío o tiene un contenido diferente
-        const currentModelValue = model.getValue();
-        if (!currentModelValue || currentModelValue !== currentCode) {
+    if (!editorRef.current || !monacoRef.current || !currentCode) return;
+
+    console.log('[ContractViewer] Ensuring code is loaded in editor after page reload');
+    
+    try {
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      
+      let model = editor.getModel();
+      
+      // Si no hay modelo, crear uno nuevo
+      if (!model) {
+        console.log('[ContractViewer] Creating new model for editor');
+        model = monaco.editor.createModel(
+          currentCode,
+          'solidity',
+          monaco.Uri.parse('file:///workspace/contract.sol')
+        );
+        editor.setModel(model);
+      } else {
+        // Si el modelo existe, verificar si necesita actualización
+        const currentValue = model.getValue();
+        if (currentValue !== currentCode) {
           console.log('[ContractViewer] Updating editor model with current code');
-          model.setValue(currentCode);
-          
-          // También compilar el código si es necesario
-          onCompile(currentCode);
+          model.pushEditOperations(
+            [],
+            [{
+              range: model.getFullModelRange(),
+              text: currentCode
+            }],
+            () => null
+          );
         }
       }
+      
+      // Compilar el código si es necesario
+      if (currentCode.trim().length > 10) {
+        onCompile(currentCode);
+      }
+    } catch (error) {
+      console.error('[ContractViewer] Error initializing editor model:', error);
     }
-  }, [editorRef.current, currentCode, onCompile]);
+  }, [editorRef.current, monacoRef.current, currentCode, onCompile]);
 
   // Efecto para escuchar eventos de código actualizado desde otros componentes
   useEffect(() => {
     const handleCodeUpdated = (event: CustomEvent) => {
-      if (event.detail && event.detail.content && editorRef.current) {
-        console.log('[ContractViewer] Received code_updated event');
-        const model = editorRef.current.getModel();
-        if (model) {
-          const newCode = event.detail.content;
+      if (!event.detail || !editorRef.current || !monacoRef.current) return;
+      
+      console.log('[ContractViewer] Received code_updated event');
+      
+      try {
+        // Procesar el código para asegurar formato correcto
+        let newCode = event.detail.content;
+        
+        // Si el contenido es un objeto con propiedad replace, usar ese valor
+        if (typeof newCode === 'object' && 'replace' in newCode) {
+          newCode = newCode.replace;
+        }
+        
+        // Normalizar los saltos de línea
+        newCode = newCode.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        
+        // Si el código viene con marcadores de bloque de código, eliminarlos
+        if (typeof newCode === 'string' && newCode.startsWith('```') && newCode.endsWith('```')) {
+          newCode = newCode
+            .replace(/^```[^\n]*\n/, '') // Eliminar la primera línea con ```
+            .replace(/```$/, '')         // Eliminar el último ```
+            .trim();
+        }
+
+        // Asegurar que hay un salto de línea al final del archivo
+        if (!newCode.endsWith('\n')) {
+          newCode += '\n';
+        }
+        
+        // Asegurar que el editor está listo
+        const editor = editorRef.current;
+        const monaco = monacoRef.current;
+        
+        let model = editor.getModel();
+        if (!model) {
+          console.log('[ContractViewer] Creating new model for editor');
+          model = monaco.editor.createModel(
+            newCode,
+            'solidity',
+            monaco.Uri.parse('file:///workspace/contract.sol')
+          );
+          editor.setModel(model);
+        } else {
           // Solo actualizar si el código es diferente
-          if (model.getValue() !== newCode) {
-            console.log('[ContractViewer] Updating editor with code from event');
-            model.setValue(newCode);
-            
-            // Programar compilación
-            if (compileTimeoutRef.current) {
-              clearTimeout(compileTimeoutRef.current);
+          const currentValue = model.getValue();
+          if (currentValue !== newCode) {
+            console.log('[ContractViewer] Updating editor with processed code');
+            const position = editor.getPosition();
+            model.pushEditOperations(
+              [],
+              [{
+                range: model.getFullModelRange(),
+                text: newCode
+              }],
+              () => null
+            );
+            if (position) {
+              editor.setPosition(position);
             }
-            
-            compileTimeoutRef.current = setTimeout(() => {
-              onCompile(newCode);
-            }, 500);
+            // Forzar un refresco del editor
+            editor.layout();
           }
         }
+        
+        // Programar compilación
+        if (compileTimeoutRef.current) {
+          clearTimeout(compileTimeoutRef.current);
+        }
+        
+        compileTimeoutRef.current = setTimeout(() => {
+          onCompile(newCode);
+        }, 500);
+      } catch (error) {
+        console.error('[ContractViewer] Error processing code update:', error);
       }
     };
     
@@ -462,39 +542,83 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
 
   // Efecto para manejar cambios automáticos en el código
   useEffect(() => {
-    if (currentCode !== previousCodeRef.current) {
-      console.log('[ContractViewer] Code changed externally, triggering compilation');
-      previousCodeRef.current = currentCode;
+    if (!currentCode || !editorRef.current || !monacoRef.current) return;
+    
+    try {
+      console.log('[ContractViewer] Code changed externally, processing update');
       
-      if (editorRef.current && monacoRef.current) {
-        // Actualizar el contenido del editor
-        const model = editorRef.current.getModel();
-        if (model) {
-          // Preservar la posición del cursor
-          const position = editorRef.current.getPosition();
-          model.setValue(currentCode);
-          if (position) {
-            editorRef.current.setPosition(position);
-          }
-        }
-
-        // Limpiar timeout anterior si existe
-        if (compileTimeoutRef.current) {
-          clearTimeout(compileTimeoutRef.current);
-        }
+      const editor = editorRef.current;
+      let model = editor.getModel();
+      
+      // Normalizar el código
+      let normalizedCode = currentCode;
+      if (typeof normalizedCode === 'string') {
+        // Normalizar saltos de línea
+        normalizedCode = normalizedCode.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         
-        // Programar nueva compilación con un debounce más largo
-        compileTimeoutRef.current = setTimeout(() => {
-          // Skip empty code or very short code that's unlikely to be a valid contract
-          if (!currentCode || currentCode.trim().length < 10) {
-            console.log('[ContractViewer] Skipping compilation for empty or very short code');
-            return;
+        // Asegurar que hay un salto de línea al final
+        if (!normalizedCode.endsWith('\n')) {
+          normalizedCode += '\n';
+        }
+      }
+      
+      if (!model) {
+        console.log('[ContractViewer] Creating new model for code update');
+        model = monacoRef.current.editor.createModel(
+          normalizedCode,
+          'solidity',
+          monacoRef.current.Uri.parse('file:///workspace/contract.sol')
+        );
+        editor.setModel(model);
+      } else {
+        // Solo actualizar si el código es diferente
+        const currentValue = model.getValue();
+        if (currentValue !== normalizedCode) {
+          console.log('[ContractViewer] Updating model with new code');
+          // Preservar la posición del cursor
+          const position = editor.getPosition();
+          const selections = editor.getSelections();
+          
+          model.pushEditOperations(
+            [],
+            [{
+              range: model.getFullModelRange(),
+              text: normalizedCode
+            }],
+            () => null
+          );
+          
+          // Restaurar la posición del cursor y la selección
+          if (position) {
+            editor.setPosition(position);
+          }
+          if (selections) {
+            editor.setSelections(selections);
           }
           
-          console.log('[ContractViewer] Compiling after external code change');
-          onCompile(currentCode);
-        }, 2000); // Increased from 1000ms to 2000ms for more debouncing
+          // Forzar un refresco del layout
+          editor.layout();
+        }
       }
+
+      // Limpiar timeout anterior si existe
+      if (compileTimeoutRef.current) {
+        clearTimeout(compileTimeoutRef.current);
+      }
+      
+      // Programar nueva compilación con un debounce más largo
+      compileTimeoutRef.current = setTimeout(() => {
+        // Skip empty code or very short code that's unlikely to be a valid contract
+        if (!normalizedCode || normalizedCode.trim().length < 10) {
+          console.log('[ContractViewer] Skipping compilation for empty or very short code');
+          return;
+        }
+        
+        console.log('[ContractViewer] Compiling after external code change');
+        onCompile(normalizedCode);
+      }, 2000);
+    } catch (error) {
+      console.error('[ContractViewer] Error handling code change:', error);
     }
   }, [currentCode, onCompile]);
 
@@ -666,6 +790,46 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     }
   }, [currentCode, onCodeChange, onCompile, resetDeploymentState]);
 
+  // Actualizar el editor cuando cambia el código
+  useEffect(() => {
+    if (!editorRef.current || !monacoRef.current || !currentCode) return;
+
+    try {
+      console.log('[ContractViewer] Updating editor model with current code');
+      
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      
+      // Get or create the model
+      let model = editor.getModel();
+      if (!model) {
+        console.log('[ContractViewer] Creating new editor model for update');
+        model = monaco.editor.createModel(
+          currentCode,
+          'solidity',
+          monaco.Uri.parse('file:///workspace/contract.sol')
+        );
+        editor.setModel(model);
+      } else {
+        // Only update if the content has changed
+        const currentValue = model.getValue();
+        if (currentValue !== currentCode) {
+          console.log('[ContractViewer] Updating editor content');
+          model.pushEditOperations(
+            [],
+            [{
+              range: model.getFullModelRange(),
+              text: currentCode
+            }],
+            () => null
+          );
+        }
+      }
+    } catch (error) {
+      console.error('[ContractViewer] Error updating editor model:', error);
+    }
+  }, [currentCode]);
+
   if (!currentArtifact) return null;
 
   return (
@@ -724,11 +888,35 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                 monacoRef.current = monaco;
 
                 // Establecer el valor inicial
-                const model = editor.getModel();
-                if (model) {
-                  console.log('[ContractViewer] Editor mounted, setting initial code:', 
-                    currentCode ? `${currentCode.substring(0, 50)}...` : 'No code available');
-                  model.setValue(currentCode);
+                console.log('[ContractViewer] Editor mounted, initializing model');
+                
+                try {
+                  // Create a new model if it doesn't exist
+                  let model = editor.getModel();
+                  if (!model) {
+                    console.log('[ContractViewer] Creating new editor model');
+                    model = monaco.editor.createModel(
+                      currentCode || '',
+                      'solidity',
+                      monaco.Uri.parse('file:///workspace/contract.sol')
+                    );
+                    editor.setModel(model);
+                  }
+
+                  // Only set the value if it's different from current
+                  const currentValue = model.getValue();
+                  if (currentValue !== currentCode) {
+                    console.log('[ContractViewer] Setting initial code:', 
+                      currentCode ? `${currentCode.substring(0, 50)}...` : 'No code available');
+                    model.pushEditOperations(
+                      [],
+                      [{
+                        range: model.getFullModelRange(),
+                        text: currentCode || ''
+                      }],
+                      () => null
+                    );
+                  }
                   
                   // Si hay código, programar una compilación
                   if (currentCode && currentCode.trim().length > 10) {
@@ -737,6 +925,8 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                       onCompile(currentCode);
                     }, 500);
                   }
+                } catch (error) {
+                  console.error('[ContractViewer] Error initializing editor model:', error);
                 }
 
                 // Registrar el lenguaje Solidity

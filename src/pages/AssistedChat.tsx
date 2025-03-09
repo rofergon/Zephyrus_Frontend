@@ -22,6 +22,7 @@ import { DatabaseService } from '../services/databaseService';
 import { ChatContextService } from '../services/chatContextService';
 import FileExplorer from '../components/FileExplorer';
 import WorkspaceManager from '../components/chat/WorkspaceManager';
+import { ApiService } from '../services/apiService';
 
 interface VirtualFile {
   content: string;
@@ -72,6 +73,7 @@ const AssistedChat: React.FC = (): JSX.Element => {
   const compilationInProgressRef = useRef<boolean>(false);
   const compilationQueueRef = useRef<{code: string, timestamp: number}[]>([]);
   const compilationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const apiService = useRef(ApiService.getInstance());
 
   // Función para añadir mensajes a la consola
   const addConsoleMessage = (message: string, type: ConsoleMessage['type']) => {
@@ -150,7 +152,6 @@ const AssistedChat: React.FC = (): JSX.Element => {
 
   // Initialize chat context service
   useEffect(() => {
-    // Inicializar el servicio de contexto de chat si no existe
     if (!chatContextService.current) {
       console.log('[AssistedChat] Initializing ChatContextService');
       chatContextService.current = new ChatContextService({
@@ -167,57 +168,44 @@ const AssistedChat: React.FC = (): JSX.Element => {
         address,
         demoArtifact
       });
-      
-      // Hacer disponible el servicio globalmente para depuración
-      (window as any).__chatContextService = chatContextService.current;
     }
     
     // Actualizar la dirección de wallet en el servicio de base de datos
     if (address) {
-      databaseService.current.setCurrentWalletAddress(address);
-      
-      // Primero verificar que el usuario existe
       (async () => {
         try {
-          console.log('[AssistedChat] Checking if user exists in database:', address);
+          console.log('[AssistedChat] Loading user data and conversations:', address);
           
-          // Crear usuario si no existe
-          try {
-            await databaseService.current.getUser(address);
-          } catch (error) {
-            console.log('[AssistedChat] User not found, creating new user:', address);
-            await databaseService.current.createUser(address);
-          }
+          // Cargar las conversaciones desde la API
+          let loadedConversations = await apiService.current.getConversations(address);
+          console.log('[AssistedChat] Retrieved conversations from API:', loadedConversations);
           
-          // Obtener las conversaciones del usuario
-          let conversations;
-          try {
-            conversations = await databaseService.current.getConversations(address);
-            console.log('[AssistedChat] Retrieved user conversations:', conversations);
-          } catch (error) {
-            console.error('[AssistedChat] Error getting conversations:', error);
-            conversations = [];
-          }
-          
-          // Si no hay conversaciones, crear una por defecto
-          if (!conversations || conversations.length === 0) {
-            console.log('[AssistedChat] No conversations found, creating default conversation');
+          // Si no hay conversaciones, crear la primera
+          if (!loadedConversations || loadedConversations.length === 0) {
+            console.log('[AssistedChat] No conversations found, creating first chat');
+            
             try {
-              const newConversation = await databaseService.current.createConversation(
-                address, 
+              // Crear nueva conversación en la base de datos
+              const newConversation = await apiService.current.createConversation(
+                address,
                 'My First Chat'
               );
               
-              console.log('[AssistedChat] Created default conversation:', newConversation);
-              conversations = [newConversation];
+              console.log('[AssistedChat] Created first conversation:', newConversation);
+              loadedConversations = [newConversation];
+              
+              // Mostrar mensaje de bienvenida
+              addConsoleMessage('Welcome! Your first chat has been created.', 'success');
             } catch (error) {
-              console.error('[AssistedChat] Error creating default conversation:', error);
+              console.error('[AssistedChat] Error creating first conversation:', error);
+              addConsoleMessage('Error creating your first chat.', 'error');
+              return;
             }
           }
 
-          // Usar el ID de la conversación más reciente
-          if (conversations && conversations.length > 0) {
-            const mostRecentChat = conversations[0];
+          // Usar la conversación más reciente
+          if (loadedConversations && loadedConversations.length > 0) {
+            const mostRecentChat = loadedConversations[0];
             console.log('[AssistedChat] Using most recent chat:', mostRecentChat);
 
             // Desconectar WebSocket actual si existe
@@ -227,20 +215,19 @@ const AssistedChat: React.FC = (): JSX.Element => {
             chatService.current.setCurrentChatId(mostRecentChat.id);
             chatService.current.connect(address, mostRecentChat.id);
 
-            // Actualizar el contexto activo
+            // Inicializar el chat con el historial cargado
             if (chatContextService.current) {
               await chatContextService.current.initializeChat(mostRecentChat.id, false);
             }
           }
-          
         } catch (error) {
-          console.error('[AssistedChat] Error initializing user and conversations:', error);
+          console.error('[AssistedChat] Error initializing chat data:', error);
+          addConsoleMessage('Error loading chat history. Please try again later.', 'error');
         }
       })();
     }
     
     return () => {
-      // Limpiar la referencia global al desmontar el componente
       if ((window as any).__chatContextService === chatContextService.current) {
         delete (window as any).__chatContextService;
       }
@@ -291,54 +278,23 @@ const AssistedChat: React.FC = (): JSX.Element => {
   const createNewChat = async () => {
     if (!address) {
       console.error('[AssistedChat] Cannot create new chat without wallet address');
+      addConsoleMessage('Please connect your wallet first', 'error');
       return;
     }
-    
+
     try {
-      // 1. Obtener chats existentes de la base de datos
-      const existingChats = await databaseService.current.getConversations(address);
-      console.log('[AssistedChat] Existing chats:', existingChats);
+      console.log('[AssistedChat] Creating new chat for wallet:', address);
       
-      let chatId: string;
-      let isNewChat = false;
-      
-      if (!existingChats || existingChats.length === 0) {
-        // 2. Si no hay chats existentes, crear uno nuevo en la base de datos
-        const newDbConversation = await databaseService.current.createConversation(
-          address,
-          'New Chat'
-        );
-        
-        if (!newDbConversation || !newDbConversation.id) {
-          throw new Error('Failed to create conversation in database');
-        }
-        
-        chatId = newDbConversation.id;
-        isNewChat = true;
-        console.log('[AssistedChat] Created new chat in database:', chatId);
-      } else {
-        // Usar el chat más reciente
-        chatId = existingChats[0].id;
-        console.log('[AssistedChat] Using existing chat:', chatId);
-      }
-      
-      // 3. Desconectar WebSocket actual si existe
-      chatService.current.disconnect();
-      
-      // 4. Establecer el ID del chat y reconectar WebSocket
-      chatService.current.setCurrentChatId(chatId);
-      chatService.current.connect(address, chatId);
-      
-      // 5. Inicializar el contexto local
+      // Crear nueva conversación usando el servicio de contexto
       if (chatContextService.current) {
-        await chatContextService.current.initializeChat(chatId, isNewChat);
-        addConsoleMessage('Chat initialized successfully.', 'info');
+        await chatContextService.current.createNewChat();
+        addConsoleMessage('New chat created successfully', 'success');
       } else {
-        throw new Error('Chat context service not available');
+        throw new Error('Chat context service not initialized');
       }
     } catch (error) {
-      console.error('[AssistedChat] Error in chat initialization:', error);
-      addConsoleMessage('Failed to initialize chat.', 'error');
+      console.error('[AssistedChat] Error creating new chat:', error);
+      addConsoleMessage('Failed to create new chat', 'error');
     }
   };
   
@@ -441,149 +397,8 @@ const AssistedChat: React.FC = (): JSX.Element => {
     });
 
     service.onMessage((response: AgentResponse) => {
-      console.log('[AssistedChat] Received message:', response);
-      
-      if (response.type === 'context_switched') {
-        try {
-          let contextData;
-          try {
-            contextData = JSON.parse(response.content);
-          } catch (error) {
-            // Si no se puede parsear, intentar usar el contenido directamente
-            contextData = response.content;
-          }
-          
-          console.log('[AssistedChat] Context switched event received:', contextData);
-          
-          if (contextData && contextData.id) {
-            const switchedContext = {
-              id: contextData.id,
-              name: contextData.name || 'Unnamed Chat',
-              messages: contextData.messages || [],
-              virtualFiles: contextData.virtualFiles || {},
-              workspaces: contextData.workspaces || {},
-              active: true,
-              createdAt: contextData.created_at || new Date().toISOString()
-            };
-            
-            console.log('[AssistedChat] Setting active context from context_switched:', switchedContext.id);
-            setActiveContext(switchedContext);
-            
-            // Actualizar mensajes
-            if (switchedContext.messages && switchedContext.messages.length > 0) {
-              console.log('[AssistedChat] Setting messages from switched context:', switchedContext.messages.length);
-              setMessages(switchedContext.messages);
-            }
-            
-            // Cargar archivos si existen
-            if (switchedContext.virtualFiles) {
-              const solidityFiles = Object.entries(switchedContext.virtualFiles)
-                .filter(([_, file]: [string, any]) => file.language === 'solidity');
-              
-              if (solidityFiles.length > 0) {
-                const [path, solFile]: [string, any] = solidityFiles[solidityFiles.length - 1];
-                console.log(`[AssistedChat] Loading Solidity file from switched context: ${path}`);
-                setCurrentCode(solFile.content);
-                setShowCodeEditor(true);
-                setSelectedFile(path);
-                
-                if (editorRef.current && monacoRef.current) {
-                  console.log('[AssistedChat] Compiling loaded Solidity code from switched context');
-                  compileCode(solFile.content);
-                }
-              }
-            }
-            
-            // Actualizar contextos de conversación
-            setConversationContexts(prevContexts => 
-              prevContexts.map(ctx => ({
-                ...ctx,
-                active: ctx.id === switchedContext.id
-              }))
-            );
-          }
-        } catch (error) {
-          console.error('[AssistedChat] Error processing context_switched:', error);
-        }
-      } else if (response.type === 'context_created') {
-        try {
-          const contextData = JSON.parse(response.content);
-          console.log('[AssistedChat] New context created:', contextData);
-          
-          if (contextData && contextData.id) {
-            const newChatContext = {
-              id: contextData.id,
-              name: contextData.name || 'New Chat',
-              messages: [],
-              virtualFiles: {},
-              workspaces: {},
-              active: true,
-              createdAt: new Date().toISOString()
-            };
-            
-            // Actualizar el contexto activo
-            setActiveContext(newChatContext);
-            
-            // Actualizar la lista de contextos
-            setConversationContexts(prevContexts => {
-              // Desactivar todos los contextos anteriores
-              const updatedContexts = prevContexts.map(ctx => ({
-                ...ctx,
-                active: false
-              }));
-              
-              // Añadir el nuevo contexto
-              return [...updatedContexts, newChatContext];
-            });
-            
-            // Limpiar mensajes para el nuevo contexto
-            setMessages([]);
-          }
-        } catch (error) {
-          console.error('[AssistedChat] Error processing context_created:', error);
-        }
-      } else if (response.type === 'chat_message') {
-        try {
-          const messageData = JSON.parse(response.content);
-          console.log('[AssistedChat] Received chat message:', messageData);
-          
-          if (messageData && messageData.text) {
-            // Crear un nuevo mensaje
-            const newMessage: Message = {
-              id: generateUniqueId(),
-              text: messageData.text,
-              sender: 'ai',
-              timestamp: Date.now(),
-              isTyping: false
-            };
-            
-            // Añadir el mensaje al estado
-            setMessages(prev => [...prev, newMessage]);
-            
-            // Actualizar el contexto activo
-            if (activeContext) {
-              setActiveContext(prev => {
-                if (!prev) return prev;
-                return {
-                  ...prev,
-                  messages: [...prev.messages, newMessage]
-                };
-              });
-              
-              // Actualizar la lista de contextos
-              setConversationContexts(prev => 
-                prev.map(ctx => ctx.id === activeContext.id ?
-                  { ...ctx, messages: [...ctx.messages, newMessage] } : ctx
-                )
-              );
-            }
-            
-            // Actualizar estado de typing
-            setIsTyping(false);
-          }
-        } catch (error) {
-          console.error('[AssistedChat] Error processing chat_message:', error);
-        }
+      if (response.type === 'typing') {
+        setIsTyping(true);
       } else if (response.type === 'message') {
         // Handle regular message
         try {
@@ -617,6 +432,17 @@ const AssistedChat: React.FC = (): JSX.Element => {
                 { ...ctx, messages: [...ctx.messages, newMessage] } : ctx
               )
             );
+
+            // Guardar el mensaje en la base de datos
+            apiService.current.createMessage(
+              activeContext.id,
+              response.content,
+              'ai',
+              { timestamp: new Date(newMessage.timestamp).toISOString() }
+            ).catch(error => {
+              console.error('[AssistedChat] Error saving AI message to database:', error);
+              addConsoleMessage('Error saving message to database', 'error');
+            });
           }
           
           // Update typing state
@@ -629,7 +455,10 @@ const AssistedChat: React.FC = (): JSX.Element => {
           console.log('[AssistedChat] Processing file creation:', response.metadata.path);
           const path = response.metadata.path;
           const language = response.metadata.language || 'solidity';
-          const content = response.content;
+          // Asegurar que obtenemos el contenido correcto del mensaje
+          const content = typeof response.content === 'object' && 'replace' in response.content 
+            ? (response.content as { replace: string }).replace 
+            : response.content;
           
           // Add file to virtual file system
           virtualFS.writeFile(path, content).then(() => {

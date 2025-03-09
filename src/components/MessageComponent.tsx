@@ -1,4 +1,4 @@
-import { format } from 'date-fns';
+import { format, isValid } from 'date-fns';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -143,6 +143,21 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
     }
   };
 
+  // Función para formatear el timestamp de manera segura
+  const formatTimestamp = (timestamp: number | string | Date): string => {
+    try {
+      const date = typeof timestamp === 'number' ? new Date(timestamp) : new Date(timestamp);
+      if (!isValid(date)) {
+        console.warn('[MessageComponent] Invalid timestamp:', timestamp);
+        return '';
+      }
+      return format(date, 'HH:mm');
+    } catch (error) {
+      console.error('[MessageComponent] Error formatting timestamp:', error);
+      return '';
+    }
+  };
+
   return (
     <div className={`flex justify-${isUser ? 'end' : 'start'} group animate-fade-in mb-6`}>
       {/* Avatar for AI/System messages */}
@@ -162,10 +177,12 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
 
       <div className="flex flex-col items-start max-w-[85%] lg:max-w-[75%] min-w-[40px] relative group">
         {/* Time indicator - small and subtle */}
-        <div className={`text-[10px] text-gray-500 mb-1 font-medium opacity-0 group-hover:opacity-100 transition-opacity 
-          absolute ${isUser ? 'right-0' : 'left-0'} -top-4`}>
-          {format(new Date(message.timestamp), 'HH:mm')}
-        </div>
+        {message.timestamp && (
+          <div className={`text-[10px] text-gray-500 mb-1 font-medium opacity-0 group-hover:opacity-100 transition-opacity 
+            absolute ${isUser ? 'right-0' : 'left-0'} -top-4`}>
+            {formatTimestamp(message.timestamp)}
+          </div>
+        )}
         
         {/* Message Content */}
         <div 
