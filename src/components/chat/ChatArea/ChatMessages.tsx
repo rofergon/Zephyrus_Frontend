@@ -641,7 +641,7 @@ I'm here to help you create, compile, test, and deploy Solidity smart contracts 
               <MessageComponent 
                 message={{
                   ...message,
-                  showAnimation: message.sender === 'ai' && !message.isTyping
+                  showAnimation: false
                 }} 
               />
             </div>

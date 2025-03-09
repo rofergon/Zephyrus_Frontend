@@ -1,16 +1,16 @@
-# API de Chats y Usuarios - Guía de Uso
+# Chat and User API - Usage Guide
 
-Esta guía describe las rutas disponibles para manejar usuarios, conversaciones y mensajes en la API de Zephyrus.
+This guide describes the available routes for handling users, conversations, and messages in the Zephyrus API.
 
 ## Base URL
 ```
 http://localhost:3000/api/db
 ```
 
-## Usuarios
+## Users
 
-### Crear Usuario
-Registra un nuevo usuario en el sistema.
+### Create User
+Registers a new user in the system.
 
 ```http
 POST /users
@@ -21,21 +21,21 @@ Content-Type: application/json
 }
 ```
 
-**Respuesta Exitosa (200 OK)**
+**Successful Response (200 OK)**
 ```json
 {
     "success": true
 }
 ```
 
-### Obtener Usuario
-Obtiene la información de un usuario específico.
+### Get User
+Gets the information of a specific user.
 
 ```http
 GET /users/:walletAddress
 ```
 
-**Respuesta Exitosa (200 OK)**
+**Successful Response (200 OK)**
 ```json
 {
     "wallet_address": "0xaB6E247B25463F76E81aBAbBb6b0b86B40d45D38",
@@ -43,10 +43,10 @@ GET /users/:walletAddress
 }
 ```
 
-## Conversaciones
+## Conversations
 
-### Crear Conversación
-Crea una nueva conversación para un usuario.
+### Create Conversation
+Creates a new conversation for a user.
 
 ```http
 POST /conversations
@@ -54,30 +54,30 @@ Content-Type: application/json
 
 {
     "walletAddress": "0xaB6E247B25463F76E81aBAbBb6b0b86B40d45D38",
-    "name": "Mi Nueva Conversación"
+    "name": "My New Conversation"
 }
 ```
 
-**Respuesta Exitosa (200 OK)**
+**Successful Response (200 OK)**
 ```json
 {
-    "id": "uuid-de-la-conversacion"
+    "id": "conversation-uuid"
 }
 ```
 
-### Obtener Conversaciones
-Obtiene todas las conversaciones de un usuario.
+### Get Conversations
+Gets all conversations for a user.
 
 ```http
 GET /conversations/:walletAddress
 ```
 
-**Respuesta Exitosa (200 OK)**
+**Successful Response (200 OK)**
 ```json
 [
     {
-        "id": "uuid-de-la-conversacion",
-        "name": "Mi Nueva Conversación",
+        "id": "conversation-uuid",
+        "name": "My New Conversation",
         "user_wallet": "0xaB6E247B25463F76E81aBAbBb6b0b86B40d45D38",
         "created_at": "2024-03-20T12:00:00.000Z",
         "last_accessed": "2024-03-20T12:00:00.000Z"
@@ -85,37 +85,37 @@ GET /conversations/:walletAddress
 ]
 ```
 
-### Actualizar Nombre de Conversación
-Actualiza el nombre de una conversación existente.
+### Update Conversation Name
+Updates the name of an existing conversation.
 
 ```http
 PATCH /conversations/:conversationId/name
 Content-Type: application/json
 
 {
-    "name": "Nuevo Nombre de la Conversación"
+    "name": "New Conversation Name"
 }
 ```
 
-**Respuesta Exitosa (200 OK)**
+**Successful Response (200 OK)**
 ```json
 {
     "success": true
 }
 ```
 
-## Mensajes
+## Messages
 
-### Crear Mensaje
-Añade un nuevo mensaje a una conversación.
+### Create Message
+Adds a new message to a conversation.
 
 ```http
 POST /messages
 Content-Type: application/json
 
 {
-    "conversationId": "uuid-de-la-conversacion",
-    "content": "Contenido del mensaje",
+    "conversationId": "conversation-uuid",
+    "content": "Message content",
     "sender": "user",
     "metadata": {
         "key": "value"
@@ -123,27 +123,27 @@ Content-Type: application/json
 }
 ```
 
-**Respuesta Exitosa (200 OK)**
+**Successful Response (200 OK)**
 ```json
 {
     "success": true
 }
 ```
 
-### Obtener Mensajes
-Obtiene todos los mensajes de una conversación.
+### Get Messages
+Gets all messages from a conversation.
 
 ```http
 GET /messages/:conversationId
 ```
 
-**Respuesta Exitosa (200 OK)**
+**Successful Response (200 OK)**
 ```json
 [
     {
-        "id": "uuid-del-mensaje",
-        "conversation_id": "uuid-de-la-conversacion",
-        "content": "Contenido del mensaje",
+        "id": "message-uuid",
+        "conversation_id": "conversation-uuid",
+        "content": "Message content",
         "sender": "user",
         "metadata": {
             "key": "value"
@@ -153,26 +153,26 @@ GET /messages/:conversationId
 ]
 ```
 
-## Manejo de Errores
+## Error Handling
 
-La API devuelve errores en el siguiente formato:
+The API returns errors in the following format:
 
 ```json
 {
-    "error": "Descripción del error"
+    "error": "Error description"
 }
 ```
 
-### Códigos de Estado HTTP
+### HTTP Status Codes
 
-- **200 OK**: Petición exitosa
-- **400 Bad Request**: Error en los datos enviados
-- **404 Not Found**: Recurso no encontrado
-- **500 Internal Server Error**: Error del servidor
+- **200 OK**: Successful request
+- **400 Bad Request**: Error in the data sent
+- **404 Not Found**: Resource not found
+- **500 Internal Server Error**: Server error
 
-## Ejemplos de Uso con PowerShell
+## Usage Examples with PowerShell
 
-### 1. Crear un Usuario
+### 1. Create a User
 ```powershell
 $body = @{
     walletAddress = "0xaB6E247B25463F76E81aBAbBb6b0b86B40d45D38"
@@ -181,40 +181,40 @@ $body = @{
 Invoke-WebRequest -Method POST -Uri "http://localhost:3000/api/db/users" -Body $body -ContentType "application/json"
 ```
 
-### 2. Crear una Conversación
+### 2. Create a Conversation
 ```powershell
 $body = @{
     walletAddress = "0xaB6E247B25463F76E81aBAbBb6b0b86B40d45D38"
-    name = "Mi Nueva Conversación"
+    name = "My New Conversation"
 } | ConvertTo-Json
 
 Invoke-WebRequest -Method POST -Uri "http://localhost:3000/api/db/conversations" -Body $body -ContentType "application/json"
 ```
 
-### 3. Enviar un Mensaje
+### 3. Send a Message
 ```powershell
 $body = @{
-    conversationId = "uuid-de-la-conversacion"
-    content = "Hola, este es un mensaje de prueba"
+    conversationId = "conversation-uuid"
+    content = "Hello, this is a test message"
     sender = "user"
 } | ConvertTo-Json
 
 Invoke-WebRequest -Method POST -Uri "http://localhost:3000/api/db/messages" -Body $body -ContentType "application/json"
 ```
 
-## Notas Importantes
+## Important Notes
 
-1. Todos los timestamps se devuelven en formato UTC ISO.
-2. La wallet address debe ser una dirección Ethereum válida.
-3. El campo `sender` en los mensajes solo puede ser "user" o "ai".
-4. El campo `metadata` es opcional en los mensajes.
-5. Las conversaciones se ordenan por fecha de último acceso.
-6. Los mensajes se ordenan cronológicamente (ASC).
+1. All timestamps are returned in UTC ISO format.
+2. The wallet address must be a valid Ethereum address.
+3. The `sender` field in messages can only be "user" or "ai".
+4. The `metadata` field is optional in messages.
+5. Conversations are sorted by last access date.
+6. Messages are sorted chronologically (ASC).
 
-## Flujo Típico de Uso
+## Typical Usage Flow
 
-1. Crear o verificar usuario con wallet
-2. Crear una nueva conversación
-3. Enviar mensajes a la conversación
-4. Obtener historial de mensajes
-5. Actualizar nombre de la conversación si es necesario 
+1. Create or verify user with wallet
+2. Create a new conversation
+3. Send messages to the conversation
+4. Get message history
+5. Update conversation name if necessary 

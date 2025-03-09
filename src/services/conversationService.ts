@@ -20,6 +20,7 @@ export interface Message {
   timestamp: number;
   isTyping?: boolean;
   showAnimation?: boolean;
+  noCompile?: boolean;
 }
 
 export interface ConversationContext {

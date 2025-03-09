@@ -14,7 +14,7 @@ import { CommandLineIcon } from '@heroicons/react/24/outline';
 
 interface ContractViewerProps {
   currentArtifact: ContractArtifact | null;
-  currentCode: string;
+  currentCode: string | any;
   showCodeEditor: boolean;
   isMaximized: boolean;
   consoleHeight: number;
@@ -69,14 +69,11 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   const [] = useState(consoleHeight);
   const [deploymentResult, setDeploymentResult] = useState<any>(null);
   const [isLoadedVersionDeployed, setIsLoadedVersionDeployed] = useState(false);
-  const [isNewlyDeployed, setIsNewlyDeployed] = useState(false);
-  const [] = useState(false);
   const [constructorArgs, setConstructorArgs] = useState<any[]>([]);
   const [isDeploying, setIsDeploying] = useState(false);
   const [] = useState(true);
   const [] = useState<'functions' | 'events' | 'demo'>('functions');
   const [, setError] = useState<string | null>(null);
-  const previousCodeRef = useRef(currentCode);
   const [autoScroll, setAutoScroll] = useState(true);
   const [isDeploymentCollapsed, setIsDeploymentCollapsed] = useState(false);
 
@@ -122,7 +119,6 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   const resetDeploymentState = useCallback(() => {
     setDeploymentResult(null);
     setIsLoadedVersionDeployed(false);
-    setIsNewlyDeployed(false);
     setConstructorArgs([]);
   }, []);
 
@@ -214,7 +210,6 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       
       // Actualizar explícitamente el estado de despliegue basado en los datos recibidos
       setIsLoadedVersionDeployed(deploymentData.isDeployed || false);
-      setIsNewlyDeployed(false); // Esto es una versión cargada, no recién desplegada
       
       // Lo más importante: si el currentArtifact existe, actualizamos su dirección
       if (currentArtifact && deploymentData.contractAddress) {
@@ -415,13 +410,22 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       const editor = editorRef.current;
       const monaco = monacoRef.current;
       
+      // Ensure currentCode is a string
+      const codeString = typeof currentCode === 'string' 
+        ? currentCode 
+        : typeof currentCode === 'object' && currentCode !== null
+          ? 'toString' in currentCode && typeof currentCode.toString === 'function' && currentCode.toString !== Object.prototype.toString
+            ? currentCode.toString()
+            : JSON.stringify(currentCode, null, 2)
+          : String(currentCode);
+      
       let model = editor.getModel();
       
       // Si no hay modelo, crear uno nuevo
       if (!model) {
         console.log('[ContractViewer] Creating new model for editor');
         model = monaco.editor.createModel(
-          currentCode,
+          codeString,
           'solidity',
           monaco.Uri.parse('file:///workspace/contract.sol')
         );
@@ -429,13 +433,13 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       } else {
         // Si el modelo existe, verificar si necesita actualización
         const currentValue = model.getValue();
-        if (currentValue !== currentCode) {
+        if (currentValue !== codeString) {
           console.log('[ContractViewer] Updating editor model with current code');
           model.pushEditOperations(
             [],
             [{
               range: model.getFullModelRange(),
-              text: currentCode
+              text: codeString
             }],
             () => null
           );
@@ -456,22 +460,64 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     const handleCodeUpdated = (event: CustomEvent) => {
       if (!event.detail || !editorRef.current || !monacoRef.current) return;
       
-      console.log('[ContractViewer] Received code_updated event');
+      console.log('[ContractViewer] Code changed externally, processing update');
+      console.log('[ContractViewer] Event detail type:', typeof event.detail);
+      console.log('[ContractViewer] Content type:', typeof event.detail.content);
+      
+      // Check if we should skip compilation
+      const skipCompilation = event.detail.noCompile === true;
+      if (skipCompilation) {
+        console.log('[ContractViewer] Skipping compilation due to noCompile flag');
+      }
       
       try {
         // Procesar el código para asegurar formato correcto
         let newCode = event.detail.content;
         
-        // Si el contenido es un objeto con propiedad replace, usar ese valor
-        if (typeof newCode === 'object' && 'replace' in newCode) {
-          newCode = newCode.replace;
+        // Ensure newCode is a string
+        if (newCode === null || newCode === undefined) {
+          console.error('[ContractViewer] Received null or undefined content in code_updated event');
+          return;
         }
+        
+        // If it's an object, try to extract a string value
+        if (typeof newCode === 'object') {
+          console.log('[ContractViewer] Content is an object, attempting to extract string value:', JSON.stringify(newCode).substring(0, 100) + '...');
+          if ('replace' in newCode) {
+            newCode = newCode.replace;
+            console.log('[ContractViewer] Extracted from replace property:', typeof newCode);
+          } else if ('content' in newCode) {
+            newCode = newCode.content;
+            console.log('[ContractViewer] Extracted from content property:', typeof newCode);
+          } else if ('toString' in newCode && newCode.toString !== Object.prototype.toString) {
+            newCode = newCode.toString();
+            console.log('[ContractViewer] Converted using toString method:', typeof newCode);
+          } else {
+            // Convert object to JSON string as fallback
+            try {
+              newCode = JSON.stringify(newCode, null, 2);
+              console.warn('[ContractViewer] Converted object to JSON string:', newCode.substring(0, 100) + '...');
+            } catch (err) {
+              console.error('[ContractViewer] Failed to convert object to string:', err);
+              return;
+            }
+          }
+        }
+        
+        // Final check to ensure we have a string
+        if (typeof newCode !== 'string') {
+          console.error('[ContractViewer] Unable to convert content to string, type is:', typeof newCode);
+          newCode = String(newCode);
+          console.log('[ContractViewer] Forcibly converted to string using String()');
+        }
+        
+        console.log('[ContractViewer] Updating model with new code');
         
         // Normalizar los saltos de línea
         newCode = newCode.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         
         // Si el código viene con marcadores de bloque de código, eliminarlos
-        if (typeof newCode === 'string' && newCode.startsWith('```') && newCode.endsWith('```')) {
+        if (newCode.startsWith('```') && newCode.endsWith('```')) {
           newCode = newCode
             .replace(/^```[^\n]*\n/, '') // Eliminar la primera línea con ```
             .replace(/```$/, '')         // Eliminar el último ```
@@ -504,8 +550,8 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
             const position = editor.getPosition();
             model.pushEditOperations(
               [],
-              [{
-                range: model.getFullModelRange(),
+              [{ 
+                range: model.getFullModelRange(), 
                 text: newCode
               }],
               () => null
@@ -518,14 +564,19 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
           }
         }
         
-        // Programar compilación
-        if (compileTimeoutRef.current) {
-          clearTimeout(compileTimeoutRef.current);
+        // Programar compilación solo si no se debe omitir
+        if (!skipCompilation) {
+          if (compileTimeoutRef.current) {
+            clearTimeout(compileTimeoutRef.current);
+          }
+          
+          compileTimeoutRef.current = setTimeout(() => {
+            console.log('[ContractViewer] Compiling after content change');
+            onCompile(newCode);
+          }, 500);
+        } else {
+          console.log('[ContractViewer] Skipping compilation due to noCompile flag');
         }
-        
-        compileTimeoutRef.current = setTimeout(() => {
-          onCompile(newCode);
-        }, 500);
       } catch (error) {
         console.error('[ContractViewer] Error processing code update:', error);
       }
@@ -714,13 +765,19 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       setDeploymentResult(resultWithTimestamp);
       
       if (result.success) {
-        setIsNewlyDeployed(true);
         setIsLoadedVersionDeployed(true);
         
-        // Mensaje de éxito con el hash de la transacción y la dirección del contrato
-        const successMessage = `Deployment Successful!\nTransaction Hash: ${result.transactionHash}\nContract address: ${result.contractAddress}`;
+        // Format the success message with clear line breaks for proper parsing
+        const successMessage = 
+          `Deployment Successful!\n` +
+          `Transaction Hash: ${result.transactionHash}\n` +
+          `Contract address: ${result.contractAddress}`;
+        
         addConsoleMessage(successMessage, 'success');
         onConsoleResize(Math.max(consoleHeight, 200));
+        
+        // Also log the transaction link to console for easy access
+        console.log(`[ContractViewer] Contract deployed. View transaction: https://testnet.sonicscan.org/tx/${result.transactionHash}`);
       }
     } catch (error) {
       setDeploymentResult({
@@ -1302,27 +1359,70 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                 {consoleMessages.map((msg) => {
                   // Función para convertir direcciones y hashes en enlaces
                   const formatMessage = (content: string) => {
-                    // Patrones para detectar direcciones y hashes de transacción
-                    const addressPattern = /(0x[a-fA-F0-9]{40})/g;
-                    const txHashPattern = /(0x[a-fA-F0-9]{64})/g;
-
-                    // Reemplazar direcciones con enlaces
-                    let formattedContent = content.replace(addressPattern, (address) => (
-                      `<a href="https://testnet.sonicscan.org/address/${address}" 
+                    // Split the message by lines to handle each part separately
+                    const lines = content.split('\n');
+                    const formattedLines = lines.map(line => {
+                      // Check for transaction hash line
+                      if (line.startsWith('Transaction Hash:')) {
+                        // Extract hash using regex
+                        const hashMatch = line.match(/Transaction Hash: (0x[a-fA-F0-9]{64})/);
+                        if (hashMatch && hashMatch[1]) {
+                          const hash = hashMatch[1];
+                          return `Transaction Hash: <a href="https://testnet.sonicscan.org/tx/${hash}" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            class="text-blue-400 hover:text-blue-300 hover:underline">${hash}</a>`;
+                        }
+                      }
+                      
+                      // Handle contract address line
+                      if (line.startsWith('Contract address:')) {
+                        // Extract address using regex
+                        const addressMatch = line.match(/Contract address: (0x[a-fA-F0-9]{40})/);
+                        if (addressMatch && addressMatch[1]) {
+                          const address = addressMatch[1];
+                          return `Contract address: <a href="https://testnet.sonicscan.org/address/${address}" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            class="text-blue-400 hover:text-blue-300 hover:underline">${address}</a>`;
+                        }
+                      }
+                      
+                      // For other lines, handle standalone addresses and hashes
+                      let processedLine = line;
+                      
+                      // Process standalone addresses (not in HTML tags)
+                      const addressPattern = /(0x[a-fA-F0-9]{40})/g;
+                      processedLine = processedLine.replace(addressPattern, (address) => {
+                        // Don't replace if already in an HTML tag
+                        const prevChar = processedLine.charAt(processedLine.indexOf(address) - 1);
+                        if (prevChar === '"' || prevChar === "'") {
+                          return address;
+                        }
+                        return `<a href="https://testnet.sonicscan.org/address/${address}" 
                           target="_blank" 
                           rel="noopener noreferrer" 
-                          class="text-blue-400 hover:text-blue-300 hover:underline">${address}</a>`
-                    ));
-
-                    // Reemplazar hashes de transacción con enlaces
-                    formattedContent = formattedContent.replace(txHashPattern, (hash) => (
-                      `<a href="https://testnet.sonicscan.org/tx/${hash}" 
+                          class="text-blue-400 hover:text-blue-300 hover:underline">${address}</a>`;
+                      });
+                      
+                      // Process standalone transaction hashes (not in HTML tags)
+                      const txHashPattern = /(0x[a-fA-F0-9]{64})/g;
+                      processedLine = processedLine.replace(txHashPattern, (hash) => {
+                        // Don't replace if already in an HTML tag
+                        const prevChar = processedLine.charAt(processedLine.indexOf(hash) - 1);
+                        if (prevChar === '"' || prevChar === "'") {
+                          return hash;
+                        }
+                        return `<a href="https://testnet.sonicscan.org/tx/${hash}" 
                           target="_blank" 
                           rel="noopener noreferrer" 
-                          class="text-blue-400 hover:text-blue-300 hover:underline">${hash}</a>`
-                    ));
-
-                    return <span dangerouslySetInnerHTML={{ __html: formattedContent }} />;
+                          class="text-blue-400 hover:text-blue-300 hover:underline">${hash}</a>`;
+                      });
+                      
+                      return processedLine;
+                    });
+                    
+                    return <span dangerouslySetInnerHTML={{ __html: formattedLines.join('\n') }} />;
                   };
 
                   return (

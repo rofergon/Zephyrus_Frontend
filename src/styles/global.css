@@ -377,12 +377,12 @@
   border-bottom: none;
 }
 
-/* Estilos para adaptación de chat en contenedores pequeños */
+/* Styles for chat adaptation in small containers */
 .h-full.overflow-y-auto {
   min-height: 100px;
 }
 
-/* Mejora de espaciado para mensajes en pantallas pequeñas */
+/* Improved spacing for messages on small screens */
 @media (max-width: 640px) {
   .markdown-content h1 {
     font-size: 1.5rem;

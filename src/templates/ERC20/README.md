@@ -1,91 +1,104 @@
-# Customizable ERC20 Token Template
+# ERC20 Token Contract
 
-Este template proporciona un contrato inteligente ERC20 altamente personalizable con características modernas y seguras.
+## Overview
 
-## Características
+This contract implements an ERC20 token with the following features:
 
-- **Minteable**: Nuevos tokens pueden ser creados por direcciones con el rol MINTER_ROLE
-- **Quemable**: Los poseedores de tokens pueden destruir sus tokens
-- **Pausable**: Las transferencias pueden ser pausadas por direcciones con el rol PAUSER_ROLE
-- **Control de Acceso Basado en Roles**: Diferentes permisos para diferentes roles
-- **Suministro Máximo Configurable**: Opción para establecer un límite máximo de tokens
-- **Decimales Personalizables**: Flexibilidad en la precisión del token
+- Based on OpenZeppelin's ERC20 standard
+- Includes roles for management and minting
+- Optional maximum supply limit
+- Built-in pause functionality for emergencies
+- Burning capability
+- Snapshot functionality for governance purposes
 
-## Parámetros de Construcción
+## Deployment Parameters
 
-El contrato se inicializa con los siguientes parámetros:
+The contract is initialized with the following parameters:
 
-- `name`: Nombre del token (ej. "Mi Token")
-- `symbol`: Símbolo del token (ej. "MTK")
-- `initialSupply`: Cantidad inicial de tokens a crear
-- `tokenDecimals`: Número de decimales para el token (típicamente 18)
-- `maxSupply`: Suministro máximo de tokens (0 para ilimitado)
+- `name`: Name of the token (e.g. "My Token")
+- `symbol`: Token symbol (e.g. "MTK")
+- `initialSupply`: Initial amount of tokens to create
+- `tokenDecimals`: Number of decimals for the token (typically 18)
+- `maxSupply`: Maximum token supply (0 for unlimited)
 
 ## Roles
 
-El contrato implementa los siguientes roles:
+The contract implements the following roles:
 
-- `DEFAULT_ADMIN_ROLE`: Puede gestionar otros roles
-- `MINTER_ROLE`: Puede crear nuevos tokens
-- `PAUSER_ROLE`: Puede pausar/reanudar transferencias
+- `DEFAULT_ADMIN_ROLE`: Can manage other roles
+- `MINTER_ROLE`: Can create new tokens
+- `PAUSER_ROLE`: Can pause/resume transfers
 
-## Funciones Principales
+## Main Functions
 
-### Administración de Tokens
-- `mint(address to, uint256 amount)`: Crea nuevos tokens
-- `burn(uint256 amount)`: Quema tokens del remitente
-- `burnFrom(address account, uint256 amount)`: Quema tokens de una cuenta específica
+### Token Management
+- `mint(address to, uint256 amount)`: Creates new tokens
+- `burn(uint256 amount)`: Burns tokens from the caller's balance
+- `burnFrom(address account, uint256 amount)`: Burns tokens from a specific account (requires allowance)
 
-### Control de Pausado
-- `pause()`: Pausa todas las transferencias
-- `unpause()`: Reanuda las transferencias
+### Transfer Control
+- `pause()`: Pauses all token transfers
+- `unpause()`: Resumes token transfers
 
-### Información del Token
-- `decimals()`: Retorna el número de decimales del token
-- `maxSupply()`: Retorna el suministro máximo configurado
-- `totalSupply()`: Retorna el suministro actual
-- `balanceOf(address account)`: Retorna el balance de una dirección
+### Snapshots
+- `snapshot()`: Takes a snapshot of all balances
+- `balanceOfAt(address account, uint256 snapshotId)`: Gets balance of an account at a specific snapshot
+- `totalSupplyAt(uint256 snapshotId)`: Gets total supply at a specific snapshot
 
-## Ejemplo de Uso
+### Information
+- `maxSupply()`: Returns the configured maximum supply
+- `totalMinted()`: Returns the total number of tokens minted
+- `decimals()`: Returns the number of decimals
+- `totalSupply()`: Returns the current total supply
+- `balanceOf(address account)`: Returns the balance of an account
+
+## Example Usage
 
 ```solidity
-// Despliegue del contrato
+// Deploy the contract
 CustomizableERC20 token = new CustomizableERC20(
-    "Mi Token",    // nombre
-    "MTK",         // símbolo
-    1000000,       // suministro inicial (1 millón)
-    18,            // decimales
-    2000000        // suministro máximo (2 millones)
+    "My Token",     // name
+    "MTK",          // symbol
+    1000000,        // initial supply (1 million tokens)
+    18,             // decimals
+    10000000        // maximum supply (10 million tokens)
 );
 
-// Acuñar nuevos tokens (requiere MINTER_ROLE)
-token.mint(addressDestino, 1000);
+// Mint new tokens (requires MINTER_ROLE)
+token.mint(destinationAddress, 100000);
 
-// Quemar tokens
-token.burn(500);
+// Burn tokens
+token.burn(50000);
 
-// Pausar transferencias (requiere PAUSER_ROLE)
+// Pause transfers (requires PAUSER_ROLE)
 token.pause();
 
-// Reanudar transferencias (requiere PAUSER_ROLE)
+// Resume transfers (requires PAUSER_ROLE)
 token.unpause();
+
+// Take a snapshot
+uint256 snapshotId = token.snapshot();
+
+// Get balance at a specific snapshot
+uint256 balanceAtSnapshot = token.balanceOfAt(userAddress, snapshotId);
 ```
 
-## Seguridad
+## Security
 
-El contrato incluye:
-- Control de roles para funciones críticas
-- Comprobaciones de suministro máximo
-- Protección contra reentrada
-- Capacidad de pausa de emergencia
+The contract includes:
+- Role-based access control for critical functions
+- Maximum supply checks
+- Emergency pause capability
+- Snapshot functionality for governance
+- Safe math operations
 
-## Consideraciones
+## Considerations
 
-1. El deployer del contrato recibe todos los roles inicialmente
-2. El suministro máximo no puede ser modificado después del despliegue
-3. Los decimales son fijos después del despliegue
-4. Asegúrese de gestionar los roles de manera segura
+1. The contract deployer receives all roles initially
+2. Carefully manage role assignments for security
+3. The maximum supply cannot be changed after deployment
+4. Snapshots are permanent and accumulate in the contract storage
 
-## Licencia
+## License
 
-Este contrato está bajo la licencia MIT. 
+This contract is under the MIT license. 

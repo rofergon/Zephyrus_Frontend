@@ -49,6 +49,10 @@ export interface AgentResponse {
     language?: string;
     chat_id?: string;
     id?: string;
+    forceReload?: boolean;
+    isFullMessage?: boolean;
+    containsCode?: boolean;
+    noCompile?: boolean;
   };
 }
 
@@ -60,6 +64,7 @@ export interface WebSocketResponse {
     language?: string;
     chat_id?: string;
     id?: string;
+    forceReload?: boolean;
   };
 }
 
@@ -74,13 +79,14 @@ export class ChatService {
   private connectionChangeHandler: ((connected: boolean) => void) | null = null;
   private chatsLoadedHandler: ((chats: ChatInfo[]) => void) | null = null;
   
-  // Message buffering system
+  // Variables para control de buffering
   private messageBuffer: string = '';
   private messageBufferTimeout: NodeJS.Timeout | null = null;
-  private bufferTimeWindow: number = 500; // Time in ms to wait before processing buffered messages (no longer readonly)
+  private bufferTimeWindow: number = 5000; // Increased from 1500ms to 5000ms to accumulate more content
   private messageMetadata: any = null; // Store metadata from first message
-  private readonly paragraphThreshold: number = 500; // Minimum length to consider processing paragraphs separately
+  private readonly paragraphThreshold: number = 10000; // Increased threshold to avoid fragmentation
   private debugBuffering: boolean = false; // Debug option to log buffering decisions
+  private processingFullMessage: boolean = false; // Flag para evitar procesamiento simultáneo
 
   constructor() {
     this.messageHandler = null;
@@ -197,6 +203,21 @@ export class ChatService {
           // Manejar mensajes regulares del agente
           if (data.type === 'message') {
             console.log('[ChatService] Processing message:', data.content.substring(0, 50) + '...');
+            
+            // Proceso mejorado para mensajes regulares - buffer them
+            if (this.processingFullMessage) {
+              // Si ya estamos procesando un mensaje completo, acumular este fragmento
+              this.bufferMessage(data as AgentResponse);
+              return;
+            }
+            
+            // Si el mensaje parece ser un fragmento de algo mayor, acumularlo
+            if (data.content.length < 500 && 
+                !(data.content.trim().endsWith('.') || data.content.trim().endsWith('?') || data.content.trim().endsWith('!'))) {
+              // Parece un fragmento, lo agregamos al buffer
+              this.bufferMessage(data as AgentResponse);
+              return;
+            }
             
             // Guardar el mensaje del agente en la base de datos
             if (this.currentChatId) {
@@ -373,6 +394,40 @@ export class ChatService {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
 
+  /**
+   * Ensures messages are properly formatted for the Anthropic API
+   * Addresses the error: 'messages.4.content: Input should be a valid list'
+   * @param content The message content to format
+   * @param role The role of the message sender (user or assistant)
+   * @returns Properly formatted message content
+   */
+  private formatMessageContent(content: any, role: 'user' | 'assistant' = 'assistant'): any {
+    // If content is already an array and well-formed for Anthropic, return it
+    if (Array.isArray(content) && content.length > 0 && content.every(item => 
+      typeof item === 'object' && item !== null && 'type' in item && 'text' in item)) {
+      return content;
+    }
+    
+    // Assistant messages in Anthropic format should have array content
+    if (role === 'assistant') {
+      // If content is a string, wrap it in the proper format
+      if (typeof content === 'string') {
+        return [{ type: 'text', text: content }];
+      }
+      
+      // If content is already an object but not in array form
+      if (typeof content === 'object' && content !== null && !Array.isArray(content)) {
+        return [{ type: 'text', text: JSON.stringify(content) }];
+      }
+      
+      // Default fallback for assistant
+      return [{ type: 'text', text: String(content || '') }];
+    }
+    
+    // User messages can have string content
+    return typeof content === 'string' ? content : String(content || '');
+  }
+
   public sendMessage(content: string, context: any = {}, chatId?: string): void {
     if (!this.walletAddress || !this.walletAddress.startsWith('0x')) {
       console.error('[ChatService] Cannot send message without a valid wallet address');
@@ -433,6 +488,11 @@ export class ChatService {
       isUserResponse: true,
       context: processedContext
     };
+
+    // Format the message content properly for Anthropic API
+    if (message.type === 'message') {
+      message.content = this.formatMessageContent(content, 'user');
+    }
 
     console.log(`[ChatService] Sending message to agent with ID ${effectiveChatId}:`, { 
       messageType: message.type,
@@ -552,6 +612,48 @@ export class ChatService {
       console.log(`[ChatService] No active chat found with ID ${this.currentChatId}, using last chat: ${activeChat.id}`);
     }
     
+    // Eliminar posibles mensajes duplicados antes de procesar
+    if (activeChat && Array.isArray(activeChat.messages)) {
+      // Ordenar mensajes por tiempo
+      const sortedMessages = [...activeChat.messages].sort((a: any, b: any) => {
+        const timestampA = a.timestamp || a.created_at || 0;
+        const timestampB = b.timestamp || b.created_at || 0;
+        return new Date(timestampA).getTime() - new Date(timestampB).getTime();
+      });
+      
+      // Eliminar duplicados
+      const uniqueMessages: any[] = [];
+      const messageMap = new Map();
+      
+      sortedMessages.forEach((msg: any) => {
+        const senderKey = msg.sender || msg.role || 'unknown';
+        const contentKey = typeof msg.text === 'string' ? msg.text : 
+                         (typeof msg.content === 'string' ? msg.content : 
+                         JSON.stringify(msg.content || ''));
+        
+        const messageKey = `${senderKey}:${contentKey}`;
+        
+        if (!messageMap.has(messageKey)) {
+          messageMap.set(messageKey, true);
+          
+          // Asegurarse de que todos los mensajes tienen la propiedad isFullMessage
+          // para evitar problemas con la interfaz de usuario
+          uniqueMessages.push({
+            ...msg,
+            isFullMessage: true
+          });
+        }
+      });
+      
+      console.log(`[ChatService] Processed messages: ${activeChat.messages.length} -> ${uniqueMessages.length}`);
+      
+      // Actualizar el chat con los mensajes únicos
+      activeChat = {
+        ...activeChat,
+        messages: uniqueMessages
+      };
+    }
+    
     // Procesar los archivos del chat activo
     if (activeChat) {
       console.log('[ChatService] Processing active chat:', activeChat);
@@ -560,77 +662,19 @@ export class ChatService {
         await virtualFS.clear();
         console.log('[ChatService] Virtual file system cleared');
         
-        // Buscar el último mensaje que contenga un contrato Solidity completo
-        const lastCodeMessage = [...activeChat.messages]
-          .reverse()
-          .find(msg => {
-            const isCodeMessage = msg.type === 'code_edit' || msg.type === 'file_create';
-            if (!isCodeMessage || !msg.text) return false;
-            
-            // Verificar que es un contrato completo
-            const hasContract = msg.text.includes('contract') && msg.text.includes('pragma solidity');
-            const isComplete = msg.text.includes('{') && msg.text.includes('}');
-            
-            return hasContract && isComplete;
-          });
+        // Sincronizar completamente el historial de chat con el agente
+        // para evitar que se repitan los mensajes de usuario
+        this.syncFullChatHistory(activeChat.id, activeChat);
         
-        if (lastCodeMessage) {
-          console.log('[ChatService] Found last valid contract:', lastCodeMessage);
-          
-          // Extraer el código del mensaje
-          let codeContent = lastCodeMessage.text;
-          if (codeContent.includes('```')) {
-            codeContent = codeContent
-              .replace(/^```[^\n]*\n/, '')
-              .replace(/\n```$/, '')
-              .trim();
-          }
-          
-          // Restaurar el archivo
-          try {
-            console.log('[ChatService] Restoring contract file');
-            await virtualFS.writeFile('contracts/Contract.sol', codeContent);
-            console.log('[ChatService] Successfully restored contract file');
-            
-            // Forzar una recarga del código después de un breve retraso
-            setTimeout(() => {
-              if (this.messageHandler) {
-                console.log('[ChatService] Forcing code reload');
-                this.messageHandler({
-                  type: 'file_create',
-                  content: codeContent,
-                  metadata: {
-                    path: 'contracts/Contract.sol',
-                    language: 'solidity',
-                    forceReload: true
-                  }
-                });
-              }
-            }, 1000); // Esperar 1 segundo antes de forzar la recarga
-            
-          } catch (error) {
-            console.error('[ChatService] Failed to restore contract file:', error);
-          }
-        } else {
-          console.log('[ChatService] No valid contract found in history');
+        // Notificar a los manipuladores del evento de chats cargados
+        if (this.chatsLoadedHandler) {
+          this.chatsLoadedHandler(chats);
         }
       } catch (error) {
         console.error('[ChatService] Error processing virtual files:', error);
       }
     } else {
       console.warn('[ChatService] No active chat found');
-    }
-    
-    // Notificar a los handlers
-    if (this.chatsLoadedHandler) {
-      this.chatsLoadedHandler(chats);
-    }
-
-    if (activeChat && this.messageHandler) {
-      this.messageHandler({
-        type: 'context_switched',
-        content: JSON.stringify(activeChat)
-      });
     }
   }
 
@@ -711,7 +755,7 @@ export class ChatService {
     }
   }
 
-  // New method to buffer messages
+  // New method to buffer messages with improved handling
   private bufferMessage(data: AgentResponse): void {
     // Special handling for code_edit - these should be processed immediately
     if (data.type === 'code_edit' && this.messageHandler) {
@@ -733,148 +777,125 @@ export class ChatService {
       this.messageMetadata = data.metadata;
     }
     
-    // Set a new timeout to process the buffer - use shorter time window for certain message types
-    const timeWindow = (data.type === 'file_create' || data.content.includes('```') || data.type === 'message') 
-      ? 200  // Shorter window for code blocks, file_create, and regular messages
-      : this.bufferTimeWindow;
+    // Set a new timeout to process the buffer - use longer time window to collect more content
+    const timeWindow = data.content.includes('```') ? 
+      2000 :  // Longer window for code blocks to ensure we get the complete block
+      this.bufferTimeWindow;
     
     this.messageBufferTimeout = setTimeout(() => {
       if (this.messageBuffer && this.messageHandler) {
-        // Check if we should process the buffer as paragraphs
-        if (this.messageBuffer.length > this.paragraphThreshold) {
-          this.processMessageBuffer();
-        } else {
-          // Create a new response with the buffered content
-          const bufferedResponse: AgentResponse = {
-            type: 'message',
-            content: this.messageBuffer,
-            metadata: this.messageMetadata
-          };
-          
-          // Send the combined message to the handler
-          this.messageHandler(bufferedResponse);
-          
-          // Clear the buffer and metadata
-          this.messageBuffer = '';
-          this.messageMetadata = null;
-        }
+        this.processingFullMessage = true;
+        this.processMessageBuffer();
+        this.processingFullMessage = false;
       }
     }, timeWindow);
   }
 
-  // Process the message buffer intelligently
+  // Process the message buffer intelligently with improved handling
   private processMessageBuffer(): void {
     if (!this.messageBuffer || !this.messageHandler) {
       return;
     }
 
     if (this.debugBuffering) {
-      console.log('[ChatService] Processing message buffer:', this.messageBuffer.substring(0, 100) + '...');
+      console.log('[ChatService] Processing complete message buffer:', {
+        length: this.messageBuffer.length,
+        preview: this.messageBuffer.substring(0, 100) + '...'
+      });
     }
 
-    // Para mensajes que contienen bloques de código, enviar el mensaje completo como una unidad
-    if (this.messageBuffer.includes('```')) {
+    // Normalizar líneas en blanco y espacios extra
+    const processedContent = this.messageBuffer
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/\n{3,}/g, '\n\n');
+
+    // Para mensajes que contienen bloques de código, procesar para extraer contratos
+    if (processedContent.includes('```')) {
       if (this.debugBuffering) {
-        console.log('[ChatService] Message contains code blocks, processing as code message');
+        console.log('[ChatService] Message contains code blocks, processing for contract extraction');
       }
       
-      // Procesar el contenido para asegurar formato correcto
-      let processedContent = this.messageBuffer;
-      
-      // Normalizar saltos de línea
-      processedContent = processedContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      
-      // Asegurar que los bloques de código tienen el formato correcto
-      processedContent = processedContent
-        .replace(/```(\w*)\s*\n/g, '```$1\n')  // Normalizar apertura de bloques de código
-        .replace(/\n\s*```\s*\n/g, '\n```\n')  // Normalizar cierre de bloques de código
-        .replace(/\n{3,}/g, '\n\n');           // Eliminar exceso de líneas en blanco
-      
-      // Si el mensaje es un bloque de código completo y parece ser un contrato Solidity completo,
-      // enviarlo como file_create
-      if (processedContent.trim().startsWith('```') && 
-          processedContent.trim().endsWith('```') &&
-          processedContent.includes('contract') &&
-          processedContent.includes('pragma solidity')) {
+      // Try to extract Solidity code from message
+      const extractSolidityCode = (text: string): { code: string, isComplete: boolean } => {
+        // Look for Solidity code blocks
+        const codeBlockRegex = /```(?:solidity)?\s*([\s\S]*?)```/;
+        const match = text.match(codeBlockRegex);
         
-        const codeContent = processedContent
-          .trim()
-          .replace(/^```[^\n]*\n/, '')
-          .replace(/\n```$/, '')
-          .trim();
-        
-        // Verificar que es un contrato completo y no solo un fragmento
-        if (codeContent.includes('{') && codeContent.includes('}')) {
-          const bufferedResponse: AgentResponse = {
-            type: 'file_create',
-            content: codeContent,
-            metadata: {
-              ...this.messageMetadata,
-              path: 'contracts/Contract.sol',
-              language: 'solidity'
-            }
-          };
-          
-          if (this.debugBuffering) {
-            console.log('[ChatService] Sending as file_create:', {
-              type: bufferedResponse.type,
-              contentLength: codeContent.length,
-              isCompleteContract: true
-            });
-          }
-          
-          this.messageHandler(bufferedResponse);
-          return;
+        if (match && match[1]) {
+          const code = match[1].trim();
+          // Check if it's a complete contract
+          const isComplete = code.includes('contract') && 
+                            code.includes('{') && 
+                            code.includes('}') &&
+                            (code.includes('pragma solidity') || code.includes('// SPDX-License'));
+                            
+          return { code, isComplete };
         }
-      }
+        
+        return { code: '', isComplete: false };
+      };
       
-      // Si no es un contrato completo, enviarlo como mensaje normal
+      // Extract Solidity code from the message
+      const { code, isComplete } = extractSolidityCode(processedContent);
+      
+      // Primero enviar siempre el mensaje completo para mostrar en UI
+      const messageResponse: AgentResponse = {
+        type: 'message',
+        content: processedContent,
+        metadata: {
+          ...this.messageMetadata,
+          isFullMessage: true, // Marca que este es un mensaje completo, no fragmentado
+          containsCode: isComplete // Marca si el mensaje contiene código completo para evitar duplicar compilaciones
+        }
+      };
+      
+      this.messageHandler(messageResponse);
+      
+      // Si el mensaje contiene un contrato Solidity completo, enviarlo también como file_create
+      if (code && isComplete) {
+        console.log('[ChatService] Found complete Solidity contract in message, sending as file_create');
+        
+        // Esperar un poco antes de enviar el archivo para asegurar que el mensaje se procese primero
+        setTimeout(() => {
+          if (this.messageHandler) {
+            const fileResponse: AgentResponse = {
+              type: 'file_create',
+              content: code,
+              metadata: {
+                ...this.messageMetadata,
+                path: 'contracts/Contract.sol',
+                language: 'solidity',
+                noCompile: true // Indicador para evitar compilación duplicada
+              }
+            };
+            
+            this.messageHandler(fileResponse);
+          }
+        }, 500);
+      }
+    } else {
+      // Para mensajes sin bloques de código, enviar como un mensaje completo
       const bufferedResponse: AgentResponse = {
         type: 'message',
         content: processedContent,
-        metadata: this.messageMetadata
-      };
-      
-      this.messageHandler(bufferedResponse);
-    } else if (/^#{1,6} .*$/m.test(this.messageBuffer)) {
-      // Mantener el manejo existente para encabezados markdown
-      if (this.debugBuffering) {
-        console.log('[ChatService] Message contains markdown headings, preserving format');
-      }
-      
-      let cleanedText = this.messageBuffer
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      
-      const bufferedResponse: AgentResponse = {
-        type: 'message',
-        content: cleanedText,
-        metadata: this.messageMetadata
-      };
-      
-      this.messageHandler(bufferedResponse);
-    } else {
-      // Mantener el manejo existente para texto normal
-      if (this.debugBuffering) {
-        console.log('[ChatService] Processing as regular text message');
-      }
-      
-      let cleanedText = this.messageBuffer
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      
-      const bufferedResponse: AgentResponse = {
-        type: 'message',
-        content: cleanedText,
-        metadata: this.messageMetadata
+        metadata: {
+          ...this.messageMetadata,
+          isFullMessage: true // Marca que este es un mensaje completo, no fragmentado
+        }
       };
       
       this.messageHandler(bufferedResponse);
     }
-    
+
     // Limpiar el buffer
     this.messageBuffer = '';
     this.messageMetadata = null;
+    
+    if (this.messageBufferTimeout) {
+      clearTimeout(this.messageBufferTimeout);
+      this.messageBufferTimeout = null;
+    }
   }
 
   // Enable/disable debug logging for message buffering
@@ -952,13 +973,72 @@ export class ChatService {
       hasVirtualFiles: !!history.virtualFiles
     });
 
+    // Corregir el manejo de map para evitar parámetros implícitos any
+    const processedMessages = history.messages.map((msg: any) => {
+      // Para mensajes con contenido anidado
+      if (msg.content && Array.isArray(msg.content)) {
+        return {
+          ...msg,
+          // Ensure each content item has the required properties
+          content: msg.content.map((item: any) => {
+            if (typeof item === 'object' && item !== null) {
+              return {
+                type: item.type || 'text',
+                text: item.text || '',
+                ...item
+              };
+            }
+            return { type: 'text', text: String(item) };
+          })
+        };
+      }
+      return msg;
+    });
+
+    // Format messages to ensure proper structure for Anthropic API
+    const formattedMessages = processedMessages.map(msg => {
+      // Standard formatting logic same as syncChatHistory
+      if (typeof msg === 'object') {
+        // If content is an array, ensure it's properly formatted
+        if (Array.isArray(msg.content)) {
+          return {
+            ...msg,
+            content: msg.content.map((item: any) => {
+              if (typeof item === 'object' && item !== null) {
+                return {
+                  type: item.type || 'text',
+                  text: typeof item.text === 'string' ? item.text : String(item.text || '')
+                };
+              }
+              return { type: 'text', text: String(item || '') };
+            })
+          };
+        }
+        
+        // If content is not an array but should be based on format
+        if (msg.role === 'assistant' && typeof msg.content === 'string') {
+          return {
+            ...msg,
+            content: [{ type: 'text', text: msg.content }]
+          };
+        }
+
+        return msg;
+      }
+      
+      return {
+        role: typeof msg.sender === 'string' && msg.sender.toLowerCase() === 'user' ? 'user' : 'assistant',
+        content: typeof msg.text === 'string' ? msg.text : String(msg.text || '')
+      };
+    });
+
     const syncMessage = {
       type: "sync_chat_history",
       chat_id: chatId,
       history: {
         id: history.id,
         name: history.name,
-        messages: history.messages || [],
+        messages: formattedMessages,
         virtualFiles: history.virtualFiles || {},
         created_at: history.created_at,
         last_accessed: history.last_accessed
@@ -967,9 +1047,142 @@ export class ChatService {
 
     try {
       this.ws.send(JSON.stringify(syncMessage));
-      console.log('[ChatService] Chat history sync message sent successfully');
+      console.log('[ChatService] Chat history successfully sent to agent');
     } catch (error) {
-      console.error('[ChatService] Error sending chat history sync:', error);
+      console.error('[ChatService] Error sending chat history to agent:', error);
+    }
+  }
+
+  /**
+   * Sends a full synchronization of chat history to the backend
+   * Use this when you want to completely replace the chat history on the backend
+   */
+  public syncFullChatHistory(chatId: string, history: ChatInfo): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.error('[ChatService] Cannot sync full chat history: WebSocket not connected');
+      return;
+    }
+
+    console.log('[ChatService] Performing full chat history sync with agent:', {
+      chatId,
+      messageCount: history.messages?.length || 0
+    });
+
+    // Asegurarse de que los mensajes estén ordenados cronológicamente
+    const sortedMessages = [...(history.messages || [])].sort((a: any, b: any) => {
+      const timestampA = a.timestamp || a.created_at || 0;
+      const timestampB = b.timestamp || b.created_at || 0;
+      return new Date(timestampA).getTime() - new Date(timestampB).getTime();
+    });
+
+    // Eliminar posibles duplicados basados en contenido y remitente
+    const uniqueMessages: any[] = [];
+    const messageMap = new Map();
+    
+    sortedMessages.forEach((msg: any) => {
+      // Crear una clave única para el mensaje basada en contenido y remitente
+      const senderKey = msg.sender || msg.role || 'unknown';
+      const contentKey = typeof msg.text === 'string' ? msg.text : 
+                        (typeof msg.content === 'string' ? msg.content : 
+                        JSON.stringify(msg.content || ''));
+      
+      const messageKey = `${senderKey}:${contentKey}`;
+      
+      // Solo agregar el mensaje si no existe ya uno igual
+      if (!messageMap.has(messageKey)) {
+        messageMap.set(messageKey, true);
+        uniqueMessages.push(msg);
+      } else {
+        console.log('[ChatService] Skipping duplicate message:', {
+          sender: senderKey,
+          contentPreview: contentKey.substring(0, 30)
+        });
+      }
+    });
+    
+    console.log(`[ChatService] Reduced ${sortedMessages.length} messages to ${uniqueMessages.length} unique messages`);
+
+    // Corregir el manejo de map para evitar parámetros implícitos any
+    const processedHistory = {
+      ...history,
+      messages: uniqueMessages.map((msg: any) => {
+        // Para mensajes con contenido anidado
+        if (msg.content && Array.isArray(msg.content)) {
+          return {
+            ...msg,
+            // Ensure each content item has the required properties
+            content: msg.content.map((item: any) => {
+              if (typeof item === 'object' && item !== null) {
+                return {
+                  type: item.type || 'text',
+                  text: item.text || '',
+                  ...item
+                };
+              }
+              return { type: 'text', text: String(item) };
+            })
+          };
+        }
+        return msg;
+      })
+    };
+
+    // Format messages to ensure proper structure for Anthropic API
+    const formattedMessages = processedHistory.messages?.map(msg => {
+      // Standard formatting logic same as syncChatHistory
+      if (typeof msg === 'object') {
+        // If content is an array, ensure it's properly formatted
+        if (Array.isArray(msg.content)) {
+          return {
+            ...msg,
+            content: msg.content.map((item: any) => {
+              if (typeof item === 'object' && item !== null) {
+                return {
+                  type: item.type || 'text',
+                  text: typeof item.text === 'string' ? item.text : String(item.text || '')
+                };
+              }
+              return { type: 'text', text: String(item || '') };
+            })
+          };
+        }
+        
+        // If content is not an array but should be based on format
+        if (msg.role === 'assistant' && typeof msg.content === 'string') {
+          return {
+            ...msg,
+            content: [{ type: 'text', text: msg.content }]
+          };
+        }
+
+        return msg;
+      }
+      
+      return {
+        role: typeof msg.sender === 'string' && msg.sender.toLowerCase() === 'user' ? 'user' : 'assistant',
+        content: typeof msg.text === 'string' ? msg.text : String(msg.text || '')
+      };
+    }) || [];
+
+    const fullSyncMessage = {
+      type: "full_history_sync",
+      chat_id: chatId,
+      history: {
+        id: processedHistory.id,
+        name: processedHistory.name,
+        messages: formattedMessages,
+        virtualFiles: processedHistory.virtualFiles || {},
+        workspaces: processedHistory.workspaces || {},
+        created_at: processedHistory.created_at,
+        last_accessed: processedHistory.last_accessed
+      }
+    };
+
+    try {
+      this.ws.send(JSON.stringify(fullSyncMessage));
+      console.log('[ChatService] Full chat history successfully sent to agent');
+    } catch (error) {
+      console.error('[ChatService] Error sending full chat history to agent:', error);
     }
   }
 

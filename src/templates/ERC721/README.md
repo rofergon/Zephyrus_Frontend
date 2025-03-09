@@ -1,115 +1,118 @@
-# Customizable ERC721 NFT Template
+# ERC721 NFT Collection Contract
 
-Este template proporciona un contrato inteligente ERC721 (NFT) altamente personalizable con características modernas y seguras.
+## Overview
 
-## Características
+This contract implements an NFT collection with the following features:
 
-- **Minteable**: Nuevos NFTs pueden ser creados por direcciones con el rol MINTER_ROLE
-- **Quemable**: Los poseedores de NFTs pueden destruir sus tokens
-- **Pausable**: Las transferencias pueden ser pausadas por direcciones con el rol PAUSER_ROLE
-- **Enumerable**: Permite enumerar todos los tokens y sus propietarios
-- **Metadata URI**: Cada token puede tener su propia URI de metadata
-- **Control de Acceso Basado en Roles**: Diferentes permisos para diferentes roles
-- **Suministro Máximo Configurable**: Opción para establecer un límite máximo de NFTs
+- Based on OpenZeppelin's ERC721 standard
+- Includes roles for management and minting
+- Support for metadata through tokenURI
+- Includes minting, burning, and pausing capabilities
+- Optional maximum supply limit
 
-## Parámetros de Construcción
+## Deployment Parameters
 
-El contrato se inicializa con los siguientes parámetros:
-
-- `name`: Nombre de la colección NFT (ej. "Mi Colección NFT")
-- `symbol`: Símbolo de la colección (ej. "MCN")
-- `maxSupply_`: Suministro máximo de tokens (0 para ilimitado)
+- `name`: Name of the NFT collection (e.g. "My Cool NFTs")
+- `symbol`: Symbol of the collection (e.g. "MCN")
+- `maxSupply_`: Maximum token supply (0 for unlimited)
 
 ## Roles
 
-El contrato implementa los siguientes roles:
+The contract implements the following roles:
 
-- `DEFAULT_ADMIN_ROLE`: Puede gestionar otros roles
-- `MINTER_ROLE`: Puede crear nuevos NFTs
-- `PAUSER_ROLE`: Puede pausar/reanudar transferencias
+- `DEFAULT_ADMIN_ROLE`: Can manage other roles
+- `MINTER_ROLE`: Can create new NFTs
+- `PAUSER_ROLE`: Can pause/resume transfers
 
-## Funciones Principales
+## Main Functions
 
-### Administración de NFTs
-- `safeMint(address to, string memory uri)`: Crea un nuevo NFT con metadata
-- `burn(uint256 tokenId)`: Quema un NFT específico
-- `tokenURI(uint256 tokenId)`: Obtiene la URI de metadata de un token
+### NFT Management
+- `safeMint(address to, string memory uri)`: Creates a new NFT with metadata
+- `burn(uint256 tokenId)`: Burns a specific NFT
 
-### Control de Pausado
-- `pause()`: Pausa todas las transferencias
-- `unpause()`: Reanuda las transferencias
+### Transfers and Approvals
+- `approve(address to, uint256 tokenId)`: Approves another address to transfer a specific token
+- `getApproved(uint256 tokenId)`: Returns the approved address for a token
+- `setApprovalForAll(address operator, bool approved)`: Approves or revokes approval for an operator to manage all tokens
+- `isApprovedForAll(address owner, address operator)`: Checks if an operator is approved for all tokens of an owner
+- `transferFrom(address from, address to, uint256 tokenId)`: Transfers a token from one address to another
+- `safeTransferFrom(address from, address to, uint256 tokenId)`: Safely transfers a token (checks if receiver can handle ERC721)
 
-### Información de la Colección
-- `maxSupply()`: Retorna el suministro máximo configurado
-- `totalMinted()`: Retorna el número total de NFTs acuñados
-- `balanceOf(address owner)`: Retorna el número de NFTs de un propietario
-- `ownerOf(uint256 tokenId)`: Retorna el propietario de un NFT específico
+### Metadata
+- `tokenURI(uint256 tokenId)`: Returns the URI with the metadata of a token
+- `setBaseURI(string memory baseURI_)`: Changes the base URI for all tokens
 
-## Ejemplo de Uso
+### Supply and Pause
+- `pause()`: Pauses all token transfers
+- `unpause()`: Resumes token transfers
+- `setMaxSupply(uint256 maxSupply_)`: Changes the maximum supply limit
+
+## Events
+
+The contract emits the following events:
+
+- `Transfer(address indexed from, address indexed to, uint256 indexed tokenId)`: When a token is transferred
+- `Approval(address indexed owner, address indexed approved, uint256 indexed tokenId)`: When a token approval is set
+- `ApprovalForAll(address indexed owner, address indexed operator, bool approved)`: When approvals for all are set
+- `Paused(address account)`: When the contract is paused
+- `Unpaused(address account)`: When the contract is unpaused
+- `MaxSupplyChanged(uint256 oldMaxSupply, uint256 newMaxSupply)`: When the maximum supply is changed
+
+## Security Considerations
+
+- The contract uses access control for sensitive operations
+- Incorporates reentrancy protection through OpenZeppelin's ReentrancyGuard
+- Burns are irreversible - tokens cannot be recovered
+- The contract administrator should carefully manage role assignments
+
+## Example Usage
 
 ```solidity
-// Despliegue del contrato
+// Deploy the contract
 CustomizableERC721 nft = new CustomizableERC721(
-    "Mi Colección NFT",    // nombre
-    "MCN",                 // símbolo
-    1000                   // suministro máximo (1000 NFTs)
+    "My Cool NFTs",    // name
+    "MCN",             // symbol
+    1000               // maximum supply (1000 NFTs)
 );
 
-// Acuñar un nuevo NFT (requiere MINTER_ROLE)
+// Mint a new NFT (requires MINTER_ROLE)
 nft.safeMint(
     addressDestino,
     "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/1"
 );
 
-// Quemar un NFT
+// Burn an NFT
 nft.burn(0);
 
-// Pausar transferencias (requiere PAUSER_ROLE)
+// Pause transfers (requires PAUSER_ROLE)
 nft.pause();
 
-// Reanudar transferencias (requiere PAUSER_ROLE)
+// Resume transfers (requires PAUSER_ROLE)
 nft.unpause();
 ```
 
 ## Metadata
 
-El contrato soporta metadata siguiendo el estándar OpenSea, que debe tener el siguiente formato:
+The contract supports metadata following the OpenSea standard, which must have the following format:
 
 ```json
 {
-    "name": "Nombre del NFT",
-    "description": "Descripción del NFT",
+    "name": "NFT Name",
+    "description": "NFT Description",
     "image": "https://...",
     "attributes": [
         {
-            "trait_type": "Característica 1",
-            "value": "Valor 1"
+            "trait_type": "Feature 1",
+            "value": "Value 1"
         },
         {
-            "trait_type": "Característica 2",
-            "value": "Valor 2"
+            "trait_type": "Feature 2",
+            "value": "Value 2"
         }
     ]
 }
 ```
 
-## Seguridad
+## License
 
-El contrato incluye:
-- Control de roles para funciones críticas
-- Comprobaciones de suministro máximo
-- Protección contra reentrada
-- Capacidad de pausa de emergencia
-- Implementación segura de transferencias (safeMint)
-
-## Consideraciones
-
-1. El deployer del contrato recibe todos los roles inicialmente
-2. El suministro máximo no puede ser modificado después del despliegue
-3. Cada NFT debe tener una URI única para su metadata
-4. Las URIs de metadata deberían apuntar a recursos inmutables (ej. IPFS)
-5. Asegúrese de gestionar los roles de manera segura
-
-## Licencia
-
-Este contrato está bajo la licencia MIT. 
+This contract is under the MIT license. 
