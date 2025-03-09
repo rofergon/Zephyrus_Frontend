@@ -17,6 +17,8 @@ export interface Message {
   isTyping?: boolean;
   showAnimation?: boolean;
   customContent?: React.ReactNode;
+  isFullMessage?: boolean;
+  noCompile?: boolean;
 }
 
 interface MessageComponentProps {
@@ -46,90 +48,23 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
   useEffect(() => {
     if (originalTextRef.current !== message.text) {
       originalTextRef.current = message.text;
-      setDisplayedText('');
-      setFullTextRevealed(false);
-      // Don't animate for user messages or if animation is disabled
-      if (isUser || !message.showAnimation) {
-        setDisplayedText(message.text);
-        setFullTextRevealed(true);
-      }
+      setDisplayedText(message.text); // Always display full text immediately
+      setFullTextRevealed(true); // Always set full text as revealed
     }
-  }, [message.text, isUser, message.showAnimation]);
+  }, [message.text]);
 
   // Start animation when message is displayed and is AI message
   useEffect(() => {
-    if (isAI && message.text && message.showAnimation && !fullTextRevealed) {
-      setIsAnimating(true);
-      
-      let i = 0;
-      const fullText = message.text;
-      setDisplayedText('');
-      
-      // Clear any existing animation
-      if (animationRef.current) {
-        clearTimeout(animationRef.current);
-      }
-
-      // Function to animate text gradually
-      const animateText = () => {
-        if (i < fullText.length) {
-          const nextChar = fullText[i];
-          setDisplayedText(prev => prev + nextChar);
-          i++;
-          
-          // Determine typing speed based on context
-          let currentSpeed = typingSpeed;
-          
-          // Check the current position in the text to adjust speed
-          const currentSubstring = fullText.substring(0, i);
-          const remainingText = fullText.substring(i);
-          
-          // Faster for code blocks
-          const inCodeBlock = 
-            currentSubstring.includes('```') && 
-            !currentSubstring.split('```').filter((_, idx) => idx % 2 === 0).pop()?.includes('```');
-          
-          // Slower for headings to emphasize them
-          const nextIsHeading = remainingText.trimStart().match(/^#{1,6}\s/);
-          
-          // Check if we're at a special character or section
-          if (inCodeBlock) {
-            // Much faster for code blocks
-            currentSpeed = typingSpeed / codeBlockSpeedMultiplier;
-          } else if (nextChar === '#' || nextIsHeading) {
-            // Slower for headings
-            currentSpeed = typingSpeed * headingSpeedMultiplier;
-          } else if (nextChar === '\n' && remainingText.startsWith('\n')) {
-            // Longer pause at the end of paragraphs
-            currentSpeed = typingSpeed * 10;
-          } else if (/^\d+\.\s/.test(remainingText.trimStart())) {
-            // Pause before numbered points
-            currentSpeed = typingSpeed * 5;
-          }
-          
-          // Schedule next character
-          animationRef.current = setTimeout(animateText, currentSpeed);
-        } else {
-          setIsAnimating(false);
-          setFullTextRevealed(true);
-        }
-      };
-      
-      // Start the animation
-      animationRef.current = setTimeout(animateText, typingSpeed);
-      
-      // Cleanup function
-      return () => {
-        if (animationRef.current) {
-          clearTimeout(animationRef.current);
-        }
-      };
-    } else if (!message.showAnimation || isUser) {
-      // For user messages or when animation is disabled, show full text immediately
-      setDisplayedText(message.text);
-      setFullTextRevealed(true);
+    // Always display full text immediately without animation
+    setDisplayedText(message.text);
+    setFullTextRevealed(true);
+    setIsAnimating(false);
+    
+    // Clear any existing animation
+    if (animationRef.current) {
+      clearTimeout(animationRef.current);
     }
-  }, [isAI, message.text, message.showAnimation, fullTextRevealed]);
+  }, [isAI, message.text]);
 
   // Handle click to reveal full text immediately
   const handleMessageClick = () => {

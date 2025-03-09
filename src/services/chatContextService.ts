@@ -455,7 +455,7 @@ export class ChatContextService {
         text: message,
         sender: isUserMessage ? 'user' : 'ai',
         timestamp,
-        showAnimation: !isUserMessage
+        showAnimation: false // Always disable animation
       };
 
       // Actualizar el estado de mensajes inmediatamente
@@ -811,7 +811,7 @@ export class ChatContextService {
       text: apiMessage.content,
       sender: apiMessage.sender,
       timestamp,
-      showAnimation: apiMessage.sender === 'ai'
+      showAnimation: false // Always disable animation
     };
   }
 

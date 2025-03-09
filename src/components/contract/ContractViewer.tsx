@@ -418,8 +418,8 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       // Ensure currentCode is a string
       const codeString = typeof currentCode === 'string' 
         ? currentCode 
-        : typeof currentCode === 'object'
-          ? currentCode.toString && currentCode.toString !== Object.prototype.toString
+        : typeof currentCode === 'object' && currentCode !== null
+          ? 'toString' in currentCode && typeof currentCode.toString === 'function' && currentCode.toString !== Object.prototype.toString
             ? currentCode.toString()
             : JSON.stringify(currentCode, null, 2)
           : String(currentCode);
@@ -468,6 +468,12 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
       console.log('[ContractViewer] Code changed externally, processing update');
       console.log('[ContractViewer] Event detail type:', typeof event.detail);
       console.log('[ContractViewer] Content type:', typeof event.detail.content);
+      
+      // Check if we should skip compilation
+      const skipCompilation = event.detail.noCompile === true;
+      if (skipCompilation) {
+        console.log('[ContractViewer] Skipping compilation due to noCompile flag');
+      }
       
       try {
         // Procesar el código para asegurar formato correcto
@@ -549,8 +555,8 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
             const position = editor.getPosition();
             model.pushEditOperations(
               [],
-              [{
-                range: model.getFullModelRange(),
+              [{ 
+                range: model.getFullModelRange(), 
                 text: newCode
               }],
               () => null
@@ -563,14 +569,19 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
           }
         }
         
-        // Programar compilación
-        if (compileTimeoutRef.current) {
-          clearTimeout(compileTimeoutRef.current);
+        // Programar compilación solo si no se debe omitir
+        if (!skipCompilation) {
+          if (compileTimeoutRef.current) {
+            clearTimeout(compileTimeoutRef.current);
+          }
+          
+          compileTimeoutRef.current = setTimeout(() => {
+            console.log('[ContractViewer] Compiling after content change');
+            onCompile(newCode);
+          }, 500);
+        } else {
+          console.log('[ContractViewer] Skipping compilation due to noCompile flag');
         }
-        
-        compileTimeoutRef.current = setTimeout(() => {
-          onCompile(newCode);
-        }, 500);
       } catch (error) {
         console.error('[ContractViewer] Error processing code update:', error);
       }
