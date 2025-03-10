@@ -98,15 +98,20 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
       {/* Avatar for AI/System messages */}
       {!isUser && (
         <div className="flex-shrink-0 mr-4">
-          <div className={`w-10 h-10 rounded-xl transform transition-all duration-300 group-hover:scale-110 ${
-            isSystem 
-              ? 'bg-gradient-to-br from-red-500/30 to-red-700/40 border border-red-500/40 shadow-md shadow-red-500/10' 
-              : 'bg-gradient-to-br from-blue-500/30 to-indigo-600/40 border border-blue-500/40 shadow-md shadow-blue-500/10'
-          } flex items-center justify-center`}>
-            <CommandLineIcon className={`w-6 h-6 ${
-              isSystem ? 'text-red-400' : 'text-blue-400'
-            } group-hover:text-opacity-100 text-opacity-80 transition-all duration-300`} />
-          </div>
+          {isSystem ? (
+            <div className="w-10 h-10 rounded-xl transform transition-all duration-300 group-hover:scale-110 bg-gradient-to-br from-red-500/30 to-red-700/40 border border-red-500/40 shadow-md shadow-red-500/10 flex items-center justify-center">
+              <CommandLineIcon className="w-6 h-6 text-red-400 group-hover:text-opacity-100 text-opacity-80 transition-all duration-300" />
+            </div>
+          ) : (
+            <div className="w-16 h-16 transform transition-all duration-300 hover:scale-110 flex items-center justify-center relative">
+              <div className="absolute w-16 h-16 rounded-full bg-purple-700/20  opacity-30"></div>
+              <img 
+                src="/logo con texto zephyrus menos de2mb.png" 
+                alt="Zephyrus Logo" 
+                className="w-14 h-14 object-contain transition-all duration-300 " 
+              />
+            </div>
+          )}
         </div>
       )}
 

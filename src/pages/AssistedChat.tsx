@@ -1359,10 +1359,12 @@ const AssistedChat: React.FC = (): JSX.Element => {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-gray-900">
         <div className="text-center p-8 max-w-md mx-auto bg-gray-800 rounded-xl shadow-2xl border border-gray-700">
-          <div className="w-16 h-16 mx-auto mb-4 bg-blue-500/20 rounded-full flex items-center justify-center">
-            <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
+          <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+            <img 
+              src="/zephyrus logo.png" 
+              alt="Zephyrus Logo" 
+              className="w-14 h-14 object-contain" 
+            />
           </div>
           <h2 className="text-xl font-bold text-white mb-2">Wallet Connection Required</h2>
           <p className="text-gray-400 mb-6">Please connect your wallet to access the Zephyrus Contract Builder Agent.</p>
@@ -1379,10 +1381,12 @@ const AssistedChat: React.FC = (): JSX.Element => {
       {/* Main Header - Now spans full width */}
       <div className="flex-none h-16 border-b border-gray-700 bg-gray-800/80 backdrop-blur-sm px-4 flex items-center justify-between">
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center">
-            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
+          <div className="w-10 h-10 flex items-center justify-center">
+            <img 
+              src="/zephyrus logo.png" 
+              alt="Zephyrus Logo" 
+              className="w-9 h-9 object-contain" 
+            />
           </div>
           <div>
             <h2 className="text-lg font-semibold text-gray-200">Zephyrus Agent</h2>
@@ -1499,10 +1503,12 @@ const AssistedChat: React.FC = (): JSX.Element => {
                 {/* Chat Header */}
                 <div className="flex-none h-16 border-b border-gray-700 px-6 flex items-center justify-between bg-gray-800/95 rounded-t-lg">
                   <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center">
-                      <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                      </svg>
+                    <div className="w-10 h-10 flex items-center justify-center">
+                      <img 
+                        src="/zephyrus logo.png" 
+                        alt="Zephyrus Logo" 
+                        className="w-9 h-9 object-contain" 
+                      />
                     </div>
                     <div>
                       <h2 className="text-lg font-semibold text-white">Chat</h2>
