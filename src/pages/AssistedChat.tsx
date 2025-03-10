@@ -421,9 +421,39 @@ const AssistedChat: React.FC = (): JSX.Element => {
     
     service.onConnectionChange(handleChatConnection);
     
+    // Variable para controlar el temporizador de detección de fin de stream
+    let lastMessageTime = 0;
+    let streamCheckTimer: NodeJS.Timeout | null = null;
+    
+    // Función para verificar si el stream ha terminado
+    const checkStreamComplete = () => {
+      const currentTime = Date.now();
+      const timeSinceLastMessage = currentTime - lastMessageTime;
+      
+      // Si han pasado más de 2 segundos sin mensajes nuevos, considerar el stream como completado
+      if (timeSinceLastMessage > 2000) {
+        console.log('[ChatService] Message stream appears to be complete (No messages for 2 seconds)');
+        setIsTyping(false);
+        console.log('[AssistedChat] Message stream complete, resetting animation');
+        
+        if (streamCheckTimer) {
+          clearInterval(streamCheckTimer);
+          streamCheckTimer = null;
+        }
+      }
+    };
+    
     // Registrar manejador de mensajes
     service.onMessage((message: AgentResponse) => {
       console.log('[AssistedChat] Message received from WebSocket:', message);
+      
+      // Actualizar el tiempo del último mensaje recibido
+      lastMessageTime = Date.now();
+      
+      // Iniciar o restablecer el temporizador para verificar si el stream ha terminado
+      if (!streamCheckTimer) {
+        streamCheckTimer = setInterval(checkStreamComplete, 500);
+      }
       
       // Procesando diferentes tipos de mensajes
       if (message.type === 'message') {
@@ -436,6 +466,18 @@ const AssistedChat: React.FC = (): JSX.Element => {
           isTyping: false,
           showAnimation: false
         };
+        
+        // Si el mensaje está marcado como completo (isFullMessage), considerar el stream como terminado
+        if (message.metadata?.isFullMessage) {
+          console.log('[AssistedChat] Received message marked as complete, ending typing animation');
+          setIsTyping(false);
+          
+          // Limpiar el temporizador ya que ya sabemos que el stream está completo
+          if (streamCheckTimer) {
+            clearInterval(streamCheckTimer);
+            streamCheckTimer = null;
+          }
+        }
         
         // Actualizar los mensajes en el estado
         setMessages(prevMessages => {
@@ -474,6 +516,18 @@ const AssistedChat: React.FC = (): JSX.Element => {
       } else if (message.type === 'code_edit' || message.type === 'file_create') {
         // Procesamiento de ediciones de código o creación de archivos
         console.log(`[AssistedChat] Processing ${message.type}:`, message);
+        
+        // Los mensajes de tipo code_edit o file_create suelen ser los últimos de una secuencia
+        // Considerar que el stream ha terminado cuando se reciben estos tipos de mensajes
+        setTimeout(() => {
+          console.log(`[AssistedChat] ${message.type} processed, ending typing animation`);
+          setIsTyping(false);
+          
+          if (streamCheckTimer) {
+            clearInterval(streamCheckTimer);
+            streamCheckTimer = null;
+          }
+        }, 1000); // Pequeño retraso para asegurarse de que cualquier otro mensaje llegue primero
         
         if (message.metadata?.path && message.content) {
           // Actualizar archivos virtuales
@@ -657,6 +711,12 @@ const AssistedChat: React.FC = (): JSX.Element => {
       if (wsConnected) {
         console.log('[AssistedChat] Cleaning up WebSocket connection');
         service.disconnect();
+      }
+      
+      // Limpiar el temporizador de verificación de stream
+      if (streamCheckTimer) {
+        clearInterval(streamCheckTimer);
+        streamCheckTimer = null;
       }
     };
   }, [address, wsConnected, compileCode]);
