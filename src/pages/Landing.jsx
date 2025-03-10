@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion, useScroll, useTransform, useSpring, AnimatePresence } from 'framer-motion';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
   BeakerIcon, 
   ChatBubbleBottomCenterTextIcon,
@@ -131,6 +131,7 @@ const Landing = () => {
   const springConfig = { stiffness: 100, damping: 30, restDelta: 0.001 };
   const scaleSpring = useSpring(scale, springConfig);
   const { isConnected } = useAccount();
+  const navigate = useNavigate();
 
   // Texto que simula la IA escribiendo
   const [displayText, setDisplayText] = useState('');
@@ -148,6 +149,13 @@ const Landing = () => {
     }, 100);
     return () => clearInterval(timer);
   }, []);
+
+  // Efecto para redirigir al usuario al chat cuando conecta su billetera
+  useEffect(() => {
+    if (isConnected) {
+      navigate('/chat');
+    }
+  }, [isConnected, navigate]);
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 relative overflow-hidden">
