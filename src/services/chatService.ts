@@ -84,7 +84,6 @@ export class ChatService {
   private messageBufferTimeout: NodeJS.Timeout | null = null;
   private bufferTimeWindow: number = 5000; // Increased from 1500ms to 5000ms to accumulate more content
   private messageMetadata: any = null; // Store metadata from first message
-  private readonly paragraphThreshold: number = 10000; // Increased threshold to avoid fragmentation
   private debugBuffering: boolean = false; // Debug option to log buffering decisions
   private processingFullMessage: boolean = false; // Flag para evitar procesamiento simultáneo
 
