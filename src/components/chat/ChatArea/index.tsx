@@ -1,8 +1,7 @@
 import { useEffect, useRef } from 'react';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
-import { Message } from '../../../types/contracts';
-import { ErrorFix } from '../../../services/errorDetectionService';
+import { Message } from '../../../services/conversationService';
 
 interface ChatAreaProps {
   messages: Message[];
@@ -11,7 +10,6 @@ interface ChatAreaProps {
   isChatMaximized: boolean;
   onInputChange: (value: string) => void;
   onSubmit: (text: string) => void;
-  onFixRequest?: (errorFix: ErrorFix) => void;
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
@@ -20,8 +18,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   isTyping,
   isChatMaximized,
   onInputChange,
-  onSubmit,
-  onFixRequest
+  onSubmit
 }) => {
   // Referencia para el área de mensajes
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -75,7 +72,6 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         <ChatMessages 
           messages={messages}
           isTyping={isTyping}
-          onFixRequest={onFixRequest}
         />
       </div>
 

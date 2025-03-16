@@ -8,11 +8,11 @@ import {
   CodeBracketIcon, FolderIcon} from '@heroicons/react/24/outline';
 import { Link, useLocation } from 'react-router-dom';
 import 'react-resizable/css/styles.css';
-import { conversationService, type ConversationContext } from '../services/conversationService';
+import { conversationService, Message, type ConversationContext } from '../services/conversationService';
 import * as monaco from 'monaco-editor';
 import '../styles/editor.css';
 import '../styles/global.css';
-import { ContractArtifact, ConsoleMessage, Message } from '../types/contracts';
+import { ContractArtifact, ConsoleMessage } from '../types/contracts';
 import { CompilationService } from '../services/compilationService';
 import ContractViewer from '../components/contract/ContractViewer';
 import ChatArea from '../components/chat/ChatArea';
@@ -23,7 +23,6 @@ import { ChatContextService } from '../services/chatContextService';
 import FileExplorer from '../components/FileExplorer';
 import WorkspaceManager from '../components/chat/WorkspaceManager';
 import { ApiService } from '../services/apiService';
-import ErrorDetectionService, { ErrorFix } from '../services/errorDetectionService';
 
 
 const demoArtifact: ContractArtifact = {
@@ -85,8 +84,7 @@ const AssistedChat: React.FC = (): JSX.Element => {
   const compilationQueueRef = useRef<{code: string, timestamp: number}[]>([]);
   const compilationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const apiService = useRef(ApiService.getInstance());
-  const [pendingErrorFixes, setPendingErrorFixes] = useState<ErrorFix[]>([]);
-  const errorDetectionService = useRef<ErrorDetectionService>(ErrorDetectionService);
+  const [] = useState(false);
   const lastCompiledCodeRef = useRef<string | null>(null);
 
   // Add this helper function at the top level of the component
@@ -141,7 +139,7 @@ const AssistedChat: React.FC = (): JSX.Element => {
     return String(content);
   };
 
-  // Function to add messages to the console and check for errors
+  // Function to add messages to the console
   const addConsoleMessage = (message: string, type: ConsoleMessage['type']) => {
     const newMessage: ConsoleMessage = {
       id: generateUniqueId(),
@@ -150,14 +148,6 @@ const AssistedChat: React.FC = (): JSX.Element => {
       timestamp: Date.now()
     };
     setConsoleMessages(prev => [...prev, newMessage]);
-    
-    // If the message is an error, pass it to the error detection service
-    if (type === 'error' && errorDetectionService.current) {
-      const errorFix = errorDetectionService.current.detectErrors(newMessage);
-      if (errorFix) {
-        setPendingErrorFixes(prev => [...prev, errorFix]);
-      }
-    }
   };
 
   // Improved compilation function with stronger debouncing
@@ -366,25 +356,6 @@ const AssistedChat: React.FC = (): JSX.Element => {
     };
   }, [address]);
 
-  // Initialize error detection service 
-  useEffect(() => {
-    // Initialize the error detection service with the chat service
-    if (chatService.current) {
-      errorDetectionService.current.initialize(chatService.current);
-      
-      // Set up error detection callback
-      errorDetectionService.current.onErrorDetected((errorFix) => {
-        console.log('[AssistedChat] Error detected:', errorFix);
-        setPendingErrorFixes(prev => [...prev, errorFix]);
-      });
-    }
-    
-    return () => {
-      // Clear pending error fixes when component unmounts
-      setPendingErrorFixes([]);
-    };
-  }, []);
-
   // WebSocket connection effect - Modify to prevent duplicate connection
   useEffect(() => {
     const service = chatService.current;
@@ -413,17 +384,6 @@ const AssistedChat: React.FC = (): JSX.Element => {
           return prevMessages;
         }
         
-        // Check if there are any pending error fixes and attach the first one to this message
-        let errorFix = null;
-        if (pendingErrorFixes.length > 0 && !pendingErrorFixes[0].fixed) {
-          errorFix = pendingErrorFixes[0];
-          
-          // Mark the error fix as used so we don't use it again
-          setPendingErrorFixes(prev => 
-            prev.filter(fix => fix.id !== errorFix?.id)
-          );
-        }
-        
         // Create a new message object
         const newMessage: Message = {
           id: generateUniqueId(),
@@ -432,8 +392,7 @@ const AssistedChat: React.FC = (): JSX.Element => {
           timestamp: Date.now(),
           isTyping: false,
           showAnimation: false,
-          noCompile: response.metadata?.noCompile || false,
-          errorFix: errorFix
+          noCompile: response.metadata?.noCompile || false
         };
         
         console.log('[AssistedChat] Adding new message to UI:', newMessage.text.substring(0, 20) + '...');
@@ -509,7 +468,7 @@ const AssistedChat: React.FC = (): JSX.Element => {
       console.log('[AssistedChat] Cleaning up WebSocket connection handlers');
       // We're only cleaning up event handlers, not closing the connection
     };
-  }, [pendingErrorFixes]);
+  }, []);
 
   // Effect to compile code when currentCode changes
   useEffect(() => {
@@ -867,23 +826,6 @@ const AssistedChat: React.FC = (): JSX.Element => {
     }
   };
 
-  // Handle the fix request from the error fix button
-  const handleFixRequest = (errorFix: ErrorFix) => {
-    console.log('[AssistedChat] Fix requested for error:', errorFix);
-    
-    // Request the fix from the error detection service
-    errorDetectionService.current.requestFix(errorFix);
-    
-    // Update the pending error fixes to mark this one as fixed
-    setPendingErrorFixes(prev => 
-      prev.map(fix => 
-        fix.id === errorFix.id 
-          ? { ...fix, fixed: true } 
-          : fix
-      )
-    );
-  };
-
   // If the user is not connected, show connection required message
   if (!isConnected) {
     return (
@@ -1105,7 +1047,6 @@ const AssistedChat: React.FC = (): JSX.Element => {
                     isChatMaximized={isChatMaximized}
                     onInputChange={setInput}
                     onSubmit={handleSubmit}
-                    onFixRequest={handleFixRequest}
                   />
                 </div>
 

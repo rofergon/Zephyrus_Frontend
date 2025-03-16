@@ -4,8 +4,6 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { CommandLineIcon } from '@heroicons/react/24/outline';
 import { useState, useEffect, useRef } from 'react';
-import ErrorFixButton from './ErrorFixButton';
-import { ErrorFix } from '../services/errorDetectionService';
 
 export interface Message {
   id: string;
@@ -18,7 +16,6 @@ export interface Message {
   }>;
   isTyping?: boolean;
   showAnimation?: boolean;
-  errorFix?: ErrorFix;
   customContent?: React.ReactNode;
   isFullMessage?: boolean;
   noCompile?: boolean;
@@ -26,10 +23,9 @@ export interface Message {
 
 interface MessageComponentProps {
   message: Message;
-  onFixRequest?: (errorFix: ErrorFix) => void;
 }
 
-const MessageComponent: React.FC<MessageComponentProps> = ({ message, onFixRequest }) => {
+const MessageComponent: React.FC<MessageComponentProps> = ({ message }) => {
   const isSystem = message.sender === 'system';
   const isUser = message.sender === 'user';
   const isAI = message.sender === 'ai';
@@ -97,13 +93,6 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message, onFixReque
     }
   };
 
-  // Handle fix request
-  const handleFixRequest = (errorFix: ErrorFix) => {
-    if (onFixRequest) {
-      onFixRequest(errorFix);
-    }
-  };
-
   return (
     <div className={`flex justify-${isUser ? 'end' : 'start'} group animate-fade-in mb-6`}>
       {/* Avatar for AI/System messages */}
@@ -133,14 +122,6 @@ const MessageComponent: React.FC<MessageComponentProps> = ({ message, onFixReque
             absolute ${isUser ? 'right-0' : 'left-0'} -top-4`}>
             {formatTimestamp(message.timestamp)}
           </div>
-        )}
-        
-        {/* Error Fix Button - shown above AI message if present */}
-        {isAI && message.errorFix && onFixRequest && (
-          <ErrorFixButton 
-            errorFix={message.errorFix} 
-            onFixRequest={handleFixRequest}
-          />
         )}
         
         {/* Message Content */}

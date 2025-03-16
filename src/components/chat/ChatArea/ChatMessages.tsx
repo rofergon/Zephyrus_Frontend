@@ -1,7 +1,5 @@
 import { useRef, useEffect, useLayoutEffect, useState } from 'react';
-import MessageComponent from '../../MessageComponent';
-import { Message } from '../../../types/contracts';
-import { ErrorFix } from '../../../services/errorDetectionService';
+import MessageComponent, { Message } from '../../MessageComponent';
 
 // SVG Icons for token types
 const TokenIcons = {
@@ -326,7 +324,6 @@ const InlineContractSelector = ({ onSelect }: { onSelect: (type: ContractType) =
 interface ChatMessagesProps {
   messages: Message[];
   isTyping: boolean;
-  onFixRequest?: (errorFix: ErrorFix) => void;
 }
 
 // Add CSS animation for fade-in effect
@@ -490,8 +487,7 @@ const animationStyles = `
 
 const ChatMessages: React.FC<ChatMessagesProps> = ({
   messages,
-  isTyping,
-  onFixRequest
+  isTyping
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -647,7 +643,6 @@ I'm here to help you create, compile, test, and deploy Solidity smart contracts 
                   ...message,
                   showAnimation: false
                 }} 
-                onFixRequest={onFixRequest}
               />
             </div>
           ))}
@@ -672,7 +667,6 @@ I'm here to help you create, compile, test, and deploy Solidity smart contracts 
                 isTyping: true,
                 showAnimation: false
               }}
-              onFixRequest={onFixRequest}
             />
           </div>
         )}
