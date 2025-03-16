@@ -1,5 +1,7 @@
 import { useRef, useEffect, useLayoutEffect, useState } from 'react';
-import MessageComponent, { Message } from '../../MessageComponent';
+import MessageComponent from '../../MessageComponent';
+import { Message } from '../../../types/contracts';
+import { ErrorFix } from '../../../services/errorDetectionService';
 
 // SVG Icons for token types
 const TokenIcons = {
@@ -256,15 +258,15 @@ const InlineContractSelector = ({ onSelect }: { onSelect: (type: ContractType) =
                 <p>{TOKEN_TOOLTIP_INFO[tokenType.icon as keyof typeof TOKEN_TOOLTIP_INFO].description}</p>
                 
                 <div className="tooltip-specs">
-                  <div className="tooltip-spec">
+                  <div className="tooltip-spec" key={`${tokenType.id}-usecase`}>
                     <span className="spec-label">Common Use:</span>
                     <span className="spec-value">{TOKEN_TOOLTIP_INFO[tokenType.icon as keyof typeof TOKEN_TOOLTIP_INFO].useCases}</span>
                   </div>
-                  <div className="tooltip-spec">
+                  <div className="tooltip-spec" key={`${tokenType.id}-complexity`}>
                     <span className="spec-label">Complexity:</span>
                     <span className="spec-value">{TOKEN_TOOLTIP_INFO[tokenType.icon as keyof typeof TOKEN_TOOLTIP_INFO].complexity}</span>
                   </div>
-                  <div className="tooltip-spec">
+                  <div className="tooltip-spec" key={`${tokenType.id}-gas`}>
                     <span className="spec-label">Gas Efficiency:</span>
                     <span className="spec-value">{TOKEN_TOOLTIP_INFO[tokenType.icon as keyof typeof TOKEN_TOOLTIP_INFO].gasEfficiency}</span>
                   </div>
@@ -324,6 +326,7 @@ const InlineContractSelector = ({ onSelect }: { onSelect: (type: ContractType) =
 interface ChatMessagesProps {
   messages: Message[];
   isTyping: boolean;
+  onFixRequest?: (errorFix: ErrorFix) => void;
 }
 
 // Add CSS animation for fade-in effect
@@ -487,7 +490,8 @@ const animationStyles = `
 
 const ChatMessages: React.FC<ChatMessagesProps> = ({
   messages,
-  isTyping
+  isTyping,
+  onFixRequest
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -643,6 +647,7 @@ I'm here to help you create, compile, test, and deploy Solidity smart contracts 
                   ...message,
                   showAnimation: false
                 }} 
+                onFixRequest={onFixRequest}
               />
             </div>
           ))}
@@ -667,6 +672,7 @@ I'm here to help you create, compile, test, and deploy Solidity smart contracts 
                 isTyping: true,
                 showAnimation: false
               }}
+              onFixRequest={onFixRequest}
             />
           </div>
         )}

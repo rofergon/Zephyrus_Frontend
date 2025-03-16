@@ -24,6 +24,7 @@ export interface ChatContextConfig {
   chatService: ChatService;
   address?: string;
   demoArtifact: ContractArtifact;
+  setSelectedFile?: (filePath: string) => void;
 }
 
 export class ChatContextService {
@@ -39,14 +40,18 @@ export class ChatContextService {
   /**
    * Crea un nuevo contexto de chat
    */
-  public async createNewChat(customContextId?: string): Promise<void> {
+  public async createNewChat(): Promise<void> {
     try {
       console.log('[ChatContextService] Creating new chat');
       
       if (!this.config.address) {
         console.error('[ChatContextService] Cannot create chat without wallet address');
+        this.config.addConsoleMessage('Cannot create chat without wallet address', 'error');
         return;
       }
+
+      // Disconnect any active WebSocket connection first to prevent duplicate connections
+      this.config.chatService.disconnect();
 
       // Crear la conversación en la base de datos primero
       const newConversation = await apiService.createConversation(
@@ -60,16 +65,20 @@ export class ChatContextService {
         throw new Error('Failed to create conversation - no ID returned');
       }
 
-      // Usar el ID devuelto por la base de datos
+      // ALWAYS use the ID returned by the database - single source of truth
       const contextId = newConversation.id;
+      console.log(`[ChatContextService] Using database-generated ID as source of truth: ${contextId}`);
       
-      // Verificar que el ID no esté duplicado
-      if (this.currentContexts.some((ctx: ConversationContext) => ctx.id === contextId)) {
-        console.warn(`[ChatContextService] Detected duplicate context ID: ${contextId}`);
+      // First check if this context already exists
+      const existingContext = this.currentContexts.find(ctx => ctx.id === contextId);
+      
+      if (existingContext) {
+        console.log(`[ChatContextService] Context ${contextId} already exists, switching to it`);
+        await this.handleContextSwitch(contextId);
         return;
       }
       
-      // Crear nuevo contexto
+      // Create new context
       const newContext: ConversationContext = {
         id: contextId,
         name: newConversation.name || 'New Chat',
@@ -80,31 +89,62 @@ export class ChatContextService {
         createdAt: newConversation.created_at || new Date().toISOString(),
       };
       
-      // Actualizar el servicio de conversación
-      conversationService.createNewContext(newContext);
+      // Create a default workspace for this context
+      const workspaceId = `ws_${Date.now()}`;
+      const defaultWorkspace = {
+        id: workspaceId,
+        name: 'Default Workspace',
+        description: 'Default workspace for this conversation',
+        files: {},
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
       
-      // Desactivar contexto actual
-      const updatedContexts = this.currentContexts.map((ctx: ConversationContext) => ({
+      newContext.workspaces = {
+        [workspaceId]: defaultWorkspace
+      };
+      newContext.activeWorkspace = workspaceId;
+
+      // Set the ID in chatService to maintain consistency
+      this.config.chatService.setCurrentChatId(contextId);
+      
+      // Create the context in conversationService
+      await conversationService.createNewContext(newContext, contextId);
+      
+      // Reconnect with the new chat ID
+      this.config.chatService.connect(this.config.address, contextId);
+      
+      // Deactivate all other contexts
+      const updatedContexts = this.currentContexts.map(ctx => ({
         ...ctx,
-        active: false
+        active: ctx.id === contextId
       }));
       
       // Añadir el nuevo contexto
-      const newContexts = [...updatedContexts, newContext];
+      updatedContexts.push({
+        ...newContext,
+        active: true
+      });
       
-      // Actualizar el estado local
-      this.currentContexts = newContexts;
+      // Update our contexts
+      this.currentContexts = updatedContexts;
       
-      // Actualizar el estado
-      this.config.setConversationContexts(newContexts);
+      // Update the UI
+      this.config.setConversationContexts(updatedContexts);
       this.config.setActiveContext(newContext);
-      this.config.chatService.setCurrentChatId(newContext.id);
+      this.config.setMessages([]);
       
-      console.log(`[ChatContextService] New chat created with ID: ${contextId}, total contexts: ${newContexts.length}`);
+      // Forzar una actualización inmediata de la UI
+      setTimeout(() => {
+        console.log('[ChatContextService] Forcing UI update after new chat creation');
+        this.config.setActiveContext({...newContext, active: true});
+      }, 100);
+      
+      // Success message
+      this.config.addConsoleMessage('Created new chat successfully', 'success');
     } catch (error) {
       console.error('[ChatContextService] Error creating new chat:', error);
-      this.config.addConsoleMessage('Failed to create new chat', 'error');
-      throw error;
+      this.config.addConsoleMessage(`Error creating new chat: ${error instanceof Error ? error.message : String(error)}`, 'error');
     }
   }
 
@@ -166,7 +206,7 @@ export class ChatContextService {
         console.log('[ChatContextService] Database query for contracts completed:', {
           address: this.config.address,
           contractsFound: contracts.length,
-          contracts: contracts.map(c => ({
+          contracts: contracts.map((c: any) => ({
             name: c.name,
             address: c.contract_address,
             hasAbi: !!c.abi,
@@ -504,12 +544,13 @@ export class ChatContextService {
    */
   private async loadLastDeployedContract(conversationId: string): Promise<void> {
     try {
+      const walletAddress = this.config.address;
       console.log('[ChatContextService] Starting to load last deployed contract:', {
-        address: this.config.address,
+        address: walletAddress,
         timestamp: new Date().toISOString()
       });
 
-      if (!this.config.address) {
+      if (!walletAddress) {
         console.error('[ChatContextService] No wallet address available');
         this.config.setCurrentArtifact(this.config.demoArtifact);
         return;
@@ -521,13 +562,13 @@ export class ChatContextService {
         
         // Si no hay contratos para esta conversación, obtener todos los contratos del usuario
         if (!contracts || contracts.length === 0) {
-          contracts = await this.config.databaseService.getDeployedContracts(this.config.address);
+          contracts = await this.config.databaseService.getDeployedContracts(walletAddress);
         }
         
         console.log('[ChatContextService] Database query completed:', {
-          address: this.config.address,
+          address: walletAddress,
           contractsFound: contracts.length,
-          contracts: contracts.map(c => ({
+          contracts: contracts.map((c: any) => ({
             name: c.name,
             address: c.contract_address,
             hasAbi: !!c.abi,
@@ -627,27 +668,182 @@ export class ChatContextService {
           // Actualizar el código fuente si está disponible
           if (lastContract.source_code) {
             let sourceCode = '';
+            console.log('[ChatContextService] Contract has source code, processing...', {
+              type: typeof lastContract.source_code,
+              length: typeof lastContract.source_code === 'string' 
+                ? lastContract.source_code.length 
+                : JSON.stringify(lastContract.source_code).length
+            });
+            
             try {
               if (typeof lastContract.source_code === 'string') {
+                console.log('[ChatContextService] Source code is string, length:', lastContract.source_code.length);
+                console.log('[ChatContextService] Source code preview:', lastContract.source_code.substring(0, 100) + '...');
+                
                 try {
                   // Intentar parsear como JSON primero
                   const parsedSource = JSON.parse(lastContract.source_code);
+                  console.log('[ChatContextService] Successfully parsed source code as JSON:', {
+                    keys: Object.keys(parsedSource),
+                    hasContent: 'content' in parsedSource,
+                    contentType: 'content' in parsedSource ? typeof parsedSource.content : 'N/A'
+                  });
+                  
                   sourceCode = typeof parsedSource === 'object' && parsedSource !== null && 'content' in parsedSource
                     ? parsedSource.content
                     : lastContract.source_code;
-                } catch {
+                    
+                  console.log('[ChatContextService] Extracted source code', 
+                    sourceCode ? `(${sourceCode.length} chars)` : '(empty)', {
+                      preview: sourceCode.substring(0, 100) + '...'
+                    });
+                } catch (parseError) {
                   // Si no es JSON válido, usar el string directamente
+                  console.error('[ChatContextService] Source code is not valid JSON, using as-is:', parseError);
                   sourceCode = lastContract.source_code;
+                }
+              } else if (typeof lastContract.source_code === 'object' && lastContract.source_code !== null) {
+                console.log('[ChatContextService] Source code is object:', {
+                  keys: Object.keys(lastContract.source_code as Record<string, any>),
+                  hasContent: 'content' in (lastContract.source_code as Record<string, any>),
+                  contentType: 'content' in (lastContract.source_code as Record<string, any>) ? 
+                    typeof (lastContract.source_code as Record<string, any>).content : 'N/A'
+                });
+                
+                if ('content' in (lastContract.source_code as Record<string, any>)) {
+                  sourceCode = (lastContract.source_code as Record<string, any>).content;
+                  console.log('[ChatContextService] Extracted content from object:', 
+                    sourceCode ? `(${sourceCode.length} chars)` : '(empty)');
+                } else {
+                  sourceCode = JSON.stringify(lastContract.source_code, null, 2);
+                  console.log('[ChatContextService] Stringified object:', 
+                    sourceCode ? `(${sourceCode.length} chars)` : '(empty)');
                 }
               }
               
               if (sourceCode) {
+                console.log('[ChatContextService] Setting current code in editor:', 
+                  sourceCode.substring(0, 100) + '...');
+                  
+                // Set code to editor
                 this.config.setCurrentCode(sourceCode);
                 this.config.setShowCodeEditor(true);
+                
+                // Also add to virtual files if not already there
+                const activeContext = this.getActiveContext();
+                const existingFiles = Object.keys(activeContext?.virtualFiles || {})
+                  .filter(path => path.endsWith('.sol'));
+                
+                console.log('[ChatContextService] Virtual files check:', {
+                  hasActiveContext: !!activeContext,
+                  existingFiles,
+                  willAddNewFile: existingFiles.length === 0 && !!activeContext
+                });
+                
+                if (existingFiles.length === 0 && activeContext) {
+                  console.log('[ChatContextService] Adding contract to virtual files');
+                  
+                  const filePath = `contracts/${lastContract.name || 'Contract'}.sol`;
+                  const virtualFile = {
+                    content: sourceCode,
+                    language: 'solidity',
+                    timestamp: Date.now()
+                  };
+                  
+                  console.log(`[ChatContextService] Created virtual file: ${filePath}`, {
+                    contentLength: virtualFile.content.length,
+                    language: virtualFile.language
+                  });
+                  
+                  // Update context with the new file
+                  const updatedContext = {
+                    ...activeContext,
+                    virtualFiles: {
+                      ...activeContext.virtualFiles,
+                      [filePath]: virtualFile
+                    }
+                  };
+                  
+                  console.log('[ChatContextService] Updating active context with new virtual file');
+                  
+                  // Update in context list
+                  this.config.setConversationContexts(prevContexts => 
+                    prevContexts.map((ctx: ConversationContext) => 
+                      ctx.id === activeContext.id ? updatedContext : ctx
+                    )
+                  );
+                  
+                  // Set as active context
+                  this.config.setActiveContext(updatedContext);
+                  
+                  // Force UI update by setting selected file
+                  if (this.config.setSelectedFile) {
+                    console.log(`[ChatContextService] Setting selected file to: ${filePath}`);
+                    this.config.setSelectedFile(filePath);
+                  }
+                } else {
+                  console.log('[ChatContextService] Contract already exists in virtual files or no active context:', {
+                    existingFiles,
+                    hasActiveContext: !!activeContext
+                  });
+                }
+              } else {
+                console.warn('[ChatContextService] No valid source code extracted');
               }
             } catch (e) {
-              console.error('[ChatContextService] Error parsing source code:', e);
+              console.error('[ChatContextService] Error processing source code:', e);
+              
+              // Fallback: Try to use the source code directly anyway
+              try {
+                if (lastContract.source_code && typeof lastContract.source_code === 'string') {
+                  console.log('[ChatContextService] Using source code directly as fallback');
+                  this.config.setCurrentCode(lastContract.source_code);
+                  this.config.setShowCodeEditor(true);
+                  
+                  // Also add to virtual files if not already there
+                  const activeContext = this.getActiveContext();
+                  if (activeContext) {
+                    console.log('[ChatContextService] Adding fallback contract to virtual files');
+                    
+                    const filePath = `contracts/${lastContract.name || 'Contract'}.sol`;
+                    const virtualFile = {
+                      content: lastContract.source_code,
+                      language: 'solidity',
+                      timestamp: Date.now()
+                    };
+                    
+                    // Update context with the new file
+                    const updatedContext = {
+                      ...activeContext,
+                      virtualFiles: {
+                        ...activeContext.virtualFiles,
+                        [filePath]: virtualFile
+                      }
+                    };
+                    
+                    // Update in context list
+                    this.config.setConversationContexts(prevContexts => 
+                      prevContexts.map((ctx: ConversationContext) => 
+                        ctx.id === activeContext.id ? updatedContext : ctx
+                      )
+                    );
+                    
+                    // Set as active context
+                    this.config.setActiveContext(updatedContext);
+                    
+                    // Force UI update by setting selected file
+                    if (this.config.setSelectedFile) {
+                      console.log(`[ChatContextService] Setting selected file to: ${filePath}`);
+                      this.config.setSelectedFile(filePath);
+                    }
+                  }
+                }
+              } catch (fallbackError) {
+                console.error('[ChatContextService] Fallback also failed:', fallbackError);
+              }
             }
+          } else {
+            console.warn('[ChatContextService] Contract does not have source code');
           }
 
           this.config.setCurrentArtifact(contractArtifact);
@@ -751,7 +947,17 @@ export class ChatContextService {
         };
         
         // Persistir el contexto actualizado
-        conversationService.updateContext(activeContext);
+        const currentActiveContext = conversationService.getActiveContext();
+        conversationService.updateContext(
+          activeContext.id,
+          {
+            name: activeContext.name || 'Chat',
+            active: true,
+            virtualFiles: activeContext.virtualFiles || {},
+            workspaces: activeContext.workspaces || {}
+          },
+          activeContext
+        );
         
         // También guardar en el sistema de archivos virtual si está disponible
         try {
@@ -816,95 +1022,142 @@ export class ChatContextService {
   }
 
   /**
-   * Inicializa un chat con un ID específico
-   * @param chatId ID del chat de la base de datos
-   * @param isNewChat Indica si es un chat nuevo o existente
+   * Initialize a specific chat by ID
    */
   public async initializeChat(chatId: string, isNewChat: boolean): Promise<void> {
     try {
-      console.log('[ChatContextService] Initializing chat:', {
-        chatId,
-        isNewChat,
-        address: this.config.address
-      });
+      console.log(`[ChatContextService] Initializing chat: ${chatId}, isNewChat: ${isNewChat}`);
 
-      if (!chatId) {
-        throw new Error('Chat ID is required');
+      // Check if the chat ID already exists in our contexts
+      const existingContext = this.currentContexts.find(ctx => ctx.id === chatId);
+      if (existingContext) {
+        console.log(`[ChatContextService] Found existing context with ID ${chatId}, activating it`);
+        
+        // Just activate the existing context rather than creating a new one
+        this.handleContextSwitch(chatId);
+        return;
       }
 
-      // Cargar los mensajes del chat
-      let messages: Message[] = [];
-      try {
-        const apiMessages = await apiService.getMessages(chatId);
-        messages = apiMessages.map(msg => this.convertApiMessageToUiMessage(msg));
-        console.log('[ChatContextService] Loaded messages from API:', {
-          chatId,
-          messageCount: messages.length
-        });
-      } catch (error) {
-        console.error('[ChatContextService] Error loading messages from API:', error);
-      }
-
-      // Crear el contexto base con los mensajes cargados
-      const newContext: ConversationContext = {
-        id: chatId,
-        name: isNewChat ? 'New Chat' : `Chat ${chatId.substring(0, 8)}`,
-        messages,
-        virtualFiles: {},
-        workspaces: {},
-        active: true,
-        createdAt: new Date().toISOString()
-      };
-
-      // Desactivar contextos actuales
-      const updatedContexts = this.currentContexts.map((ctx: ConversationContext) => ({
-        ...ctx,
-        active: false
-      }));
-
-      // Añadir el nuevo contexto
-      const newContexts = [...updatedContexts, newContext];
-
-      // Actualizar estado local
-      this.currentContexts = newContexts;
-      
-      // Actualizar el servicio de conversación
-      conversationService.setContexts(newContexts);
-      conversationService.setActiveContext(chatId);
-      
-      // Actualizar estados en la UI
-      this.config.setConversationContexts(newContexts);
-      this.config.setActiveContext(newContext);
-      this.config.setMessages(newContext.messages);
-
-      // Cargar contratos asociados si existen
-      if (this.config.address) {
+      // If not new chat, fetch chat data
+      if (!isNewChat) {
         try {
-          const contracts = await apiService.getContracts(this.config.address);
-          const chatContracts = contracts.filter(c => c.conversation_id === chatId);
+          // Fetch chat messages from API if it's not a new chat
+          const messages = await apiService.getMessages(chatId);
+          console.log(`[ChatContextService] Retrieved ${messages.length} messages for chat ${chatId}`);
+
+          // Convert API messages to UI format
+          const convertedMessages: Message[] = messages.map(this.convertApiMessageToUiMessage);
           
-          if (chatContracts.length > 0) {
-            const lastContract = chatContracts[0]; // Usar el contrato más reciente
-            console.log('[ChatContextService] Loading associated contract:', lastContract.name);
+          // Deduplicate messages
+          console.log('[ChatContextService] Deduplicating messages');
+          const uniqueMessagesMap = new Map();
+          const messageSignatures = new Set();
+          
+          const uiMessages = convertedMessages.filter(msg => {
+            // Si no tiene ID o no tiene texto, no es un mensaje válido
+            if (!msg.id || !msg.text) return false;
             
-            if (lastContract.source_code) {
-              this.config.setCurrentCode(lastContract.source_code);
-              this.config.setShowCodeEditor(true);
-              await this.config.compileCode(lastContract.source_code);
+            // Crear una firma única basada en contenido y remitente
+            const signature = `${msg.sender}:${msg.text.substring(0, 100)}`;
+            
+            // Si ya hemos visto este mensaje (por ID o por contenido similar), filtrarlo
+            if (uniqueMessagesMap.has(msg.id) || messageSignatures.has(signature)) {
+              console.log(`[ChatContextService] Filtered duplicate message: ${signature.substring(0, 30)}...`);
+              return false;
             }
+            
+            // Si es único, agregarlo a nuestros conjuntos de seguimiento
+            uniqueMessagesMap.set(msg.id, true);
+            messageSignatures.add(signature);
+            return true;
+          });
+          
+          console.log(`[ChatContextService] Deduplication: ${convertedMessages.length} -> ${uiMessages.length}`);
+
+          // Create a conversation context from the loaded data
+          const chatContext: ConversationContext = {
+            id: chatId,
+            name: 'Loaded Chat', // Default name, will update later
+            messages: uiMessages,
+            virtualFiles: {},
+            workspaces: {},
+            active: true,
+            createdAt: new Date().toISOString()
+          };
+
+          // Register this as a new context in the conversation service
+          const newContext = await conversationService.createNewContext(chatContext);
+          
+          // Make it active
+          await conversationService.setActiveContext(chatId);
+
+          // Update the UI state
+          this.config.setMessages(uiMessages);
+          this.config.setActiveContext(newContext);
+          
+          // Set all contexts
+          const allContexts = [...this.currentContexts.filter(ctx => ctx.id !== chatId).map(ctx => ({
+            ...ctx,
+            active: false
+          })), newContext];
+          
+          this.currentContexts = allContexts;
+          this.config.setConversationContexts(allContexts);
+
+          // Load last deployed contract if available - pass the wallet address
+          if (this.config.address) {
+            console.log(`[ChatContextService] Loading last deployed contract with wallet: ${this.config.address}`);
+            await this.loadLastDeployedContract(chatId);
+          } else {
+            console.warn('[ChatContextService] No wallet address available, skipping contract loading');
           }
+
+          // Update this in the ChatService too
+          this.config.chatService.setCurrentChatId(chatId);
+
+          console.log(`[ChatContextService] Successfully initialized chat ${chatId}`);
         } catch (error) {
-          console.error('[ChatContextService] Error loading associated contracts:', error);
+          console.error(`[ChatContextService] Error initializing chat ${chatId}:`, error);
+          this.config.addConsoleMessage('Error loading chat history', 'error');
         }
       }
-
-      console.log('[ChatContextService] Chat initialization completed:', {
-        chatId,
-        contextCount: newContexts.length
-      });
     } catch (error) {
-      console.error('[ChatContextService] Error in initializeChat:', error);
-      throw error;
+      console.error(`[ChatContextService] Error in initializeChat:`, error);
+      this.config.addConsoleMessage(`Failed to initialize chat: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    }
+  }
+
+  /**
+   * Gets the currently active context from conversation service
+   * @returns The active context or undefined if none is active
+   */
+  private getActiveContext(): ConversationContext | undefined {
+    return conversationService.getActiveContext();
+  }
+
+  private async persistUpdate(): Promise<void> {
+    const timestamp = Date.now();
+    console.log(`[ChatContextService] Persisting updates at ${timestamp}`);
+    
+    const activeContext = this.getActiveContext();
+    
+    // Update in conversation service
+    if (activeContext) {
+      conversationService.updateContext(
+        activeContext.id,
+        {
+          name: activeContext.name || 'Chat',
+          active: true,
+          virtualFiles: activeContext.virtualFiles || {},
+          workspaces: activeContext.workspaces || {}
+        },
+        activeContext
+      );
+    }
+    
+    // Save to virtual FS if available - fix the condition
+    if (virtualFS) {
+      // ... existing code ...
     }
   }
 } 

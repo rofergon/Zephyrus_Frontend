@@ -73,6 +73,15 @@ export interface Message {
   }>;
   isTyping?: boolean;
   showAnimation?: boolean;
+  errorFix?: {
+    id: string;
+    error: string;
+    timestamp: number;
+    fixed: boolean;
+  };
+  customContent?: React.ReactNode;
+  isFullMessage?: boolean;
+  noCompile?: boolean;
 }
 
 export interface ConsoleMessage {

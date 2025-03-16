@@ -76,6 +76,7 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
   const [, setError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [isDeploymentCollapsed, setIsDeploymentCollapsed] = useState(false);
+  const isUserEditing = useRef<boolean>(false);
 
   // Memoizar el tema del editor
   const editorTheme = useMemo(() => ({
@@ -112,9 +113,20 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     }
   }), []);
 
-  const handleEditorChange = useCallback((value: string | undefined) => {
-    onCodeChange(value);
-  }, [onCodeChange]);
+  const handleEditorChange = useCallback(
+    (value: string | undefined) => {
+      if (value !== undefined) {
+        isUserEditing.current = true;
+        onCodeChange(value);
+        
+        // Reset flag after a short delay to allow detecting external changes
+        setTimeout(() => {
+          isUserEditing.current = false;
+        }, 100);
+      }
+    },
+    [onCodeChange]
+  );
 
   const resetDeploymentState = useCallback(() => {
     setDeploymentResult(null);
@@ -887,6 +899,53 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
     }
   }, [currentCode]);
 
+  useEffect(() => {
+    console.log('[ContractViewer] Editor mounted, initializing model');
+    
+    if (monacoRef.current) {
+      // Configure Monaco for Solidity
+      // Implementando la configuración directamente en lugar de usar una función separada
+      const monaco = monacoRef.current;
+      monaco.languages.register({ id: 'solidity' });
+      
+      // La configuración del lenguaje se realizará en useEffect separado abajo
+    }
+    
+    return () => {
+      // Cleanup
+      if (editorRef.current) {
+        editorRef.current.dispose();
+      }
+    };
+  }, [monacoRef]);
+
+  // Effect for updating the Monaco editor when code changes
+  useEffect(() => {
+    if (showCodeEditor && editorRef.current && currentCode) {
+      console.log('[ContractViewer] Updating editor with new code');
+      
+      const model = editorRef.current.getModel();
+      if (model) {
+        // Solo actualizar si el valor actual es diferente para evitar perder la posición del cursor
+        if (model.getValue() !== currentCode) {
+          editorRef.current.setValue(currentCode);
+        }
+      }
+    }
+  }, [currentCode, showCodeEditor, editorRef]);
+
+  // Effect para asegurar que la compilación ocurra cuando el código cambia
+  useEffect(() => {
+    if (currentCode && showCodeEditor && !isUserEditing.current) {
+      console.log('[ContractViewer] Current code changed, triggering compilation');
+      const timeoutId = setTimeout(() => {
+        onCompile(currentCode);
+      }, 1000); // delay to avoid multiple compilations
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [currentCode, showCodeEditor, onCompile]);
+
   if (!currentArtifact) return null;
 
   return (
@@ -1361,7 +1420,7 @@ const ContractViewer: React.FC<ContractViewerProps> = ({
                   const formatMessage = (content: string) => {
                     // Split the message by lines to handle each part separately
                     const lines = content.split('\n');
-                    const formattedLines = lines.map(line => {
+                    const formattedLines = lines.map((line, lineIndex) => {
                       // Check for transaction hash line
                       if (line.startsWith('Transaction Hash:')) {
                         // Extract hash using regex

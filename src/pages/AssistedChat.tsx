@@ -8,11 +8,11 @@ import {
   CodeBracketIcon, FolderIcon} from '@heroicons/react/24/outline';
 import { Link, useLocation } from 'react-router-dom';
 import 'react-resizable/css/styles.css';
-import { conversationService, Message, type ConversationContext } from '../services/conversationService';
+import { conversationService, type ConversationContext } from '../services/conversationService';
 import * as monaco from 'monaco-editor';
 import '../styles/editor.css';
 import '../styles/global.css';
-import { ContractArtifact, ConsoleMessage } from '../types/contracts';
+import { ContractArtifact, ConsoleMessage, Message } from '../types/contracts';
 import { CompilationService } from '../services/compilationService';
 import ContractViewer from '../components/contract/ContractViewer';
 import ChatArea from '../components/chat/ChatArea';
@@ -23,7 +23,7 @@ import { ChatContextService } from '../services/chatContextService';
 import FileExplorer from '../components/FileExplorer';
 import WorkspaceManager from '../components/chat/WorkspaceManager';
 import { ApiService } from '../services/apiService';
-import { ChatInfo } from '../services/chatService';
+import ErrorDetectionService, { ErrorFix } from '../services/errorDetectionService';
 
 
 const demoArtifact: ContractArtifact = {
@@ -60,7 +60,7 @@ const AssistedChat: React.FC = (): JSX.Element => {
   const [currentArtifact, setCurrentArtifact] = useState<ContractArtifact | null>(demoArtifact);
   const [wsConnected, setWsConnected] = useState(false);
   const chatService = useRef<ChatService>(new ChatService());
-  const [artifactWidth, setArtifactWidth] = useState(0);
+  const [artifactWidth, setArtifactWidth] = useState(window.innerWidth * 0.3);
   const [isResizing, setIsResizing] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isMaximized] = useState(false);
@@ -85,9 +85,8 @@ const AssistedChat: React.FC = (): JSX.Element => {
   const compilationQueueRef = useRef<{code: string, timestamp: number}[]>([]);
   const compilationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const apiService = useRef(ApiService.getInstance());
-  const [] = useState(false);
-  const lastProcessedMessageRef = useRef<string | null>(null);
-  const lastProcessedCodeRef = useRef<string | null>(null);
+  const [pendingErrorFixes, setPendingErrorFixes] = useState<ErrorFix[]>([]);
+  const errorDetectionService = useRef<ErrorDetectionService>(ErrorDetectionService);
   const lastCompiledCodeRef = useRef<string | null>(null);
 
   // Add this helper function at the top level of the component
@@ -142,7 +141,7 @@ const AssistedChat: React.FC = (): JSX.Element => {
     return String(content);
   };
 
-  // Function to add messages to the console
+  // Function to add messages to the console and check for errors
   const addConsoleMessage = (message: string, type: ConsoleMessage['type']) => {
     const newMessage: ConsoleMessage = {
       id: generateUniqueId(),
@@ -151,6 +150,14 @@ const AssistedChat: React.FC = (): JSX.Element => {
       timestamp: Date.now()
     };
     setConsoleMessages(prev => [...prev, newMessage]);
+    
+    // If the message is an error, pass it to the error detection service
+    if (type === 'error' && errorDetectionService.current) {
+      const errorFix = errorDetectionService.current.detectErrors(newMessage);
+      if (errorFix) {
+        setPendingErrorFixes(prev => [...prev, errorFix]);
+      }
+    }
   };
 
   // Improved compilation function with stronger debouncing
@@ -234,6 +241,9 @@ const AssistedChat: React.FC = (): JSX.Element => {
         address,
         demoArtifact
       });
+
+      // Store the service in window for debugging
+      (window as any).__chatContextService = chatContextService.current;
     }
     
     // Update wallet address in the database service
@@ -274,12 +284,68 @@ const AssistedChat: React.FC = (): JSX.Element => {
             const mostRecentChat = loadedConversations[0];
             console.log('[AssistedChat] Using most recent chat:', mostRecentChat);
 
-            // Disconnect current WebSocket if it exists
+            // Disconnect any existing WebSocket connection
             chatService.current.disconnect();
             
-            // Set chat ID and connect WebSocket
+            // Important: Set the chat ID before connecting
             chatService.current.setCurrentChatId(mostRecentChat.id);
+            
+            // Important: Make sure conversationService is aware of this ID
+            await conversationService.initializeSession(mostRecentChat.id);
+            
+            // Important: Clear any existing contexts to avoid duplicates
+            conversationService.clearContexts();
+            
+            // Now it's safe to connect the WebSocket with the correct ID
             chatService.current.connect(address, mostRecentChat.id);
+
+            // Set the active context in the UI
+            const newContext: ConversationContext = {
+              id: mostRecentChat.id,
+              name: mostRecentChat.name || 'Loaded Chat',
+              messages: mostRecentChat.messages || [],
+              virtualFiles: mostRecentChat.virtualFiles || {},
+              workspaces: mostRecentChat.workspaces || {},
+              active: true,
+              createdAt: mostRecentChat.created_at || new Date().toISOString()
+            };
+            
+            // Update UI states
+            setActiveContext(newContext);
+            setConversationContexts([newContext]);
+
+            // IMPORTANTE: Deduplicar mensajes antes de establecerlos
+            if (Array.isArray(mostRecentChat.messages) && mostRecentChat.messages.length > 0) {
+              console.log('[AssistedChat] Deduplicating messages before setting UI state');
+              
+              // Usamos un Map para deduplicar por ID y un Set para deduplicar por contenido
+              const uniqueMessagesMap = new Map();
+              const messageSignatures = new Set();
+              
+              const deduplicatedMessages = mostRecentChat.messages.filter((msg: { id: any; text: string; sender: any; }) => {
+                // Si no tiene ID o no tiene texto, no es un mensaje válido
+                if (!msg.id || !msg.text) return false;
+                
+                // Crear una firma única basada en contenido y remitente
+                const signature = `${msg.sender}:${msg.text.substring(0, 100)}`;
+                
+                // Si ya hemos visto este mensaje (por ID o por contenido similar), filtrarlo
+                if (uniqueMessagesMap.has(msg.id) || messageSignatures.has(signature)) {
+                  console.log(`[AssistedChat] Filtered duplicate message: ${signature.substring(0, 30)}...`);
+                  return false;
+                }
+                
+                // Si es único, agregarlo a nuestros conjuntos de seguimiento
+                uniqueMessagesMap.set(msg.id, true);
+                messageSignatures.add(signature);
+                return true;
+              });
+              
+              console.log(`[AssistedChat] Deduplication: ${mostRecentChat.messages.length} -> ${deduplicatedMessages.length}`);
+              setMessages(deduplicatedMessages);
+            } else {
+              setMessages(mostRecentChat.messages || []);
+            }
 
             // Initialize chat with loaded history
             if (chatContextService.current) {
@@ -299,6 +365,290 @@ const AssistedChat: React.FC = (): JSX.Element => {
       }
     };
   }, [address]);
+
+  // Initialize error detection service 
+  useEffect(() => {
+    // Initialize the error detection service with the chat service
+    if (chatService.current) {
+      errorDetectionService.current.initialize(chatService.current);
+      
+      // Set up error detection callback
+      errorDetectionService.current.onErrorDetected((errorFix) => {
+        console.log('[AssistedChat] Error detected:', errorFix);
+        setPendingErrorFixes(prev => [...prev, errorFix]);
+      });
+    }
+    
+    return () => {
+      // Clear pending error fixes when component unmounts
+      setPendingErrorFixes([]);
+    };
+  }, []);
+
+  // WebSocket connection effect - Modify to prevent duplicate connection
+  useEffect(() => {
+    const service = chatService.current;
+    const handleChatConnection = (connected: boolean) => {
+      setWsConnected(connected);
+      
+      if (connected) {
+        console.log('[AssistedChat] WebSocket connected, loading chats if needed');
+      }
+    };
+    
+    // Register the connection change handler
+    service.onConnectionChange(handleChatConnection);
+    
+    // Register the message handler to update the UI
+    service.onMessage((response) => {
+      // Add to messages state
+      setMessages(prevMessages => {
+        // Append the new message if it's not already in the list
+        const isDuplicate = prevMessages.some(msg => 
+          msg.text === response.content && msg.sender === 'ai'
+        );
+        
+        if (isDuplicate) {
+          console.log('[AssistedChat] Duplicate message detected, not adding to UI:', response.content.substring(0, 20) + '...');
+          return prevMessages;
+        }
+        
+        // Check if there are any pending error fixes and attach the first one to this message
+        let errorFix = null;
+        if (pendingErrorFixes.length > 0 && !pendingErrorFixes[0].fixed) {
+          errorFix = pendingErrorFixes[0];
+          
+          // Mark the error fix as used so we don't use it again
+          setPendingErrorFixes(prev => 
+            prev.filter(fix => fix.id !== errorFix?.id)
+          );
+        }
+        
+        // Create a new message object
+        const newMessage: Message = {
+          id: generateUniqueId(),
+          text: response.content,
+          sender: 'ai',
+          timestamp: Date.now(),
+          isTyping: false,
+          showAnimation: false,
+          noCompile: response.metadata?.noCompile || false,
+          errorFix: errorFix
+        };
+        
+        console.log('[AssistedChat] Adding new message to UI:', newMessage.text.substring(0, 20) + '...');
+        
+        // Add the new message to the state
+        return [...prevMessages, newMessage];
+      });
+      
+      // Set typing state to false when a message is received
+      setIsTyping(false);
+    });
+    
+    // Register the context handler to update the UI
+    service.onChatsLoaded((chats) => {
+      console.log('[AssistedChat] Chats loaded handler called with:', chats.length, 'chats');
+      
+      if (chats.length > 0) {
+        // Map the chats to conversation contexts
+        const contexts = chats.map(chat => ({
+          id: chat.id,
+          name: chat.name || 'Unnamed Chat',
+          messages: chat.messages || [],
+          virtualFiles: chat.virtualFiles || {},
+          workspaces: chat.workspaces || {},
+          active: chat.id === service.getCurrentChatId(),
+          createdAt: chat.created_at
+        }));
+        
+        // Update the UI with the conversation contexts
+        setConversationContexts(contexts);
+        
+        // Set the active context
+        const activeContext = contexts.find(ctx => ctx.active);
+        if (activeContext) {
+          setActiveContext(activeContext);
+          
+          // Also update the messages state with deduplication
+          if (Array.isArray(activeContext.messages)) {
+            console.log('[AssistedChat] Deduplicating messages in onChatsLoaded');
+            
+            // Usamos un Map para deduplicar por ID y un Set para deduplicar por contenido
+            const uniqueMessagesMap = new Map();
+            const messageSignatures = new Set();
+            
+            const deduplicatedMessages = activeContext.messages.filter(msg => {
+              // Si no tiene ID o no tiene texto, no es un mensaje válido
+              if (!msg.id || !msg.text) return false;
+              
+              // Crear una firma única basada en contenido y remitente
+              const signature = `${msg.sender}:${msg.text.substring(0, 100)}`;
+              
+              // Si ya hemos visto este mensaje (por ID o por contenido similar), filtrarlo
+              if (uniqueMessagesMap.has(msg.id) || messageSignatures.has(signature)) {
+                console.log(`[AssistedChat] Filtered duplicate message: ${signature.substring(0, 30)}...`);
+                return false;
+              }
+              
+              // Si es único, agregarlo a nuestros conjuntos de seguimiento
+              uniqueMessagesMap.set(msg.id, true);
+              messageSignatures.add(signature);
+              return true;
+            });
+            
+            console.log(`[AssistedChat] onChatsLoaded deduplication: ${activeContext.messages.length} -> ${deduplicatedMessages.length}`);
+            setMessages(deduplicatedMessages);
+          }
+        }
+      }
+    });
+    
+    return () => {
+      // Cleanup - but don't disconnect the WebSocket
+      console.log('[AssistedChat] Cleaning up WebSocket connection handlers');
+      // We're only cleaning up event handlers, not closing the connection
+    };
+  }, [pendingErrorFixes]);
+
+  // Effect to compile code when currentCode changes
+  useEffect(() => {
+    if (currentCode && currentCode.trim() !== '' && !isMaximized && !compilationInProgressRef.current) {
+      console.log('[AssistedChat] Current code updated, triggering compilation');
+      // Debounce compilation to avoid rapid recompilations
+      if (compilationTimeoutRef.current) {
+        clearTimeout(compilationTimeoutRef.current);
+      }
+      
+      compilationTimeoutRef.current = setTimeout(() => {
+        compileCode(currentCode);
+      }, 1000); // Delay compilation by 1 second
+    }
+  }, [currentCode, compileCode, isMaximized]);
+
+  // Effect to handle window resize and maintain proper artifact width proportions
+  useEffect(() => {
+    const handleResize = () => {
+      // Maintain the artifact width as 30% of window if not manually resized
+      if (!isResizing) {
+        const newWidth = Math.floor(window.innerWidth * 0.3);
+        setArtifactWidth(newWidth);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    
+    // Initialize with a reasonable default width (30% of screen)
+    if (artifactWidth === 0) {
+      setArtifactWidth(Math.floor(window.innerWidth * 0.3));
+    }
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [artifactWidth, isResizing]);
+
+  // Efecto para sincronizar código del contrato con el editor cuando se carga un chat
+  useEffect(() => {
+    if (!activeContext || !activeContext.virtualFiles) return;
+    
+    console.log('[AssistedChat] Checking for contract files in active context:', activeContext.id);
+    
+    // Buscar archivos Solidity en los archivos virtuales del contexto
+    const solidityFiles = Object.entries(activeContext.virtualFiles)
+      .filter(([path, file]) => {
+        const typedFile = file as { content: string, language: string, timestamp: number };
+        return path.endsWith('.sol') && typedFile.language === 'solidity';
+      })
+      .sort(([, a], [, b]) => {
+        const fileA = a as { content: string, language: string, timestamp: number };
+        const fileB = b as { content: string, language: string, timestamp: number };
+        return fileB.timestamp - fileA.timestamp; // Ordenar por timestamp descendente
+      });
+    
+    if (solidityFiles.length > 0) {
+      // Usar el archivo Solidity más reciente
+      const [filePath, fileData] = solidityFiles[0];
+      const typedFileData = fileData as { content: string, language: string, timestamp: number };
+      const content = typedFileData.content;
+      
+      console.log(`[AssistedChat] Found Solidity file in context: ${filePath}, loading into editor`);
+      
+      // Actualizar el código en el editor
+      setCurrentCode(content);
+      setShowCodeEditor(true);
+      setSelectedFile(filePath);
+      
+      // Compilar el código después de un breve retraso
+      setTimeout(() => {
+        console.log('[AssistedChat] Compiling loaded Solidity file:', filePath);
+        compileCode(content);
+      }, 500);
+    } else {
+      console.log('[AssistedChat] No Solidity files found in active context');
+    }
+  }, [activeContext, compileCode, setSelectedFile]);
+
+  // Efecto para seleccionar automáticamente archivos Solidity recién creados
+  useEffect(() => {
+    // Función que maneja la selección automática de archivos
+    const handleAutoSelectFile = (event: CustomEvent) => {
+      const { path, content } = event.detail;
+      console.log(`[AssistedChat] Auto-selecting file: ${path}`);
+      
+      // Actualizar los estados necesarios para mostrar el archivo
+      setSelectedFile(path);
+      
+      if (path.endsWith('.sol')) {
+        const processedContent = ensureStringContent(content);
+        setCurrentCode(processedContent);
+        setShowCodeEditor(true);
+        
+        // Compilar el código después de un breve retraso para permitir que el editor se actualice
+        setTimeout(() => {
+          console.log('[AssistedChat] Compiling newly created Solidity file');
+          compileCode(processedContent);
+        }, 500);
+        
+        // Actualizar el contexto activo
+        setActiveContext(prevContext => {
+          if (!prevContext) return undefined;
+          return {
+            ...prevContext,
+            currentFile: path
+          };
+        });
+      }
+    };
+    
+    // Registrar el listener para el evento personalizado
+    window.addEventListener('auto-select-file', handleAutoSelectFile as EventListener);
+    
+    // Limpiar el listener cuando el componente se desmonte
+    return () => {
+      window.removeEventListener('auto-select-file', handleAutoSelectFile as EventListener);
+    };
+  }, [compileCode]);
+
+  // Connection initialization effect - Separated to prevent multiple connections
+  useEffect(() => {
+    if (address) {
+      console.log('[AssistedChat] Initializing WebSocket connection');
+      
+      if (activeContext) {
+        console.log(`[AssistedChat] Connecting with active context ID: ${activeContext.id}`);
+        chatService.current.connect(address, activeContext.id);
+      } else {
+        console.log('[AssistedChat] Connecting without active context ID');
+        chatService.current.connect(address);
+      }
+    }
+    
+    return () => {
+      // Only disconnect when component unmounts or address changes
+      chatService.current.disconnect();
+    };
+  }, [address]); // Only re-run if address changes
 
   // Handle file selection from FileExplorer
   const handleFileSelect = useCallback((path: string | null) => {
@@ -376,969 +726,93 @@ const AssistedChat: React.FC = (): JSX.Element => {
     }
   };
 
-  // WebSocket connection effect
-  useEffect(() => {
-    const service = chatService.current;
-    const handleChatConnection = (connected: boolean) => {
-      setWsConnected(connected);
-      
-      if (connected) {
-        console.log('[AssistedChat] WebSocket connected, loading chats if needed');
-        
-        // Get contexts after the connection is established
-        const loadedContexts = conversationService.getContexts();
-        console.log('[AssistedChat] Initial contexts from local service:', loadedContexts);
-        
-        if (loadedContexts.length === 0 && address) {
-          console.log('[AssistedChat] No contexts loaded, loading from database');
-          databaseService.current.getConversations(address)
-            .then(conversations => {
-              console.log('[AssistedChat] Got conversations from database:', conversations);
-              
-              if (Array.isArray(conversations) && conversations.length > 0) {
-                console.log('[AssistedChat] Syncing database conversations with chat service');
-                service.syncContextsWithDatabase(conversations);
-                
-                // Set active context to first conversation
-                setActiveContext({
-                  id: conversations[0].id,
-                  name: conversations[0].name,
-                  messages: conversations[0].messages || [],
-                  virtualFiles: conversations[0].virtualFiles || {},
-                  workspaces: conversations[0].workspaces || {},
-                  active: true,
-                  createdAt: conversations[0].created_at || new Date().toISOString()
-                });
-              }
-            })
-            .catch(err => {
-              console.error('[AssistedChat] Error loading conversations:', err);
-              addConsoleMessage('Error loading conversations', 'error');
-            });
-        }
-      }
-    };
-    
-    service.onConnectionChange(handleChatConnection);
-    
-    // Variable para controlar el temporizador de detección de fin de stream
-    let lastMessageTime = 0;
-    let streamCheckTimer: NodeJS.Timeout | null = null;
-    
-    // Función para verificar si el stream ha terminado
-    const checkStreamComplete = () => {
-      const currentTime = Date.now();
-      const timeSinceLastMessage = currentTime - lastMessageTime;
-      
-      // Si han pasado más de 2 segundos sin mensajes nuevos, considerar el stream como completado
-      if (timeSinceLastMessage > 2000) {
-        console.log('[ChatService] Message stream appears to be complete (No messages for 2 seconds)');
-        setIsTyping(false);
-        console.log('[AssistedChat] Message stream complete, resetting animation');
-        
-        if (streamCheckTimer) {
-          clearInterval(streamCheckTimer);
-          streamCheckTimer = null;
-        }
-      }
-    };
-    
-    // Registrar manejador de mensajes
-    service.onMessage((message: AgentResponse) => {
-      console.log('[AssistedChat] Message received from WebSocket:', message);
-      
-      // Actualizar el tiempo del último mensaje recibido
-      lastMessageTime = Date.now();
-      
-      // Iniciar o restablecer el temporizador para verificar si el stream ha terminado
-      if (!streamCheckTimer) {
-        streamCheckTimer = setInterval(checkStreamComplete, 500);
-      }
-      
-      // Procesando diferentes tipos de mensajes
-      if (message.type === 'message') {
-        // Crear un nuevo mensaje para la UI
-        const newMessage: Message = {
-          id: message.metadata?.id || generateUniqueId(),
-          text: message.content,
-          sender: 'ai',
-          timestamp: Date.now(),
-          isTyping: false,
-          showAnimation: false
-        };
-        
-        // Si el mensaje está marcado como completo (isFullMessage), considerar el stream como terminado
-        if (message.metadata?.isFullMessage) {
-          console.log('[AssistedChat] Received message marked as complete, ending typing animation');
-          setIsTyping(false);
-          
-          // Limpiar el temporizador ya que ya sabemos que el stream está completo
-          if (streamCheckTimer) {
-            clearInterval(streamCheckTimer);
-            streamCheckTimer = null;
-          }
-        }
-        
-        // Actualizar los mensajes en el estado
-        setMessages(prevMessages => {
-          // Si hay un mensaje de IA incompleto, reemplazarlo
-          const lastAiMessageIndex = [...prevMessages].reverse().findIndex(m => m.sender === 'ai' && m.isTyping);
-          if (lastAiMessageIndex >= 0) {
-            const updatedMessages = [...prevMessages];
-            updatedMessages[prevMessages.length - 1 - lastAiMessageIndex] = newMessage;
-            return updatedMessages;
-          }
-          
-          // Si no, añadir como un nuevo mensaje
-          return [...prevMessages, newMessage];
-        });
-        
-        // Actualizar contexto activo con el nuevo mensaje
-        if (activeContext) {
-          const updatedContext = {
-            ...activeContext,
-            messages: [...(activeContext.messages || []), newMessage]
-          };
-          
-          setActiveContext(updatedContext);
-          
-          // Actualizar la lista de contextos
-          setConversationContexts(prevContexts => 
-            prevContexts.map(ctx => 
-              ctx.id === activeContext.id ? updatedContext : ctx
-            )
-          );
-        }
-        
-        // Si contiene código, ya no procesarlo aquí
-        // El código será procesado por el efecto useEffect para
-        // evitar actualizaciones redundantes y bucles infinitos
-      } else if (message.type === 'code_edit' || message.type === 'file_create') {
-        // Procesamiento de ediciones de código o creación de archivos
-        console.log(`[AssistedChat] Processing ${message.type}:`, message);
-        
-        // Los mensajes de tipo code_edit o file_create suelen ser los últimos de una secuencia
-        // Considerar que el stream ha terminado cuando se reciben estos tipos de mensajes
-        setTimeout(() => {
-          console.log(`[AssistedChat] ${message.type} processed, ending typing animation`);
-          setIsTyping(false);
-          
-          if (streamCheckTimer) {
-            clearInterval(streamCheckTimer);
-            streamCheckTimer = null;
-          }
-        }, 1000); // Pequeño retraso para asegurarse de que cualquier otro mensaje llegue primero
-        
-        if (message.metadata?.path && message.content) {
-          // Actualizar archivos virtuales
-          if (activeContext) {
-            const path = message.metadata.path;
-            const language = message.metadata.language || 'solidity';
-            
-            // Verificar si el contenido ha cambiado para evitar actualizaciones innecesarias
-            const currentFileContent = activeContext.virtualFiles?.[path]?.content;
-            if (currentFileContent === message.content) {
-              console.log(`[AssistedChat] Skipping update for ${path} - content unchanged`);
-              return;
-            }
-            
-            // Crear o actualizar archivo virtual
-            const updatedVirtualFiles = {
-              ...(activeContext.virtualFiles || {}),
-              [path]: {
-                content: message.content,
-                language,
-                timestamp: Date.now()
-              }
-            };
-            
-            // Actualizar el contexto activo
-            const updatedContext = {
-              ...activeContext,
-              virtualFiles: updatedVirtualFiles
-            };
-            
-            setActiveContext(updatedContext);
-            
-            // Actualizar lista de contextos
-            setConversationContexts(prevContexts => 
-              prevContexts.map(ctx => 
-                ctx.id === activeContext.id ? updatedContext : ctx
-              )
-            );
-            
-            // Actualizar el código actual solo si es el archivo seleccionado
-            if (path === selectedFile || !selectedFile) {
-              // Evitar actualizar si el código no ha cambiado
-              if (currentCode !== message.content) {
-                setCurrentCode(message.content);
-                setShowCodeEditor(true);
-                
-                // Actualizar el archivo seleccionado solo si no hay uno seleccionado
-                if (!selectedFile) {
-                  setSelectedFile(path);
-                }
-                
-                // Compilar el código si es Solidity y se permite la compilación
-                if (language === 'solidity' && !message.metadata.noCompile) {
-                  // Usar setTimeout para evitar sobrecargar con compilaciones
-                  if (compilationTimeoutRef.current) {
-                    clearTimeout(compilationTimeoutRef.current);
-                  }
-                  compilationTimeoutRef.current = setTimeout(() => {
-                    compileCode(message.content);
-                    compilationTimeoutRef.current = null;
-                  }, 1000);
-                }
-              }
-            }
-          }
-        }
-      }
-    });
-    
-    // Eliminar mensajes duplicados antes de procesarlos
-    const processUniqueMessages = (loadedChats: ChatInfo[]) => {
-      if (!Array.isArray(loadedChats) || loadedChats.length === 0) return;
-      
-      console.log('[AssistedChat] Processing loaded chats:', loadedChats);
-      
-      // Usar el chat más reciente o el que coincida con el contexto activo
-      const selectedChat = activeContext && loadedChats.find(chat => chat.id === activeContext.id) || 
-                         loadedChats[loadedChats.length - 1];
-      
-      if (selectedChat && Array.isArray(selectedChat.messages)) {
-        // Ordenar mensajes por tiempo
-        const sortedMessages = [...selectedChat.messages].sort((a: any, b: any) => {
-          const timestampA = a.timestamp || a.created_at || 0;
-          const timestampB = b.timestamp || b.created_at || 0;
-          return new Date(timestampA).getTime() - new Date(timestampB).getTime();
-        });
-        
-        // Eliminar duplicados
-        const uniqueMessages: any[] = [];
-        const messageMap = new Map();
-        
-        sortedMessages.forEach((msg: any) => {
-          // Crear una clave única para cada mensaje
-          const senderKey = msg.sender || msg.role || 'unknown';
-          const contentKey = typeof msg.text === 'string' ? msg.text : 
-                      (typeof msg.content === 'string' ? msg.content : 
-                      JSON.stringify(msg.content || ''));
-          
-          const messageKey = `${senderKey}:${contentKey}`;
-          
-          if (!messageMap.has(messageKey)) {
-            messageMap.set(messageKey, true);
-            uniqueMessages.push(msg);
-          }
-        });
-        
-        console.log(`[AssistedChat] Processed ${selectedChat.messages.length} messages, found ${uniqueMessages.length} unique messages`);
-        
-        // Convertir a formato UI
-        const uiMessages: Message[] = uniqueMessages.map((msg: any) => ({
-          id: msg.id || generateUniqueId(),
-          text: msg.text || msg.content || '',
-          sender: msg.sender || (msg.role === 'user' ? 'user' : 'ai'),
-          timestamp: msg.timestamp || Date.now(),
-          isFullMessage: true, // Marcar como mensajes completos para evitar reemplazos
-          noCompile: msg.noCompile || false
-        }));
-        
-        // Actualizar el estado de mensajes
-        setMessages(uiMessages);
-        
-        // Actualizar el contexto activo con mensajes únicos
-        if (activeContext) {
-          const updatedContext = {
-            ...activeContext,
-            messages: uiMessages
-          };
-          
-          setActiveContext(updatedContext);
-          
-          // Actualizar la lista de contextos
-          setConversationContexts(prevContexts => 
-            prevContexts.map(ctx => 
-              ctx.id === activeContext.id ? updatedContext : ctx
-            )
-          );
-        }
-      }
-    };
-    
-    // Subscribe to chat loaded events
-    service.onChatsLoaded((chats) => {
-      console.log('[AssistedChat] Chats loaded event:', chats);
-      
-      if (Array.isArray(chats) && chats.length > 0) {
-        processUniqueMessages(chats);
-        
-        // Actualizar lista de contextos
-        const loadedContexts = chats.map(chat => ({
-          id: chat.id,
-          name: chat.name || 'Untitled Chat',
-          messages: chat.messages || [],
-          virtualFiles: chat.virtualFiles || {},
-          workspaces: chat.workspaces || {},
-          active: chat.id === service.getCurrentChatId(),
-          createdAt: chat.created_at || new Date().toISOString()
-        }));
-        
-        setConversationContexts(loadedContexts);
-      }
-    });
-
-    // Only connect if we have a wallet address and we're not already connected
-    if (address && !wsConnected) {
-      console.log('[AssistedChat] Initializing WebSocket connection');
-      
-      // Use active chat ID if available
-      const activeContextId = activeContext?.id;
-      if (activeContextId) {
-        console.log('[AssistedChat] Connecting with active context ID:', activeContextId);
-      } else {
-        console.log('[AssistedChat] Connecting without active context ID');
-      }
-      
-      // Connect with wallet address and active context ID
-      service.connect(address, activeContextId);
-    }
-
-    return () => {
-      // Only disconnect if we're leaving the application or changing address
-      if (wsConnected) {
-        console.log('[AssistedChat] Cleaning up WebSocket connection');
-        service.disconnect();
-      }
-      
-      // Limpiar el temporizador de verificación de stream
-      if (streamCheckTimer) {
-        clearInterval(streamCheckTimer);
-        streamCheckTimer = null;
-      }
-    };
-  }, [address, wsConnected, compileCode]);
-
-  // Helper function to continue with message sending
-  const proceedWithMessageSending = (message: string) => {
-    // Use the service to add the user's message
-    if (chatContextService.current) {
-      chatContextService.current.addMessageToContext(message, true, activeContext);
-    }
-
-    setIsTyping(true);
-
-    // Log the current state for debugging
-    console.log('[AssistedChat] Current code state:', {
-      showCodeEditor,
-      hasCode: Boolean(currentCode),
-      codeLength: currentCode?.length
-    });
-
-    // Extract Solidity code if present in the message
-    let extractedCode = '';
-    if (message.includes('```solidity') && message.includes('contract')) {
-      const codeBlockRegex = /```(?:solidity)?\s*([\s\S]*?)```/;
-      const match = message.match(codeBlockRegex);
-      
-      if (match && match[1] && match[1].includes('contract') && match[1].includes('{')) {
-        extractedCode = match[1].trim();
-        console.log('[AssistedChat] Extracted Solidity code from user message:', extractedCode.substring(0, 50) + '...');
-        
-        // Set the code in the editor
-        if (extractedCode && extractedCode !== currentCode) {
-          setCurrentCode(extractedCode);
-          setShowCodeEditor(true);
-          
-          // Set up the editor with the proper language and theme
-          if (monacoRef.current && editorRef.current) {
-            try {
-              const monaco = monacoRef.current;
-              const editor = editorRef.current;
-              
-              // Make sure Solidity language is registered
-              if (!monaco.languages.getLanguages().some(lang => lang.id === 'solidity')) {
-                monaco.languages.register({ id: 'solidity' });
-                
-                // Configure syntax highlighting for Solidity
-                monaco.languages.setMonarchTokensProvider('solidity', {
-                  defaultToken: '',
-                  tokenPostfix: '.sol',
-                  
-                  keywords: [
-                    'pragma', 'solidity', 'contract', 'library', 'interface',
-                    'function', 'modifier', 'event', 'constructor',
-                    'address', 'string', 'bool', 'uint', 'int', 'bytes',
-                    'public', 'private', 'internal', 'external',
-                    'pure', 'view', 'payable', 'virtual', 'override',
-                    'returns', 'memory', 'storage', 'calldata',
-                    'if', 'else', 'for', 'while', 'do', 'break', 'continue',
-                    'return', 'emit', 'try', 'catch', 'revert', 'require',
-                    'assert', 'mapping', 'struct', 'enum', 'this', 'super'
-                  ],
-                  
-                  operators: [
-                    '=', '>', '<', '!', '~', '?', ':',
-                    '==', '<=', '>=', '!=', '&&', '||', '++', '--',
-                    '+', '-', '*', '/', '&', '|', '^', '%', '<<',
-                    '>>', '>>>', '+=', '-=', '*=', '/=', '&=', '|=',
-                    '^=', '%=', '<<=', '>>=', '>>>='
-                  ],
-                  
-                  symbols: /[=><!~?:&|+\-*\/\^%]+/,
-                  
-                  tokenizer: {
-                    root: [
-                      [/[a-zA-Z_]\w*/, {
-                        cases: {
-                          '@keywords': 'keyword',
-                          '@default': 'identifier'
-                        }
-                      }],
-                      [/[{}()\[\]]/, '@brackets'],
-                      [/@symbols/, {
-                        cases: {
-                          '@operators': 'operator',
-                          '@default': ''
-                        }
-                      }],
-                      [/\d*\.\d+([eE][\-+]?\d+)?/, 'number.float'],
-                      [/\d+/, 'number'],
-                      [/[;,.]/, 'delimiter'],
-                      [/"([^"\\]|\\.)*$/, 'string.invalid'],
-                      [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
-                      [/\/\/.*$/, 'comment'],
-                      [/\/\*/, 'comment', '@comment'],
-                    ],
-                    string: [
-                      [/[^\\"]+/, 'string'],
-                      [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
-                      [/\\.[^"]*$/, 'string.invalid']
-                    ],
-                    comment: [
-                      [/[^\/*]+/, 'comment'],
-                      [/\*\//, 'comment', '@pop'],
-                      [/[\/*]/, 'comment']
-                    ]
-                  }
-                });
-                
-                // Define the Solidity theme
-                monaco.editor.defineTheme('solidityTheme', {
-                  base: 'vs-dark',
-                  inherit: true,
-                  rules: [
-                    { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
-                    { token: 'identifier', foreground: 'D4D4D4' },
-                    { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
-                    { token: 'string', foreground: 'CE9178' },
-                    { token: 'number', foreground: 'B5CEA8' },
-                    { token: 'operator', foreground: 'D4D4D4' },
-                    { token: 'delimiter', foreground: 'D4D4D4' },
-                  ],
-                  colors: {}
-                });
-              }
-              
-              // Set up the model with the extracted code
-              let model = editor.getModel();
-              if (!model || model.getLanguageId() !== 'solidity') {
-                console.log('[AssistedChat] Creating new Solidity model');
-                model = monaco.editor.createModel(
-                  extractedCode,
-                  'solidity',
-                  monaco.Uri.parse('file:///contracts/Contract.sol')
-                );
-                editor.setModel(model);
-              } else {
-                console.log('[AssistedChat] Updating existing model with Solidity code');
-                model.setValue(extractedCode);
-              }
-              
-              // Apply the Solidity theme
-              monaco.editor.setTheme('solidityTheme');
-              
-              // Schedule compilation after a short delay
-              setTimeout(() => {
-                compileCode(extractedCode);
-              }, 500);
-            } catch (err) {
-              console.error('[AssistedChat] Error setting up editor with extracted code:', err);
-            }
-          }
-          
-          // Save to virtual file system
-          if (activeContext) {
-            const path = 'contracts/Contract.sol';
-            virtualFS.writeFile(path, extractedCode).then(() => {
-              console.log('[AssistedChat] Saved extracted code to virtual file system');
-              
-              // Update context with the new file
-              const updatedVirtualFiles = {
-                ...activeContext.virtualFiles,
-                [path]: { content: extractedCode, language: 'solidity', timestamp: Date.now() }
-              };
-              
-              const updatedContext = {
-                ...activeContext,
-                virtualFiles: updatedVirtualFiles
-              };
-              
-              setActiveContext(updatedContext);
-              
-              // Update conversation contexts
-              setConversationContexts(prevContexts => 
-                prevContexts.map(ctx => 
-                  ctx.id === activeContext.id ? updatedContext : ctx
-                )
-              );
-            }).catch(error => {
-              console.error('[AssistedChat] Error writing extracted code to file system:', error);
-            });
-          }
-        }
-      }
-    }
-
-    // Create context with current code and file information
-    const context = {
-      currentCode: showCodeEditor && currentCode ? currentCode : extractedCode || undefined,
-      currentArtifact: currentArtifact,
-      virtualFiles: activeContext?.virtualFiles || {},
-      currentFile: selectedFile,
-      fileSystem: activeContext?.virtualFiles || {},
-      // Add code directly in the message content if available
-      code: currentCode || extractedCode || undefined
-    };
-
-    // Log the context for debugging
-    console.log('[AssistedChat] Sending context:', {
-      hasCurrentCode: Boolean(context.currentCode),
-      hasCode: Boolean(context.code),
-      currentFile: context.currentFile
-    });
-
-    // Modify message to include code if available
-    const enhancedMessage = currentCode 
-      ? `${message}\n\nCurrent code:\n\`\`\`solidity\n${currentCode}\n\`\`\``
-      : message;
-
-    // Send message to agent with context
-    chatService.current.sendMessage(enhancedMessage, context);
+  // Add missing handler for viewing a conversation from contract viewer
+  const handleViewConversation = (conversationId: string) => {
+    console.log(`[AssistedChat] Viewing conversation: ${conversationId}`);
+    handleContextSwitch(conversationId);
   };
 
-  // Effect to ensure UI updates when messages change
-  useEffect(() => {
-    if (messages.length > 0) {
-      console.log('[AssistedChat] Messages updated, refreshing UI components');
-      // Trigger a state update to force re-render of child components
-      setShowCodeEditor(prev => prev);
-    }
-  }, [messages, currentCode]);
-
-  // Effect to ensure code is loaded after page reload
-  useEffect(() => {
-    if (activeContext && !currentCode) {
-      console.log('[AssistedChat] Checking for code in active context after page reload');
-      
-      // Search for Solidity files in the active context
-      if (activeContext.virtualFiles) {
-        const solidityFiles = Object.entries(activeContext.virtualFiles)
-          .filter(([_, file]: [string, any]) => file.language === 'solidity');
-        
-        if (solidityFiles.length > 0) {
-          // Take the most recent Solidity file
-          const [path, lastSolidityFile]: [string, any] = solidityFiles[solidityFiles.length - 1];
-          console.log(`[AssistedChat] Found Solidity file in context after reload: ${path}`);
-          
-          // Update code and show editor
-          setCurrentCode(ensureStringContent(lastSolidityFile.content));
-          setShowCodeEditor(true);
-          setSelectedFile(path);
-          
-          // Compile code if possible
-          if (editorRef.current && monacoRef.current) {
-            console.log('[AssistedChat] Compiling loaded Solidity code after reload');
-            compileCode(ensureStringContent(lastSolidityFile.content));
-          } else {
-            console.log('[AssistedChat] Editor refs not ready, scheduling compilation for later');
-            // Schedule compilation for when the editor is ready
-            setTimeout(() => {
-              if (editorRef.current && monacoRef.current) {
-                compileCode(ensureStringContent(lastSolidityFile.content));
-              }
-            }, 1000);
-          }
-        }
-      }
-      
-      // Also check in the active context workspaces
-      if (activeContext.workspaces && activeContext.activeWorkspace) {
-        const activeWorkspace = activeContext.workspaces[activeContext.activeWorkspace];
-        if (activeWorkspace && activeWorkspace.files) {
-          const solidityFiles = Object.entries(activeWorkspace.files)
-            .filter(([_, file]: [string, any]) => file.language === 'solidity');
-          
-          if (solidityFiles.length > 0) {
-            const [path, solFile]: [string, any] = solidityFiles[0];
-            console.log(`[AssistedChat] Found Solidity file in active workspace after reload: ${path}`);
-            
-            setCurrentCode(ensureStringContent(solFile.content));
-            setShowCodeEditor(true);
-            setSelectedFile(path);
-            
-            if (editorRef.current && monacoRef.current) {
-              compileCode(ensureStringContent(solFile.content));
-            } else {
-              setTimeout(() => {
-                if (editorRef.current && monacoRef.current) {
-                  compileCode(ensureStringContent(solFile.content));
-                }
-              }, 1000);
-            }
-          }
-        }
-      }
-    }
-  }, [activeContext, currentCode, editorRef.current, monacoRef.current, compileCode]);
-
-  // Calculate initial widths
-  useEffect(() => {
-    const calculateWidths = () => {
-      const totalAvailableWidth = window.innerWidth - (isSidebarOpen ? 256 : 64);
-      const artifactInitialWidth = Math.floor(totalAvailableWidth * 0.5);
-      setArtifactWidth(artifactInitialWidth);
-    };
-
-    calculateWidths();
-    window.addEventListener('resize', calculateWidths);
-    return () => window.removeEventListener('resize', calculateWidths);
-  }, [isSidebarOpen]);
-
-  // Workspace management handlers
-  const handleWorkspaceCreate = (name: string, description?: string) => {
-    if (!activeContext) return;
-    
-    const newWorkspace = conversationService.createWorkspace(
-      activeContext.id, 
-      name,
-      description
-    );
-    
-    if (newWorkspace) {
-      // Update active context to include the new workspace
-      setActiveContext(prevContext => {
-        if (!prevContext) return undefined;
-        return {
-          ...prevContext,
-          workspaces: {
-            ...prevContext.workspaces,
-            [newWorkspace.id]: newWorkspace
-          },
-          activeWorkspace: newWorkspace.id
-        };
-      });
-      
-      // Update conversation contexts
-      setConversationContexts(prevContexts => 
-        prevContexts.map(ctx => 
-          ctx.id === activeContext.id 
-            ? {
-                ...ctx,
-                workspaces: {
-                  ...ctx.workspaces,
-                  [newWorkspace.id]: newWorkspace
-                },
-                activeWorkspace: newWorkspace.id
-              }
-            : ctx
-        )
-      );
-      
-      addConsoleMessage(`Created workspace: ${name}`, 'info');
-    }
-  };
-  
+  // Add missing handler for workspace operations
   const handleWorkspaceSwitch = (workspaceId: string) => {
-    if (!activeContext) return;
-    
-    const success = conversationService.setActiveWorkspace(
-      activeContext.id,
-      workspaceId
-    );
-    
-    if (success) {
-      // Update active context
-      setActiveContext(prevContext => {
-        if (!prevContext) return undefined;
-        return {
-          ...prevContext,
-          activeWorkspace: workspaceId
-        };
-      });
-      
-      // Update conversation contexts
-      setConversationContexts(prevContexts => 
-        prevContexts.map(ctx => 
-          ctx.id === activeContext.id 
-            ? {
-                ...ctx,
-                activeWorkspace: workspaceId
-              }
-            : ctx
-        )
-      );
-      
-      // Load files from the selected workspace
-      const workspace = activeContext.workspaces[workspaceId];
-      if (workspace) {
-        // If there's a Solidity file in this workspace, load the first one
-        const solidityFiles = Object.entries(workspace.files)
-          .filter(([_, file]) => file.language === 'solidity');
-          
-        if (solidityFiles.length > 0) {
-          const [path, file] = solidityFiles[0];
-              setCurrentCode(ensureStringContent(file.content));
-              setShowCodeEditor(true);
-          setSelectedFile(path);
-          compileCode(ensureStringContent(file.content));
-        }
-      }
+    if (activeContext && conversationService) {
+      console.log(`[AssistedChat] Switching to workspace: ${workspaceId}`);
+      conversationService.setActiveWorkspace(activeContext.id, workspaceId);
     }
   };
 
-  // Handler for when a user wants to view a specific conversation from version history
-  const handleViewConversation = (contextId: string) => {
-    if (contextId === activeContext?.id) {
-      // Already in this context
+  const handleWorkspaceCreate = (name: string, description?: string) => {
+    if (activeContext && conversationService) {
+      console.log(`[AssistedChat] Creating new workspace: ${name}`);
+      return conversationService.createWorkspace(activeContext.id, name, description);
+    }
+    return null;
+  };
+
+  // Helper function to proceed with message sending
+  const proceedWithMessageSending = (message: string) => {
+    if (!activeContext) {
+      console.error('[AssistedChat] No active context for sending message');
       return;
     }
     
-    // Switch to the selected conversation context
-    handleContextSwitch(contextId);
-  };
-
-  // Effect to extract Solidity code from messages and show it in the editor
-  useEffect(() => {
-    if (messages.length > 0) {
-      console.log('[AssistedChat] Checking messages for Solidity code blocks');
+    console.log('[AssistedChat] Proceeding with message sending:', message.substring(0, 20) + '...');
+    setIsTyping(true);
+    
+    // Add the user message to the UI immediately
+    const userMessage: Message = {
+      id: generateUniqueId(),
+      text: message,
+      sender: 'user',
+      timestamp: Date.now()
+    };
+    
+    // Update the messages state
+    setMessages(prevMessages => [...prevMessages, userMessage]);
+    
+    // Also update the active context with the new message
+    setActiveContext(prevContext => {
+      if (!prevContext) return undefined;
+      const updatedContext = {
+        ...prevContext,
+        messages: [...(prevContext.messages || []), userMessage]
+      };
       
-      // Look for the most recent AI message with Solidity code block
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const message = messages[i];
-        
-        // Skip if we already processed this message
-        if (message.id === lastProcessedMessageRef.current) {
-          console.log('[AssistedChat] Skipping already processed message:', message.id);
-          break;
-        }
-        
-        if (message.sender === 'ai' && message.text.includes('```solidity') && message.text.includes('contract')) {
-          console.log('[AssistedChat] Found Solidity code in message:', message.id);
-          
-          // Extract the Solidity code from the message
-          const extractSolidityCode = (text: string): string => {
-            const codeBlockRegex = /```(?:solidity)?\s*([\s\S]*?)```/;
-            const match = text.match(codeBlockRegex);
-            
-            if (match && match[1]) {
-              console.log('[AssistedChat] Successfully extracted Solidity code block');
-              return match[1].trim();
-            }
-            return '';
-          };
-          
-          const solidityCode = extractSolidityCode(message.text);
-          
-          // Check if this code is already in the editor to avoid duplicate processing
-          if (solidityCode && solidityCode.includes('contract') && solidityCode.includes('{') && solidityCode.includes('}')) {
-            // Skip processing if code is unchanged or we already processed this code
-            if (currentCode === solidityCode || lastProcessedCodeRef.current === solidityCode) {
-              console.log('[AssistedChat] Skipping code processing - code unchanged');
-              break;
-            }
-            
-            // Mark this message and code as processed
-            lastProcessedMessageRef.current = message.id;
-            lastProcessedCodeRef.current = solidityCode;
-            
-            // If we don't already have this code in the editor
-            console.log('[AssistedChat] Setting extracted Solidity code in editor');
-            
-            const path = 'contracts/Contract.sol';
-            setCurrentCode(solidityCode);
-            setShowCodeEditor(true);
-            setSelectedFile(path);
-            
-            // Setup editor with Solidity configuration if Monaco is available
-            if (monacoRef.current && editorRef.current) {
-              const monaco = monacoRef.current;
-              const editor = editorRef.current;
-              
-              // Make sure Solidity language is registered
-              if (!monaco.languages.getLanguages().some(lang => lang.id === 'solidity')) {
-                console.log('[AssistedChat] Registering Solidity language for syntax highlighting');
-                
-                // Register Solidity language
-                monaco.languages.register({ id: 'solidity' });
-                
-                // Configure syntax highlighting for Solidity
-                monaco.languages.setMonarchTokensProvider('solidity', {
-                  defaultToken: '',
-                  tokenPostfix: '.sol',
-                  
-                  keywords: [
-                    'pragma', 'solidity', 'contract', 'library', 'interface',
-                    'function', 'modifier', 'event', 'constructor',
-                    'address', 'string', 'bool', 'uint', 'int', 'bytes',
-                    'public', 'private', 'internal', 'external',
-                    'pure', 'view', 'payable', 'virtual', 'override',
-                    'returns', 'memory', 'storage', 'calldata',
-                    'if', 'else', 'for', 'while', 'do', 'break', 'continue',
-                    'return', 'emit', 'try', 'catch', 'revert', 'require',
-                    'assert', 'mapping', 'struct', 'enum', 'this', 'super'
-                  ],
-                  
-                  operators: [
-                    '=', '>', '<', '!', '~', '?', ':',
-                    '==', '<=', '>=', '!=', '&&', '||', '++', '--',
-                    '+', '-', '*', '/', '&', '|', '^', '%', '<<',
-                    '>>', '>>>', '+=', '-=', '*=', '/=', '&=', '|=',
-                    '^=', '%=', '<<=', '>>=', '>>>='
-                  ],
-                  
-                  symbols: /[=><!~?:&|+\-*\/\^%]+/,
-                  
-                  tokenizer: {
-                    root: [
-                      [/[a-zA-Z_]\w*/, {
-                        cases: {
-                          '@keywords': 'keyword',
-                          '@default': 'identifier'
-                        }
-                      }],
-                      [/[{}()\[\]]/, '@brackets'],
-                      [/@symbols/, {
-                        cases: {
-                          '@operators': 'operator',
-                          '@default': ''
-                        }
-                      }],
-                      [/\d*\.\d+([eE][\-+]?\d+)?/, 'number.float'],
-                      [/\d+/, 'number'],
-                      [/[;,.]/, 'delimiter'],
-                      [/"([^"\\]|\\.)*$/, 'string.invalid'],
-                      [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
-                      [/\/\/.*$/, 'comment'],
-                      [/\/\*/, 'comment', '@comment'],
-                    ],
-                    string: [
-                      [/[^\\"]+/, 'string'],
-                      [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
-                      [/\\.[^"]*$/, 'string.invalid']
-                    ],
-                    comment: [
-                      [/[^\/*]+/, 'comment'],
-                      [/\*\//, 'comment', '@pop'],
-                      [/[\/*]/, 'comment']
-                    ]
-                  }
-                });
-                
-                // Define theme for Solidity
-                monaco.editor.defineTheme('solidityTheme', {
-                  base: 'vs-dark',
-                  inherit: true,
-                  rules: [
-                    { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
-                    { token: 'identifier', foreground: 'D4D4D4' },
-                    { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
-                    { token: 'string', foreground: 'CE9178' },
-                    { token: 'number', foreground: 'B5CEA8' },
-                    { token: 'operator', foreground: 'D4D4D4' },
-                    { token: 'delimiter', foreground: 'D4D4D4' },
-                  ],
-                  colors: {}
-                });
-              }
-              
-              // Create a new model with Solidity language
-              try {
-                // Get current model or create new one
-                let model = editor.getModel();
-                if (!model || model.getLanguageId() !== 'solidity') {
-                  console.log('[AssistedChat] Creating new Solidity model for editor');
-                  model = monaco.editor.createModel(
-                    solidityCode,
-                    'solidity',
-                    monaco.Uri.parse('file:///contracts/Contract.sol')
-                  );
-                  editor.setModel(model);
-                } else {
-                  console.log('[AssistedChat] Updating existing model with Solidity code');
-                  model.setValue(solidityCode);
-                }
-                
-                // Apply the Solidity theme
-                monaco.editor.setTheme('solidityTheme');
-              } catch (err) {
-                console.error('[AssistedChat] Error creating/updating editor model:', err);
-              }
-            }
-            
-            // Compile the code after a short delay
-            setTimeout(() => {
-              // Skip compilation if noCompile flag is set
-              if (message.noCompile) {
-                console.log('[AssistedChat] Skipping compilation due to noCompile flag');
-              } else {
-                compileCode(solidityCode);
-              }
-            }, 500);
-            
-            // Store in virtual file system
-            if (activeContext) {
-              // Save to virtual file system
-              virtualFS.writeFile(path, solidityCode).then(() => {
-                console.log('[AssistedChat] Saved extracted code to virtual file system:', path);
-                
-                // Update active context with file info
-                const updatedVirtualFiles = {
-                  ...activeContext.virtualFiles,
-                  [path]: { content: solidityCode, language: 'solidity', timestamp: Date.now() }
-                };
-                
-                const updatedContext = {
-                  ...activeContext,
-                  virtualFiles: updatedVirtualFiles
-                };
-                
-                setActiveContext(updatedContext);
-                
-                // Update conversation contexts
-                setConversationContexts(prevContexts => 
-                  prevContexts.map(ctx => 
-                    ctx.id === activeContext.id ? updatedContext : ctx
-                  )
-                );
-                
-                // Dispatch events to notify components about the code update
-                const codeUpdateEvent = new CustomEvent('code_updated', { 
-                  detail: { path, content: solidityCode, language: 'solidity', noCompile: message.noCompile } 
-                });
-                window.dispatchEvent(codeUpdateEvent);
-              }).catch(error => {
-                console.error('[AssistedChat] Error writing file:', error);
-              });
-            }
-          }
-          break; // Stop after finding the first valid code block
-        }
+      // Also update conversationContexts to keep everything in sync
+      setConversationContexts(prevContexts => 
+        prevContexts.map(ctx => 
+          ctx.id === updatedContext.id ? updatedContext : ctx
+        )
+      );
+      
+      return updatedContext;
+    });
+    
+    // Save message to database directly (in addition to WebSocket)
+    if (activeContext.id && address) {
+      try {
+        databaseService.current.saveMessageViaAPI(
+          activeContext.id,
+          message,
+          'user',
+          { timestamp: Date.now() }
+        ).then(() => {
+          console.log('[AssistedChat] Message saved to database via API');
+        }).catch(error => {
+          console.error('[AssistedChat] Error saving message to database:', error);
+        });
+      } catch (error) {
+        console.error('[AssistedChat] Error saving message to database:', error);
       }
     }
-  }, [messages, activeContext, compileCode, currentCode, monacoRef, editorRef]);
+    
+    // Send message to backend via the configured chatService
+    if (chatService.current) {
+      chatService.current.sendMessage(message);
+    } else {
+      console.error('[AssistedChat] Chat service not initialized');
+      setIsTyping(false);
+    }
+  };
 
   // Handle form submission
   const handleSubmit = (message: string) => {
@@ -1366,42 +840,21 @@ const AssistedChat: React.FC = (): JSX.Element => {
             console.log('[AssistedChat] Conversation does not exist in database, creating:', activeContext.id);
             
             try {
-              // Create the conversation in the database
-              const result = await databaseService.current.createConversation(
-                address, 
-                activeContext.name || 'New Conversation'
-              );
+              // IMPORTANT: Use the existing ID when creating in the database to avoid duplicates
+              // Create the conversation in the database with the same ID as the active context
               
-              console.log('[AssistedChat] Created conversation in database:', result);
-                 
-              // If the conversation was created with a different ID, update the local context
-              if (result.id && result.id !== activeContext.id) {
-                console.log('[AssistedChat] Updating local context with database ID:', result.id);
-                
-                // Create a new context with the database ID
-                const newContext = await conversationService.createNewContext(
-                  activeContext.name || 'New Conversation',
-                  result.id
-                );
-                
-                // Update states
-                setActiveContext({...newContext, active: true});
-                setConversationContexts(prev => 
-                  prev.map(ctx => ctx.id === activeContext.id ? 
-                    {...newContext, active: true} : 
-                    {...ctx, active: false}
-                  )
-                );
-              }
+              // We don't want to use the database ID since it might differ - we should keep our local ID
+              // Instead of replacing it with a new one, let's use the existing one
+              proceedWithMessageSending(message);
             } catch (error) {
               console.error('[AssistedChat] Failed to create conversation in database:', error);
               addConsoleMessage('Warning: Could not register conversation in database. Some features may be limited.', 'warning');
+              proceedWithMessageSending(message);
             }
+          } else {
+            // Continue with message sending
+            proceedWithMessageSending(message);
           }
-               
-          // Continue with message sending
-          proceedWithMessageSending(message);
-          
         } catch (error) {
           console.error('[AssistedChat] Error checking conversation existence:', error);
           // Continue with message sending anyway
@@ -1412,6 +865,23 @@ const AssistedChat: React.FC = (): JSX.Element => {
       // If there's no context ID, simply continue
       proceedWithMessageSending(message);
     }
+  };
+
+  // Handle the fix request from the error fix button
+  const handleFixRequest = (errorFix: ErrorFix) => {
+    console.log('[AssistedChat] Fix requested for error:', errorFix);
+    
+    // Request the fix from the error detection service
+    errorDetectionService.current.requestFix(errorFix);
+    
+    // Update the pending error fixes to mark this one as fixed
+    setPendingErrorFixes(prev => 
+      prev.map(fix => 
+        fix.id === errorFix.id 
+          ? { ...fix, fixed: true } 
+          : fix
+      )
+    );
   };
 
   // If the user is not connected, show connection required message
@@ -1635,6 +1105,7 @@ const AssistedChat: React.FC = (): JSX.Element => {
                     isChatMaximized={isChatMaximized}
                     onInputChange={setInput}
                     onSubmit={handleSubmit}
+                    onFixRequest={handleFixRequest}
                   />
                 </div>
 

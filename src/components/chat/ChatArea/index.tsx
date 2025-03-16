@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
-import { Message } from '../../MessageComponent';
+import { Message } from '../../../types/contracts';
+import { ErrorFix } from '../../../services/errorDetectionService';
 
 interface ChatAreaProps {
   messages: Message[];
@@ -10,6 +11,7 @@ interface ChatAreaProps {
   isChatMaximized: boolean;
   onInputChange: (value: string) => void;
   onSubmit: (text: string) => void;
+  onFixRequest?: (errorFix: ErrorFix) => void;
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
@@ -18,8 +20,19 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   isTyping,
   isChatMaximized,
   onInputChange,
-  onSubmit
+  onSubmit,
+  onFixRequest
 }) => {
+  // Referencia para el área de mensajes
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
+  }, [messages]);
+
   // Event listener for suggestion messages
   useEffect(() => {
     const handleSuggestion = (event: CustomEvent<string>) => {
@@ -35,6 +48,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     };
   }, [onSubmit]);
 
+  // Log cuando los mensajes cambian para debugging
+  useEffect(() => {
+    console.log('[ChatArea] Messages updated:', messages.length);
+    if (messages.length > 0) {
+      console.log('[ChatArea] Last message:', messages[messages.length - 1]);
+    }
+  }, [messages]);
+
   return (
     <div className="flex flex-col h-full relative">
       {/* Background elements for visual appeal */}
@@ -46,11 +67,15 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       <div className="absolute bottom-40 right-10 w-80 h-80 bg-indigo-600/10 rounded-full blur-3xl opacity-20 animate-float-slow-reverse pointer-events-none"></div>
       
       {/* Main message area with scrollable content */}
-      <div className="flex-1 overflow-y-auto relative z-10 transition-all duration-300 ease-in-out 
-                      scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
+      <div 
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto relative z-10 transition-all duration-300 ease-in-out 
+                  scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent"
+      >
         <ChatMessages 
           messages={messages}
           isTyping={isTyping}
+          onFixRequest={onFixRequest}
         />
       </div>
 

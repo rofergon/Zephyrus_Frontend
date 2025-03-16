@@ -145,7 +145,7 @@ export class ConversationService {
     return true;
   }
 
-  public updateContext(context: ConversationContext): void {
+  public updateContext(id: string, p0: { name: string; active: boolean; virtualFiles: { [path: string]: { content: string; language: string; timestamp: number; }; }; workspaces: { [id: string]: { id: string; name: string; description?: string; files: { [path: string]: { content: string; language: string; timestamp: number; }; }; createdAt: number; updatedAt: number; }; }; }, context: ConversationContext): void {
     const index = this.contexts.findIndex(ctx => ctx.id === context.id);
     if (index !== -1) {
       this.contexts[index] = context;
@@ -167,17 +167,13 @@ export class ConversationService {
     let newContext: ConversationContext;
     
     if (typeof nameOrContext === 'string') {
-      // Generar un ID único utilizando UUID v4
-      const generateUUID = (): string => {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-          const r = (Math.random() * 16) | 0;
-          const v = c === 'x' ? r : (r & 0x3) | 0x8;
-          return v.toString(16);
-        });
-      };
+      // We'll only use customId for the ID, not generate one
+      if (!customId) {
+        console.warn('[ConversationService] No custom ID provided for new context. Using existing or generated ID.');
+      }
       
       newContext = {
-        id: customId || generateUUID(),
+        id: customId || '', // Will be filled later if empty
         name: nameOrContext,
         messages: [],
         virtualFiles: {},
@@ -186,9 +182,11 @@ export class ConversationService {
         createdAt: new Date().toISOString()
       };
       
-      // Create a default workspace for this context
+      // Create a default workspace, but use the ID from chatService if available
+      const workspaceId = `ws_${Date.now()}`; // Simple timestamp-based ID for workspace
+      
       const defaultWorkspace: Workspace = {
-        id: `ws_${generateUUID()}`,
+        id: workspaceId,
         name: 'Default Workspace',
         description: 'Default workspace for this conversation',
         files: {},
@@ -199,25 +197,21 @@ export class ConversationService {
       newContext.workspaces[defaultWorkspace.id] = defaultWorkspace;
       newContext.activeWorkspace = defaultWorkspace.id;
     } else {
+      // If we're creating from an existing context object, ALWAYS preserve its ID
       newContext = {
         ...nameOrContext,
         messages: nameOrContext.messages || [],
         virtualFiles: nameOrContext.virtualFiles || {},
         workspaces: nameOrContext.workspaces || {},
+        id: nameOrContext.id || customId || '' // Prefer context ID, then custom ID
       };
       
       // Create a default workspace if doesn't exist
-      if (Object.keys(newContext.workspaces).length === 0) {
-        const generateUUID = (): string => {
-          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-            const r = (Math.random() * 16) | 0;
-            const v = c === 'x' ? r : (r & 0x3) | 0x8;
-            return v.toString(16);
-          });
-        };
+      if (Object.keys(newContext.workspaces || {}).length === 0) {
+        const workspaceId = `ws_${Date.now()}`;
         
         const defaultWorkspace: Workspace = {
-          id: `ws_${generateUUID()}`,
+          id: workspaceId,
           name: 'Default Workspace',
           description: 'Default workspace for this conversation',
           files: {},
@@ -225,45 +219,72 @@ export class ConversationService {
           updatedAt: Date.now()
         };
         
+        if (!newContext.workspaces) {
+          newContext.workspaces = {};
+        }
+        
         newContext.workspaces[defaultWorkspace.id] = defaultWorkspace;
         newContext.activeWorkspace = defaultWorkspace.id;
       }
     }
     
-    // Verificar si ya existe un contexto con este ID
+    // Ensure we have a valid ID - this should only happen if both nameOrContext.id and customId are empty
+    if (!newContext.id) {
+      console.warn('[ConversationService] Context has no ID, using current time as fallback.');
+      newContext.id = `fallback_${Date.now()}`;
+    }
+    
+    // Check if a context with this ID already exists
     const existingIdIndex = this.contexts.findIndex(ctx => ctx.id === newContext.id);
     
     if (existingIdIndex >= 0) {
-      console.warn(`[ConversationService] Attempted to create context with existing ID: ${newContext.id}`);
+      console.warn(`[ConversationService] Context with ID ${newContext.id} already exists, updating it instead of creating new.`);
       
-      // Si el ID parece ser de la base de datos (tiene formato UUID), reemplazar el contexto existente
+      // If the ID appears to be a UUID, update the existing context
       if (newContext.id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
-        console.log(`[ConversationService] ID is from database, replacing existing context: ${newContext.id}`);
+        console.log(`[ConversationService] Updating existing context with ID: ${newContext.id}`);
         
-        // Preservar mensajes del contexto existente si el nuevo no tiene mensajes
-        if (newContext.messages.length === 0 && this.contexts[existingIdIndex].messages.length > 0) {
+        // Merge the new context with the existing one, preserving messages if needed
+        const existingContext = this.contexts[existingIdIndex];
+        
+        // Use existing messages if the new context doesn't have any
+        if (newContext.messages.length === 0 && existingContext.messages.length > 0) {
           console.log(`[ConversationService] Preserving existing messages for context: ${newContext.id}`);
-          newContext.messages = this.contexts[existingIdIndex].messages;
+          newContext.messages = existingContext.messages;
         }
         
-        // Eliminar el contexto existente
-        this.contexts = this.contexts.filter(ctx => ctx.id !== newContext.id);
-      } else {
-        // Si no parece ser un ID de base de datos, generar uno nuevo
-        const generateUUID = (): string => {
-          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-            const r = (Math.random() * 16) | 0;
-            const v = c === 'x' ? r : (r & 0x3) | 0x8;
-            return v.toString(16);
-          });
+        // Preserve virtual files if they exist
+        if (Object.keys(newContext.virtualFiles || {}).length === 0 && 
+            Object.keys(existingContext.virtualFiles || {}).length > 0) {
+          newContext.virtualFiles = existingContext.virtualFiles;
+        }
+        
+        // Update the existing context
+        this.contexts[existingIdIndex] = {
+          ...newContext,
+          active: true
         };
         
-        newContext.id = generateUUID();
-        console.log(`[ConversationService] Generated new UUID for context: ${newContext.id}`);
+        // Set all other contexts as inactive
+        for (let i = 0; i < this.contexts.length; i++) {
+          if (i !== existingIdIndex) {
+            this.contexts[i].active = false;
+          }
+        }
+        
+        this.activeContextId = newContext.id;
+        this.saveToStorage();
+        
+        console.log(`[ConversationService] Updated existing context: ${newContext.id}`);
+        return this.contexts[existingIdIndex];
       }
     }
     
-    this.contexts = [...this.contexts.map(ctx => ({ ...ctx, active: false })), newContext];
+    // Set all existing contexts to inactive
+    this.contexts = this.contexts.map(ctx => ({ ...ctx, active: false }));
+    
+    // Add the new context
+    this.contexts.push(newContext);
     this.activeContextId = newContext.id;
     this.saveToStorage();
     

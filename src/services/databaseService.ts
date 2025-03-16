@@ -194,6 +194,155 @@ export class DatabaseService {
     }
   }
 
+  // API Chat Methods based on API_CHAT_ROUTES.md
+  
+  /**
+   * Creates a new conversation via the API
+   * @param walletAddress The wallet address of the user
+   * @param name The name of the conversation
+   * @returns The created conversation data including ID
+   */
+  async createConversationViaAPI(walletAddress: string, name: string): Promise<{ id: string }> {
+    try {
+      const validatedAddress = this.normalizeWalletAddress(walletAddress);
+      const validatedName = this.validateString(name, 'name');
+      
+      console.log(`[DatabaseService] Creating conversation via API for wallet: ${validatedAddress}, name: ${validatedName}`);
+      
+      const response = await fetch(`${this.baseUrl}/conversations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
+        body: JSON.stringify({
+          walletAddress: validatedAddress,
+          name: validatedName
+        })
+      });
+      
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error('[DatabaseService] Error creating conversation via API:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Gets all conversations for a wallet address via the API
+   * @param walletAddress The wallet address to get conversations for
+   * @returns Array of conversation objects
+   */
+  async getConversationsViaAPI(walletAddress: string): Promise<any[]> {
+    try {
+      const validatedAddress = this.normalizeWalletAddress(walletAddress);
+      
+      console.log(`[DatabaseService] Getting conversations via API for wallet: ${validatedAddress}`);
+      
+      const response = await fetch(`${this.baseUrl}/conversations/${validatedAddress}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
+      
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error('[DatabaseService] Error getting conversations via API:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Updates the name of a conversation via the API
+   * @param conversationId The ID of the conversation to update
+   * @param name The new name for the conversation
+   * @returns Success status
+   */
+  async updateConversationNameViaAPI(conversationId: string, name: string): Promise<{ success: boolean }> {
+    try {
+      const validatedId = this.validateString(conversationId, 'conversationId');
+      const validatedName = this.validateString(name, 'name');
+      
+      console.log(`[DatabaseService] Updating conversation name via API for ID: ${validatedId}`);
+      
+      const response = await fetch(`${this.baseUrl}/conversations/${validatedId}/name`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
+        body: JSON.stringify({
+          name: validatedName
+        })
+      });
+      
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error('[DatabaseService] Error updating conversation name via API:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Saves a message to a conversation via the API
+   * @param conversationId ID of the conversation
+   * @param content Content of the message
+   * @param sender Sender of the message ('user' or 'ai')
+   * @param metadata Optional metadata
+   * @returns Success status
+   */
+  async saveMessageViaAPI(conversationId: string, content: string, sender: 'user' | 'ai', metadata?: any): Promise<{ success: boolean }> {
+    try {
+      const validatedId = this.validateString(conversationId, 'conversationId');
+      const validatedContent = this.validateString(content, 'content');
+      
+      console.log(`[DatabaseService] Saving message via API for conversation: ${validatedId}, sender: ${sender}`);
+      
+      const response = await fetch(`${this.baseUrl}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
+        body: JSON.stringify({
+          conversationId: validatedId,
+          content: validatedContent,
+          sender,
+          metadata
+        })
+      });
+      
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error('[DatabaseService] Error saving message via API:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Gets all messages for a conversation via the API
+   * @param conversationId The ID of the conversation
+   * @returns Array of message objects
+   */
+  async getMessagesViaAPI(conversationId: string): Promise<any[]> {
+    try {
+      const validatedId = this.validateString(conversationId, 'conversationId');
+      
+      console.log(`[DatabaseService] Getting messages via API for conversation: ${validatedId}`);
+      
+      const response = await fetch(`${this.baseUrl}/messages/${validatedId}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
+      
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error('[DatabaseService] Error getting messages via API:', error);
+      throw error;
+    }
+  }
+
   // Historial de código
   async saveCodeHistory(conversationId: string, code: string, language: string = 'solidity', version?: string, metadata?: any) {
     try {
@@ -334,14 +483,8 @@ export class DatabaseService {
         console.warn(`[DatabaseService] API returned empty result for address: ${validatedAddress}`);
         console.log(`[DatabaseService] Original wallet address: ${walletAddress}`);
         console.log(`[DatabaseService] Normalized wallet address: ${validatedAddress}`);
-        console.log(`[DatabaseService] Request URL: ${url}`);
-        console.log(`[DatabaseService] Response headers:`, Object.fromEntries([...response.headers.entries()]));
-      } else {
-        console.log(`[DatabaseService] API returned ${Array.isArray(data) ? data.length : 'non-array'} results`);
       }
       
-      console.log(`[DatabaseService] Complete API response:`, data);
-
       // Update cache
       this.deployedContractsCache.set(validatedAddress, {
         data: Array.isArray(data) ? data : [],
@@ -355,58 +498,10 @@ export class DatabaseService {
     }
   }
 
-  async getContractsByConversation(conversationId: string): Promise<DeployedContract[]> {
-    try {
-      const validatedId = this.validateString(conversationId, 'conversationId');
-      const response = await fetch(`${this.baseUrl}/contracts/conversation/${validatedId}`, {
-        headers: {
-          'ngrok-skip-browser-warning': 'true'
-        }
-      });
-      const contracts = await this.handleResponse(response);
-
-      return contracts.map((contract: any) => ({
-        ...contract,
-        sourceCode: contract.source_code ? this.parseSourceCode(contract.source_code) : null,
-        abi: this.parseAbi(contract.abi),
-        constructorArgs: contract.constructor_args ? JSON.parse(contract.constructor_args) : null,
-        networkId: contract.network_id ? contract.network_id.toString() : null
-      }));
-    } catch (error) {
-      console.error('[DatabaseService] Error getting contracts by conversation:', error);
-      throw error;
-    }
-  }
-
-  private parseSourceCode(sourceCode: string): { 
-    content: string;
-    language: string;
-    version: string;
-    timestamp: string;
-    format: string;
-    encoding: string;
-  } | string {
-    try {
-      return JSON.parse(sourceCode);
-    } catch {
-      return sourceCode;
-    }
-  }
-
-  private parseAbi(abi: any): any {
-    try {
-      if (!abi) return null;
-      return typeof abi === 'string' ? JSON.parse(abi) : abi;
-    } catch (error) {
-      console.error('[DatabaseService] Error parsing ABI:', error);
-      return null;
-    }
-  }
-
   /**
-   * Verifica si una conversación existe en la base de datos
-   * @param conversationId ID de la conversación a verificar
-   * @returns true si la conversación existe, false en caso contrario
+   * Verifies if a conversation exists in the database
+   * @param conversationId ID of the conversation to verify
+   * @returns true if the conversation exists, false otherwise
    */
   public async checkConversationExists(conversationId: string): Promise<boolean> {
     try {
@@ -417,7 +512,7 @@ export class DatabaseService {
       const validatedId = this.validateString(conversationId, 'conversationId');
       console.log(`[DatabaseService] Checking if conversation exists: ${validatedId}`);
       
-      // Como no tenemos un endpoint específico, intentaremos obtener los mensajes de esta conversación
+      // Try to get messages for this conversation to check if it exists
       const response = await fetch(`${this.baseUrl}/messages/${validatedId}`, {
         headers: {
           'ngrok-skip-browser-warning': 'true'
@@ -429,20 +524,20 @@ export class DatabaseService {
         return false;
       }
 
-      // Si llegamos aquí, la conversación existe
+      // If we got here, the conversation exists
       console.log(`[DatabaseService] Conversation ${validatedId} exists`);
       return true;
     } catch (error) {
       console.error('[DatabaseService] Error checking conversation existence:', error);
-      // En caso de error, asumimos que no existe para ser conservadores
+      // In case of error, assume it doesn't exist to be conservative
       return false;
     }
   }
 
   /**
-   * Actualiza el ID de conversación de un contrato en la base de datos
-   * @param contractId ID del contrato a actualizar
-   * @param conversationId Nuevo ID de conversación
+   * Updates the conversation ID of a contract in the database
+   * @param contractId ID of the contract to update
+   * @param conversationId New conversation ID
    */
   public async updateContractConversationId(contractId: string, conversationId: string): Promise<void> {
     try {
@@ -451,12 +546,12 @@ export class DatabaseService {
         return;
       }
 
-      // Verificar primero si la conversación existe
+      // Check if the conversation exists first
       const conversationExists = await this.checkConversationExists(conversationId);
       if (!conversationExists) {
         console.warn(`[DatabaseService] Conversation ${conversationId} does not exist. Creating it first.`);
         
-        // Si la conversación no existe y tenemos una wallet activa, intentar crearla
+        // If the conversation doesn't exist and we have an active wallet, try to create it
         if (this.currentWalletAddress) {
           try {
             await this.createConversation(this.currentWalletAddress, "Auto-created for contract");
@@ -476,7 +571,8 @@ export class DatabaseService {
       const response = await fetch(url, {
         method: 'PATCH',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
         },
         body: JSON.stringify({ conversationId: conversationId })
       });
@@ -491,7 +587,74 @@ export class DatabaseService {
       throw error;
     }
   }
+
+  /**
+   * Gets deployed contracts associated with a specific conversation
+   * @param conversationId ID of the conversation to get contracts for
+   * @returns Promise with an array of DeployedContract objects
+   */
+  async getContractsByConversation(conversationId: string): Promise<DeployedContract[]> {
+    try {
+      const validatedId = this.validateString(conversationId, 'conversationId');
+      console.log(`[DatabaseService] Getting contracts for conversation: ${validatedId}`);
+
+      const response = await fetch(`${this.baseUrl}/contracts/conversation/${validatedId}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
+      
+      const contracts = await this.handleResponse(response);
+
+      // Process the contracts to ensure consistent format
+      return Array.isArray(contracts) ? contracts.map((contract: any) => ({
+        ...contract,
+        sourceCode: contract.source_code ? this.parseSourceCode(contract.source_code) : null,
+        abi: this.parseAbi(contract.abi),
+        constructorArgs: contract.constructor_args ? JSON.parse(contract.constructor_args) : null,
+        networkId: contract.network_id ? contract.network_id.toString() : null
+      })) : [];
+    } catch (error) {
+      console.error('[DatabaseService] Error getting contracts by conversation:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Parse source code from various formats
+   * @param sourceCode Source code string or object
+   * @returns Parsed source code
+   */
+  private parseSourceCode(sourceCode: string): { 
+    content: string;
+    language: string;
+    version: string;
+    timestamp: string;
+    format: string;
+    encoding: string;
+  } | string {
+    try {
+      return JSON.parse(sourceCode);
+    } catch {
+      return sourceCode;
+    }
+  }
+
+  /**
+   * Parse ABI data from various formats
+   * @param abi ABI data
+   * @returns Parsed ABI object
+   */
+  private parseAbi(abi: any): any {
+    try {
+      if (!abi) return null;
+      return typeof abi === 'string' ? JSON.parse(abi) : abi;
+    } catch (error) {
+      console.error('[DatabaseService] Error parsing ABI:', error);
+      return null;
+    }
+  }
 }
 
-// Exportamos la clase solamente
-export default DatabaseService; 
+// Export the class only
+export default DatabaseService;
