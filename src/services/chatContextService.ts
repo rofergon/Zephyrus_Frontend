@@ -38,6 +38,15 @@ export class ChatContextService {
   }
 
   /**
+   * Updates the wallet address in the configuration
+   * @param address The new wallet address
+   */
+  public updateWalletAddress(address: string): void {
+    console.log(`[ChatContextService] Updating wallet address to: ${address}`);
+    this.config.address = address;
+  }
+
+  /**
    * Crea un nuevo contexto de chat
    */
   public async createNewChat(): Promise<void> {

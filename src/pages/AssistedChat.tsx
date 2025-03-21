@@ -234,6 +234,10 @@ const AssistedChat: React.FC = (): JSX.Element => {
 
       // Store the service in window for debugging
       (window as any).__chatContextService = chatContextService.current;
+    } else if (address) {
+      // Update the address in the config when it changes
+      console.log('[AssistedChat] Updating wallet address in ChatContextService:', address);
+      chatContextService.current.updateWalletAddress(address);
     }
     
     // Update wallet address in the database service

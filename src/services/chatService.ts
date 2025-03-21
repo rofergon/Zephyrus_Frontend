@@ -276,7 +276,7 @@ export class ChatService {
     return typeof content === 'string' ? content : String(content || '');
   }
 
-  public sendMessage(content: string, context: any = {}, chatId?: string): void {
+  public sendMessage(content: string, _context: any = {}, chatId?: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.error('[ChatService] WebSocket not connected. Cannot send message.');
       if (this.messageHandler) {
